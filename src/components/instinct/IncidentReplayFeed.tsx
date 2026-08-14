@@ -6,9 +6,14 @@ import {
   solveLBWBowlerKinematics,
   solveCaughtBehindBatterKinematics,
   solveCaughtBehindKeeperKinematics,
+  solveRunOutRunnerKinematics,
+  solveStumpingBatterKinematics,
+  solveStumpingKeeperKinematics,
+  solveBoundaryFielderKinematics,
   drawArticulatedBatter,
   drawArticulatedBowler,
   drawArticulatedWicketkeeper,
+  drawArticulatedFielder,
   drawStumpsAndBails,
   drawCricketBall,
 } from "./actorRigs";
@@ -25,8 +30,8 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
   const getCameraLabel = () => {
     switch (scenario.incidentType) {
       case "LBW": return "CAM 01 • PITCH END BROADCAST";
-      case "RUN_OUT":
-      case "STUMPING": return "CAM 02 • SQUARE LEG BROADCAST";
+      case "RUN_OUT": return "CAM 02 • SQUARE LEG BROADCAST";
+      case "STUMPING": return "CAM 02 • SIDE-ON STUMPING CAM";
       case "CAUGHT_BEHIND": return "CAM 03 • SLIP CAM BROADCAST";
       case "BOUNDARY": return "CAM 04 • BOUNDARY TRACKING";
     }
@@ -61,11 +66,13 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
       // Clear frame
       ctx.clearRect(0, 0, width, height);
 
-      // Render incident-specific broadcast replay
+      // Render incident-specific broadcast replay using common actor rigs
       if (scenario.incidentType === "LBW") {
         renderLBWBroadcast(ctx, width, height, progress, scenario);
-      } else if (scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") {
+      } else if (scenario.incidentType === "RUN_OUT") {
         renderRunOutBroadcast(ctx, width, height, progress, scenario);
+      } else if (scenario.incidentType === "STUMPING") {
+        renderStumpingBroadcast(ctx, width, height, progress, scenario);
       } else if (scenario.incidentType === "CAUGHT_BEHIND") {
         renderCaughtBehindBroadcast(ctx, width, height, progress, scenario);
       } else if (scenario.incidentType === "BOUNDARY") {
@@ -118,11 +125,15 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
         </div>
       )}
 
-      {(scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") && (
+      {scenario.incidentType === "RUN_OUT" && (
         <div className="absolute bottom-3 left-3 z-30 bg-black/75 px-3 py-1.5 rounded border border-white/10 backdrop-blur-md shadow-lg">
-          <span className="text-amber-300 text-[11px] font-mono font-bold">
-            {scenario.incidentType === "STUMPING" ? "STUMPING APPEAL" : "RUN OUT APPEAL"}
-          </span>
+          <span className="text-amber-300 text-[11px] font-mono font-bold">RUN OUT APPEAL</span>
+        </div>
+      )}
+
+      {scenario.incidentType === "STUMPING" && (
+        <div className="absolute bottom-3 left-3 z-30 bg-black/75 px-3 py-1.5 rounded border border-white/10 backdrop-blur-md shadow-lg">
+          <span className="text-amber-300 text-[11px] font-mono font-bold">STUMPING APPEAL</span>
         </div>
       )}
 
@@ -143,8 +154,6 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
 
 /* ================================================================
    1. LBW BROADCAST REPLAY RENDERER
-   Continuous kinematic motion: Bowler run-up, gather, windmill release,
-   follow-through and appeal + Batter stride, forward defence, pad recoil.
    ================================================================ */
 function renderLBWBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -185,7 +194,7 @@ function renderLBWBroadcast(
   ctx.closePath();
   ctx.fill();
 
-  // Bowling crease (top)
+  // Creases
   ctx.strokeStyle = "rgba(255,255,255,0.65)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
@@ -193,19 +202,18 @@ function renderLBWBroadcast(
   ctx.lineTo(w * 0.57, h * 0.20);
   ctx.stroke();
 
-  // Popping crease (striker end)
   ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.moveTo(w * 0.24, h * 0.84);
   ctx.lineTo(w * 0.70, h * 0.84);
   ctx.stroke();
 
-  // Striker Stumps (X = w * 0.54, Base Y = h * 0.86)
+  // Stumps
   const stumpsX = w * 0.54;
   const stumpsBaseY = h * 0.86;
   drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.15 });
 
-  // Calculate Delivery Trajectory based on Scenario Evidence
+  // Kinematics targets
   const pitchCenter = w * 0.45;
   let pitchBounceX = pitchCenter;
   if (ev) {
@@ -233,18 +241,17 @@ function renderLBWBroadcast(
   const isNoShot = shotType === "PADDED_AWAY_NO_SHOT" || shotType === "LEAVE_WITHDRAWN";
   const batterX = stumpsX - 22 + (ev?.batterStanceShiftX || 0);
 
-  // Bowler continuous kinematic rig at top of pitch
+  // Bowler
   const bowlerX = w * 0.45;
   const bowlerY = h * 0.16;
   const bowlerK = solveLBWBowlerKinematics(p);
-
   drawArticulatedBowler(
     ctx,
     { x: bowlerX, y: bowlerY + 18, scale: 0.88, facing: "RIGHT" },
     bowlerK
   );
 
-  // Batter continuous kinematic rig at striker crease
+  // Batter
   const batterY = h * 0.84;
   const batterK = solveLBWBatterKinematics(
     p,
@@ -252,14 +259,13 @@ function renderLBWBroadcast(
     shotType,
     ev?.batPadSeparationMm
   );
-
   drawArticulatedBatter(
     ctx,
     { x: batterX, y: batterY, scale: 1.18, facing: "RIGHT" },
     batterK
   );
 
-  // Ball Delivery Physics & Continuous Trajectory
+  // Ball
   let ballX = bowlerX;
   let ballY = bowlerY;
   let ballRadius = 2.5;
@@ -271,7 +277,6 @@ function renderLBWBroadcast(
     ballX = bowlerX + 3 + Math.cos(rad) * 16;
     ballY = bowlerY + 18 - 32 + Math.sin(rad) * 16;
   } else if (p >= 0.20 && p < 0.50) {
-    // Release to pitch bounce
     const t = (p - 0.20) / 0.30;
     ballX = bowlerX + (pitchBounceX - bowlerX) * t;
     ballY = bowlerY + (h * 0.50 - bowlerY) * (t * t);
@@ -279,7 +284,6 @@ function renderLBWBroadcast(
     prevBallX = ballX - (pitchBounceX - bowlerX) * 0.04;
     prevBallY = ballY - 6;
   } else if (p >= 0.50 && p < 0.70) {
-    // Rise from bounce to pad impact
     const t = (p - 0.50) / 0.20;
     ballX = pitchBounceX + (padImpactX - pitchBounceX) * t;
     ballY = h * 0.50 + (impactY - h * 0.50) * t;
@@ -287,20 +291,17 @@ function renderLBWBroadcast(
     prevBallX = ballX - (padImpactX - pitchBounceX) * 0.05;
     prevBallY = ballY - 4;
 
-    // Pitch bounce scuff mark
     ctx.fillStyle = "rgba(80,58,40,0.6)";
     ctx.beginPath();
     ctx.ellipse(pitchBounceX, h * 0.50, 6, 3, 0, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // Post-impact: Ball drops naturally to pitch
     const t = (p - 0.70) / 0.30;
     ballX = padImpactX + (lbw?.impactX ? lbw.impactX * 12 * t : 4 * t);
     ballY = impactY + t * 16;
     ballRadius = 6.8;
   }
 
-  // Draw Cricket Ball with subtle motion trail during delivery flight
   drawCricketBall(ctx, ballX, ballY, {
     radius: ballRadius,
     seamAngleRad: p * Math.PI * 4,
@@ -314,9 +315,141 @@ function renderLBWBroadcast(
 }
 
 /* ================================================================
-   2. CAUGHT BEHIND BROADCAST REPLAY RENDERER
-   Continuous kinematic motion: Batter backlift, downswing arc & follow-through
-   + Wicketkeeper dynamic glove tracking, catch gather, and rising appeal.
+   2. RUN OUT BROADCAST REPLAY RENDERER
+   ================================================================ */
+function renderRunOutBroadcast(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  p: number,
+  scenario: Scenario
+) {
+  const ev = scenario.initialEvidence?.runOut;
+  const ro = scenario.runOut;
+
+  // Pitch & turf
+  ctx.fillStyle = "#153020";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#a88e72";
+  ctx.fillRect(0, h * 0.52, w, h * 0.48);
+
+  const creaseX = w * 0.44;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(creaseX - 2, h * 0.52, 4, h * 0.48);
+
+  // Stumps
+  const stumpsX = w * 0.28;
+  const stumpsBaseY = h * 0.52;
+  const bailsBroke = p >= 0.62;
+  const dislodgeT = bailsBroke ? (p - 0.62) / 0.38 : 0.0;
+
+  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
+    scale: 1.1,
+    bailsDislodged: bailsBroke,
+    dislodgeProgress: dislodgeT,
+    isZing: true,
+  });
+
+  // Wicketkeeper at Stumps
+  const keeperK = solveCaughtBehindKeeperKinematics(p * 0.5, false);
+  drawArticulatedWicketkeeper(
+    ctx,
+    { x: stumpsX - 24, y: stumpsBaseY + 6, scale: 1.0, facing: "RIGHT" },
+    keeperK
+  );
+
+  // Incoming Ball Throw
+  if (p < 0.62) {
+    const tThrow = p / 0.62;
+    const throwX = w * 0.95 + (stumpsX - w * 0.95) * tThrow;
+    const throwY = h * 0.25 + (stumpsBaseY - 14 - h * 0.25) * tThrow;
+
+    drawCricketBall(ctx, throwX, throwY, {
+      radius: 4.5,
+      seamAngleRad: p * Math.PI * 8,
+    });
+  }
+
+  // Articulated Runner Kinematics
+  const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
+  const runnerResult = solveRunOutRunnerKinematics(
+    p,
+    creaseX,
+    marginPx,
+    ev?.runnerDiveTechnique
+  );
+
+  drawArticulatedBatter(
+    ctx,
+    { x: runnerResult.runnerX, y: stumpsBaseY + 12, scale: 1.1, facing: "LEFT" },
+    runnerResult.batterK
+  );
+}
+
+/* ================================================================
+   3. STUMPING BROADCAST REPLAY RENDERER
+   ================================================================ */
+function renderStumpingBroadcast(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  p: number,
+  scenario: Scenario
+) {
+  const ev = scenario.initialEvidence?.runOut;
+  const ro = scenario.runOut;
+
+  // Turf & clay
+  ctx.fillStyle = "#153020";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#ad9275";
+  ctx.fillRect(0, h * 0.54, w, h * 0.46);
+
+  const creaseX = w * 0.48;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(creaseX - 2, h * 0.54, 4, h * 0.46);
+
+  const stumpsX = w * 0.32;
+  const stumpsBaseY = h * 0.54;
+  const bailsBroke = p >= 0.65;
+  const dislodgeT = bailsBroke ? (p - 0.65) / 0.35 : 0.0;
+
+  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
+    scale: 1.15,
+    bailsDislodged: bailsBroke,
+    dislodgeProgress: dislodgeT,
+    isZing: true,
+  });
+
+  // Wicketkeeper rapid stumping whip
+  const keeperK = solveStumpingKeeperKinematics(p);
+  drawArticulatedWicketkeeper(
+    ctx,
+    { x: stumpsX - 20, y: stumpsBaseY + 4, scale: 1.15, facing: "RIGHT" },
+    keeperK
+  );
+
+  // Batter advance & back-foot drag
+  const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
+  const stumpingResult = solveStumpingBatterKinematics(p, creaseX, marginPx);
+
+  drawArticulatedBatter(
+    ctx,
+    { x: stumpingResult.batterX, y: stumpsBaseY + 8, scale: 1.15, facing: "LEFT" },
+    stumpingResult.batterK
+  );
+
+  // Ball flight past bat to keeper
+  if (p < 0.50) {
+    const t = p / 0.50;
+    const bX = w * 0.85 + (stumpsX + 18 - w * 0.85) * t;
+    const bY = h * 0.38 + (stumpsBaseY - 20 - h * 0.38) * t;
+    drawCricketBall(ctx, bX, bY, { radius: 5.0, seamAngleRad: p * Math.PI * 6 });
+  }
+}
+
+/* ================================================================
+   4. CAUGHT BEHIND BROADCAST REPLAY RENDERER
    ================================================================ */
 function renderCaughtBehindBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -328,20 +461,15 @@ function renderCaughtBehindBroadcast(
   const ev = scenario.initialEvidence?.caughtBehind;
   const cb = scenario.caughtBehind;
 
-  // Turf surface
   ctx.fillStyle = "#142d1e";
   ctx.fillRect(0, 0, w, h);
-
-  // Clay pitch strip
   ctx.fillStyle = "#ad9275";
   ctx.fillRect(0, h * 0.58, w, h * 0.42);
 
-  // Stumps at X = w * 0.46
   const stumpsX = w * 0.46;
   const stumpsBaseY = h * 0.60;
   drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.25 });
 
-  // Batter Stance (Center-Right at w * 0.60, Base Y = h * 0.66)
   const batterX = w * 0.60;
   const batterY = h * 0.66;
   const batterK = solveCaughtBehindBatterKinematics(
@@ -356,7 +484,6 @@ function renderCaughtBehindBroadcast(
     batterK
   );
 
-  // Wicketkeeper Crouching Behind Stumps (Left at w * 0.26, Base Y = h * 0.64)
   const keeperX = w * 0.26;
   const keeperY = h * 0.64;
   const hasEdge = cb?.hasEdge ?? false;
@@ -368,7 +495,6 @@ function renderCaughtBehindBroadcast(
     keeperK
   );
 
-  // Ball Trajectory & Edge Passage
   const batEdgeX = batterX - 28;
   const batEdgeY = batterY - 34;
   const deflectionAngle = ev?.apparentDeflectionAngleDeg ?? (hasEdge ? 2.6 : 0);
@@ -395,7 +521,6 @@ function renderCaughtBehindBroadcast(
     prevBallY = ballY - 2;
   }
 
-  // Draw Cricket Ball with continuous spin & motion trail
   drawCricketBall(ctx, ballX, ballY, {
     radius: 5.5,
     seamAngleRad: p * Math.PI * 6,
@@ -407,127 +532,7 @@ function renderCaughtBehindBroadcast(
 }
 
 /* ================================================================
-   3. RUN OUT / STUMPING BROADCAST REPLAY RENDERER
-   Wide square-leg broadcast camera showing fast-moving runner,
-   incoming throw from deep, bails breaking at stumps, and bat reach.
-   ================================================================ */
-function renderRunOutBroadcast(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  p: number,
-  scenario: Scenario
-) {
-  const ev = scenario.initialEvidence?.runOut;
-  const ro = scenario.runOut;
-
-  // Turf background
-  ctx.fillStyle = "#153020";
-  ctx.fillRect(0, 0, w, h);
-
-  // Pitch surface strip
-  ctx.fillStyle = "#a88e72";
-  ctx.fillRect(0, h * 0.52, w, h * 0.48);
-
-  // Popping Crease White Line (X = w * 0.44)
-  const creaseX = w * 0.44;
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(creaseX - 2, h * 0.52, 4, h * 0.48);
-
-  // Stumps at X = w * 0.28
-  const stumpsX = w * 0.28;
-  const stumpsBaseY = h * 0.52;
-
-  // Wicketkeeper at Stumps
-  const keeperK = solveCaughtBehindKeeperKinematics(p * 0.5, false);
-  drawArticulatedWicketkeeper(
-    ctx,
-    { x: stumpsX - 24, y: stumpsBaseY + 6, scale: 1.0, facing: "RIGHT" },
-    keeperK
-  );
-
-  // Timing: Bails break at p = 0.62
-  const bailsBroke = p >= 0.62;
-  const dislodgeT = bailsBroke ? (p - 0.62) / 0.38 : 0.0;
-
-  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
-    scale: 1.1,
-    bailsDislodged: bailsBroke,
-    dislodgeProgress: dislodgeT,
-    isZing: true,
-  });
-
-  // Incoming Ball Throw from Deep Fielder
-  if (p < 0.62) {
-    const tThrow = p / 0.62;
-    const throwX = w * 0.95 + (stumpsX - w * 0.95) * tThrow;
-    const throwY = h * 0.25 + (stumpsBaseY - 14 - h * 0.25) * tThrow;
-
-    drawCricketBall(ctx, throwX, throwY, {
-      radius: 4.5,
-      seamAngleRad: p * Math.PI * 8,
-    });
-  }
-
-  // Runner Slide / Dive Kinematics
-  const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
-  const targetBatTipX = creaseX - marginPx;
-
-  let currentRunnerX = w * 0.85;
-  if (p < 0.62) {
-    const tRun = p / 0.62;
-    currentRunnerX = w * 0.85 + (targetBatTipX + 70 - w * 0.85) * (tRun * tRun);
-  } else {
-    const tPost = (p - 0.62) / 0.38;
-    currentRunnerX = targetBatTipX + 70 - tPost * 25;
-  }
-
-  const diveTechnique = ev?.runnerDiveTechnique || "FULL_DIVE";
-  const runnerY = stumpsBaseY + 12;
-
-  // Ground shadow
-  ctx.fillStyle = "rgba(0,0,0,0.35)";
-  ctx.beginPath();
-  ctx.ellipse(currentRunnerX, runnerY + 12, 45, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Draw Runner Body
-  ctx.fillStyle = "#0f172a";
-  if (diveTechnique === "FULL_DIVE" || diveTechnique === "FEET_FIRST_SLIDE") {
-    ctx.beginPath();
-    ctx.arc(currentRunnerX + 35, runnerY - 6, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(currentRunnerX + 10, runnerY - 2, 24, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 4.5;
-    ctx.beginPath();
-    ctx.moveTo(currentRunnerX - 10, runnerY - 2);
-    ctx.lineTo(currentRunnerX - 35, runnerY + 4);
-    ctx.stroke();
-
-    ctx.fillStyle = "#d97706";
-    ctx.strokeStyle = "#78350f";
-    ctx.lineWidth = 0.8;
-    ctx.fillRect(currentRunnerX - 70, runnerY + 2, 42, 6);
-    ctx.strokeRect(currentRunnerX - 70, runnerY + 2, 42, 6);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(currentRunnerX - 36, runnerY + 3.5, 12, 3);
-  } else {
-    ctx.beginPath();
-    ctx.arc(currentRunnerX + 12, runnerY - 28, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillRect(currentRunnerX + 4, runnerY - 20, 16, 26);
-    ctx.fillStyle = "#d97706";
-    ctx.fillRect(currentRunnerX - 45, runnerY + 2, 45, 6);
-  }
-}
-
-/* ================================================================
-   4. BOUNDARY BROADCAST REPLAY RENDERER
-   Wide boundary tracking camera showing running outfielder, athletic slide,
-   cushion interaction, and ball release arc.
+   5. BOUNDARY BROADCAST REPLAY RENDERER
    ================================================================ */
 function renderBoundaryBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -536,19 +541,14 @@ function renderBoundaryBroadcast(
   p: number,
   scenario: Scenario
 ) {
-  const ev = scenario.initialEvidence?.boundary;
   const b = scenario.boundary;
   const isBoundary = b?.isBoundary ?? false;
 
-  // Outfield green grass
   ctx.fillStyle = "#183b25";
   ctx.fillRect(0, 0, w, h * 0.62);
-
-  // Beyond boundary advertising apron
   ctx.fillStyle = "#0c1810";
   ctx.fillRect(0, h * 0.62, w, h * 0.38);
 
-  // White boundary rope line
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -556,7 +556,6 @@ function renderBoundaryBroadcast(
   ctx.lineTo(w, h * 0.62);
   ctx.stroke();
 
-  // Orange Foam Boundary Cushion at Center
   const cushionX = w * 0.50;
   const cushionY = h * 0.62;
   ctx.fillStyle = "#ea580c";
@@ -571,66 +570,25 @@ function renderBoundaryBroadcast(
   ctx.fill();
   ctx.stroke();
 
-  // Cushion text
   ctx.fillStyle = "rgba(255,255,255,0.7)";
   ctx.font = "bold 9px monospace";
   ctx.textAlign = "center";
   ctx.fillText("BOUNDARY CUSHION", cushionX, cushionY + 18);
 
-  // Fielder Slide / Interception Kinematics
-  const cushionApexX = cushionX - 20;
-  let slideTargetX = cushionApexX - 30;
-  if (ev?.apparentCushionInteraction === "DEEP_CUSHION_COMPRESSION" || isBoundary) {
-    slideTargetX = cushionApexX + 15;
-  } else if (ev?.apparentCushionInteraction === "GRAZING_CUSHION_EDGE") {
-    slideTargetX = cushionApexX - 4;
-  }
+  const boundaryResult = solveBoundaryFielderKinematics(
+    p,
+    isBoundary,
+    cushionX - 20
+  );
 
-  let currentFielderX = w * 0.82;
-  if (p < 0.58) {
-    const t = p / 0.58;
-    currentFielderX = w * 0.82 + (slideTargetX - w * 0.82) * (t * t);
-  } else {
-    const t = (p - 0.58) / 0.42;
-    currentFielderX = slideTargetX + t * 12;
-  }
+  drawArticulatedFielder(
+    ctx,
+    { x: boundaryResult.fielderX, y: h * 0.58, scale: 1.1, facing: "LEFT" },
+    boundaryResult.fielderK
+  );
 
-  const fielderY = h * 0.55;
-
-  // Fielder horizontal sliding body
-  ctx.fillStyle = "#0f172a";
-  ctx.beginPath();
-  ctx.arc(currentFielderX + 30, fielderY - 4, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(currentFielderX + 8, fielderY, 24, 7, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#0f172a";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(currentFielderX - 8, fielderY);
-  ctx.lineTo(currentFielderX - 32, fielderY + 4);
-  ctx.stroke();
-
-  // Ball Flight & Relay Flick
-  const tossHeight = ev?.ballTossHeightPixels ?? (isBoundary ? 0 : 65);
-  let ballX = currentFielderX - 32;
-  let ballY = fielderY + 4;
-
-  if (p >= 0.58) {
-    const tFlick = (p - 0.58) / 0.42;
-    if (!isBoundary) {
-      ballX = currentFielderX - 32 - tFlick * 45;
-      ballY = fielderY + 4 - Math.sin(tFlick * Math.PI) * tossHeight;
-    } else {
-      ballX = currentFielderX - 30;
-      ballY = fielderY + 4;
-    }
-  }
-
-  // Draw Ball
-  drawCricketBall(ctx, ballX, ballY, {
-    radius: 4.5,
+  drawCricketBall(ctx, boundaryResult.ballX, boundaryResult.ballY, {
+    radius: 4.8,
     seamAngleRad: p * Math.PI * 6,
   });
 }
