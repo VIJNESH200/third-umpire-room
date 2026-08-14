@@ -1,6 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Scenario } from "../../types/scenario";
 import { Camera } from "lucide-react";
+import {
+  drawBatter,
+  drawBowler,
+  drawWicketkeeper,
+  drawStumpsAndBails,
+  drawCricketBall,
+  type BatterPoseType,
+  type BowlerPoseType,
+  type KeeperPoseType,
+} from "./actorRigs";
 
 interface IncidentReplayFeedProps {
   scenario: Scenario;
@@ -132,9 +142,8 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
 
 /* ================================================================
    1. LBW BROADCAST REPLAY RENDERER
-   Broadcast high-offset pitch camera showing bowler run-up, delivery
-   trajectory, pitch bounce, batter forward defensive / leave, pad
-   impact height & line relative to the 3 striker stumps.
+   Uses articulated Batter & Bowler actor rigs, realistic 3D pitch,
+   seam rotation, pitch bounce, pad impact height and bowler appeal.
    ================================================================ */
 function renderLBWBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -146,7 +155,7 @@ function renderLBWBroadcast(
   const ev = scenario.initialEvidence?.lbw;
   const lbw = scenario.lbw;
 
-  // 1. Outfield Grass
+  // 1. Outfield Grass with mowing gradient
   const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
   gradGrass.addColorStop(0, "#122a1b");
   gradGrass.addColorStop(0.6, "#183925");
@@ -193,25 +202,7 @@ function renderLBWBroadcast(
   // Striker Stumps (X = w * 0.54, Base Y = h * 0.86)
   const stumpsX = w * 0.54;
   const stumpsBaseY = h * 0.86;
-
-  // Stumps Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(stumpsX + 6, stumpsBaseY + 2, 14, 4, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 3 Stumps
-  ctx.fillStyle = "#f59e0b";
-  ctx.strokeStyle = "#78350f";
-  ctx.lineWidth = 0.5;
-  for (let i = -1; i <= 1; i++) {
-    ctx.fillRect(stumpsX + i * 6 - 1.5, stumpsBaseY - 32, 3.5, 32);
-    ctx.strokeRect(stumpsX + i * 6 - 1.5, stumpsBaseY - 32, 3.5, 32);
-  }
-  // Bails
-  ctx.fillStyle = "#fbbf24";
-  ctx.fillRect(stumpsX - 8, stumpsBaseY - 35, 7, 3);
-  ctx.fillRect(stumpsX + 1, stumpsBaseY - 35, 7, 3);
+  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.15 });
 
   // Calculate Delivery Trajectory based on Scenario Evidence
   const pitchCenter = w * 0.45;
@@ -244,77 +235,52 @@ function renderLBWBroadcast(
   // Bowler at top of pitch
   const bowlerX = w * 0.45;
   const bowlerY = h * 0.16;
-  ctx.fillStyle = "#1e293b";
-  ctx.beginPath();
-  ctx.arc(bowlerX, bowlerY - 8, 6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillRect(bowlerX - 4, bowlerY - 2, 8, 14);
 
-  // Bowler arm action
-  let armAngle = Math.PI * 0.2;
-  if (p < 0.25) armAngle = (p / 0.25) * Math.PI * 2;
-  else if (p > 0.75) armAngle = -Math.PI * 0.7; // Appeal pose
+  let bowlerPose: BowlerPoseType = "RUN_UP";
+  let armAngle = 45;
 
-  ctx.strokeStyle = "#1e293b";
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(bowlerX, bowlerY + 2);
-  ctx.lineTo(bowlerX + Math.cos(armAngle) * 10, bowlerY + 2 + Math.sin(armAngle) * 10);
-  ctx.stroke();
-
-  // Batter in Stance
-  const batterY = h * 0.70;
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath();
-  ctx.ellipse(batterX + 6, batterY + 36, 18, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Body
-  ctx.fillStyle = "#0f172a";
-  ctx.beginPath();
-  ctx.arc(batterX, batterY - 8, 8, 0, Math.PI * 2); // Head
-  ctx.fill();
-  ctx.fillRect(batterX - 7, batterY, 15, 24); // Torso
-
-  // Pads
-  ctx.fillStyle = "#f8fafc";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.8;
-  ctx.fillRect(batterX + 4, batterY + 12, 11, 28); // Front pad
-  ctx.strokeRect(batterX + 4, batterY + 12, 11, 28);
-
-  // Pad Knee Rolls
-  ctx.strokeStyle = "#cbd5e1";
-  ctx.beginPath();
-  ctx.moveTo(batterX + 4, batterY + 21);
-  ctx.lineTo(batterX + 15, batterY + 21);
-  ctx.moveTo(batterX + 4, batterY + 27);
-  ctx.lineTo(batterX + 15, batterY + 27);
-  ctx.stroke();
-
-  // Bat Stance
-  ctx.fillStyle = "#d97706";
-  ctx.strokeStyle = "#78350f";
-  ctx.lineWidth = 0.8;
-  if (isNoShot) {
-    // Shouldering arms
-    ctx.save();
-    ctx.translate(batterX - 14, batterY - 4);
-    ctx.rotate(-Math.PI * 0.25);
-    ctx.fillRect(0, 0, 4.5, 34);
-    ctx.strokeRect(0, 0, 4.5, 34);
-    ctx.restore();
+  if (p < 0.20) {
+    bowlerPose = "WINDUP_RELEASE";
+    armAngle = (p / 0.20) * 360;
+  } else if (p >= 0.20 && p < 0.72) {
+    bowlerPose = "FOLLOW_THROUGH";
+    armAngle = 120;
   } else {
-    // Forward defensive
-    const batOffset = ev && ev.batPadSeparationMm < 25 ? -2 : -12;
-    ctx.save();
-    ctx.translate(batterX + batOffset, batterY + 6);
-    ctx.rotate(-Math.PI * 0.08);
-    ctx.fillRect(0, 0, 4.5, 38);
-    ctx.strokeRect(0, 0, 4.5, 38);
-    ctx.restore();
+    bowlerPose = "APPEAL";
+    armAngle = -135;
   }
+
+  drawBowler(
+    ctx,
+    { x: bowlerX, y: bowlerY + 18, scale: 0.88, facing: "RIGHT" },
+    { pose: bowlerPose, armAngleDeg: armAngle }
+  );
+
+  // Batter in Stance at Crease
+  const batterY = h * 0.84;
+  let batterPose: BatterPoseType = "NEUTRAL_STANCE";
+
+  if (p < 0.25) {
+    batterPose = "NEUTRAL_STANCE";
+  } else if (p >= 0.25 && p < 0.70) {
+    if (isNoShot) batterPose = "LEAVE_ARMS";
+    else if (shotType === "DRIVE_ATTEMPT") batterPose = "COVER_DRIVE";
+    else batterPose = "FORWARD_DEFENCE";
+  } else {
+    if (isNoShot) batterPose = "LEAVE_ARMS";
+    else batterPose = "PAD_IMPACT";
+  }
+
+  drawBatter(
+    ctx,
+    { x: batterX, y: batterY, scale: 1.18, facing: "RIGHT" },
+    {
+      pose: batterPose,
+      batPadSeparationMm: ev?.batPadSeparationMm,
+      batAngleDeg: isNoShot ? -35 : 14,
+      hasPadImpact: p >= 0.70,
+    }
+  );
 
   // Ball Delivery Physics & Trajectory
   let ballX = bowlerX;
@@ -322,8 +288,9 @@ function renderLBWBroadcast(
   let ballRadius = 2.5;
 
   if (p < 0.20) {
-    ballX = bowlerX + Math.cos(armAngle) * 9;
-    ballY = bowlerY + 2 + Math.sin(armAngle) * 9;
+    const rad = (armAngle * Math.PI) / 180;
+    ballX = bowlerX + Math.cos(rad) * 8;
+    ballY = bowlerY + 2 + Math.sin(rad) * 8;
   } else if (p >= 0.20 && p < 0.50) {
     // Release to pitch bounce
     const t = (p - 0.20) / 0.30;
@@ -350,28 +317,20 @@ function renderLBWBroadcast(
     ballRadius = 6.8;
   }
 
-  // Draw Cricket Ball
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(ballX + 1.5, ballY + ballRadius * 1.1, ballRadius * 1.1, ballRadius * 0.4, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#dc2626";
-  ctx.beginPath();
-  ctx.arc(ballX, ballY, ballRadius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#991b1b";
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
+  // Draw Cricket Ball using shared primitive
+  drawCricketBall(ctx, ballX, ballY, {
+    radius: ballRadius,
+    seamAngleRad: p * Math.PI * 4,
+    shadowY: Math.min(h * 0.88, ballY + ballRadius * 1.2),
+  });
 
   ctx.restore();
 }
 
 /* ================================================================
    2. CAUGHT BEHIND BROADCAST REPLAY RENDERER
-   Tighter broadcast slip camera focused on the corridor of uncertainty
-   (Bat blade, ball passing, outside edge daylight or micro-deflection,
-   and wicketkeeper's gloved catch with NO artificial sparks).
+   Tighter broadcast slip camera using articulated Batter and
+   Wicketkeeper actor rigs to judge daylight vs micro-deflection.
    ================================================================ */
 function renderCaughtBehindBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -387,83 +346,53 @@ function renderCaughtBehindBroadcast(
   ctx.fillStyle = "#142d1e";
   ctx.fillRect(0, 0, w, h);
 
-  // Clay pitch strip (wider corridor)
+  // Clay pitch strip
   ctx.fillStyle = "#ad9275";
   ctx.fillRect(0, h * 0.58, w, h * 0.42);
 
   // Stumps at X = w * 0.46
   const stumpsX = w * 0.46;
   const stumpsBaseY = h * 0.60;
-  ctx.fillStyle = "#cbd5e1";
-  for (let i = -1; i <= 1; i++) {
-    ctx.fillRect(stumpsX + i * 6 - 2, stumpsBaseY - 50, 4, 50);
-  }
+  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.25 });
 
-  // Batter Stance (Center-Right at w * 0.62)
-  const batterX = w * 0.62;
-  const batterY = h * 0.44;
+  // Batter Stance (Center-Right at w * 0.60, Base Y = h * 0.66)
+  const batterX = w * 0.60;
+  const batterY = h * 0.66;
 
-  // Batter Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath();
-  ctx.ellipse(batterX + 6, stumpsBaseY + 14, 28, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
+  let batterPose: BatterPoseType = "FORWARD_DEFENCE";
+  if (ev?.shotType === "COVER_DRIVE") batterPose = "COVER_DRIVE";
+  else if (ev?.shotType === "LATE_CUT") batterPose = "NEUTRAL_STANCE";
 
-  ctx.fillStyle = "#0f172a";
-  // Head
-  ctx.beginPath();
-  ctx.arc(batterX, batterY - 12, 11, 0, Math.PI * 2);
-  ctx.fill();
-  // Torso
-  ctx.fillRect(batterX - 10, batterY, 20, 36);
-  // White front pad
-  ctx.fillStyle = "#f8fafc";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.8;
-  ctx.fillRect(batterX - 16, batterY + 26, 13, 38);
-  ctx.strokeRect(batterX - 16, batterY + 26, 13, 38);
+  drawBatter(
+    ctx,
+    { x: batterX, y: batterY, scale: 1.25, facing: "LEFT" },
+    {
+      pose: batterPose,
+      batAngleDeg: ev?.batAngleDeg ?? 14,
+    }
+  );
 
-  // Bat Blade Angle & Swing Motion
-  const batAngle = ev?.batAngleDeg ?? 14;
-  const swingProgress = p < 0.50 ? p / 0.50 : 1.0;
-  const currentAngle = (batAngle * Math.PI) / 180 + (1.0 - swingProgress) * 0.12;
+  // Wicketkeeper Crouching Behind Stumps (Left at w * 0.26, Base Y = h * 0.64)
+  const keeperX = w * 0.26;
+  const keeperY = h * 0.64;
 
-  // Bat Pivot & Willow Blade
-  ctx.save();
-  ctx.translate(batterX - 26, batterY + 16);
-  ctx.rotate(currentAngle);
-  ctx.fillStyle = "#d97706";
-  ctx.strokeStyle = "#78350f";
-  ctx.lineWidth = 1;
-  ctx.fillRect(-3, 0, 6, 56);
-  ctx.strokeRect(-3, 0, 6, 56);
+  let keeperPose: KeeperPoseType = "CROUCH_WAIT";
+  if (p >= 0.45 && p < 0.72) keeperPose = "CATCH_GATHER";
+  else if (p >= 0.72) keeperPose = "APPEAL_STAND";
 
-  // Rubber bat handle
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(-1.5, -16, 3, 16);
-  ctx.restore();
-
-  // Wicketkeeper Crouching Behind Stumps (Left at w * 0.28)
-  const keeperX = w * 0.28;
-  const keeperY = h * 0.48;
-
-  const keeperAppealing = p > 0.72;
-  ctx.fillStyle = "#1e293b";
-  ctx.beginPath();
-  ctx.arc(keeperX, keeperY - (keeperAppealing ? 18 : 6), 9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillRect(keeperX - 7, keeperY + (keeperAppealing ? -8 : 4), 14, 28);
-
-  // Keeper green gloves
-  ctx.fillStyle = "#16a34a";
-  const gloveY = keeperAppealing ? keeperY - 24 : keeperY + 16;
-  ctx.beginPath();
-  ctx.arc(keeperX + 20, gloveY, 8, 0, Math.PI * 2);
-  ctx.fill();
+  drawWicketkeeper(
+    ctx,
+    { x: keeperX, y: keeperY, scale: 1.22, facing: "RIGHT" },
+    {
+      pose: keeperPose,
+      gloveOffsetX: p >= 0.45 ? 6 : 0,
+      gloveOffsetY: p >= 0.45 ? -4 : 0,
+    }
+  );
 
   // Ball Trajectory & Edge Passage
-  const batEdgeX = batterX - 26;
-  const batEdgeY = batterY + 42;
+  const batEdgeX = batterX - 28;
+  const batEdgeY = batterY - 34;
 
   const hasEdge = cb?.hasEdge ?? false;
   const deflectionAngle = ev?.apparentDeflectionAngleDeg ?? (hasEdge ? 2.6 : 0);
@@ -478,20 +407,18 @@ function renderCaughtBehindBroadcast(
     ballY = h * 0.32 + (batEdgeY - h * 0.32) * t;
   } else {
     const t = (p - 0.50) / 0.50;
-    const targetX = keeperX + 20;
-    const targetY = deflectionAngle > 0 ? gloveY + 3 : gloveY;
+    const targetX = keeperX + 24;
+    const targetY = deflectionAngle > 0 ? keeperY - 22 : keeperY - 26;
     ballX = batEdgeX + gapPx + (targetX - (batEdgeX + gapPx)) * t;
     ballY = batEdgeY + (targetY - batEdgeY) * t;
   }
 
   // Draw Cricket Ball (NO artificial sparks or flashes!)
-  ctx.fillStyle = "#dc2626";
-  ctx.beginPath();
-  ctx.arc(ballX, ballY, 5.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#991b1b";
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
+  drawCricketBall(ctx, ballX, ballY, {
+    radius: 5.5,
+    seamAngleRad: p * Math.PI * 6,
+    shadowY: h * 0.65,
+  });
 }
 
 /* ================================================================
@@ -527,44 +454,22 @@ function renderRunOutBroadcast(
   const stumpsBaseY = h * 0.52;
 
   // Wicketkeeper at Stumps
-  ctx.fillStyle = "#1e293b";
-  ctx.beginPath();
-  ctx.arc(stumpsX - 24, stumpsBaseY - 36, 9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillRect(stumpsX - 30, stumpsBaseY - 26, 14, 26);
-  // Keeper green gloves
-  ctx.fillStyle = "#16a34a";
-  ctx.beginPath();
-  ctx.arc(stumpsX + 6, stumpsBaseY - 14, 6, 0, Math.PI * 2);
-  ctx.fill();
+  drawWicketkeeper(
+    ctx,
+    { x: stumpsX - 24, y: stumpsBaseY + 6, scale: 1.0, facing: "RIGHT" },
+    { pose: "CROUCH_WAIT" }
+  );
 
   // Timing: Bails break at p = 0.62
   const bailsBroke = p >= 0.62;
+  const dislodgeT = bailsBroke ? (p - 0.62) / 0.38 : 0.0;
 
-  // Draw Stumps
-  ctx.fillStyle = "#cbd5e1";
-  ctx.strokeStyle = "#475569";
-  ctx.lineWidth = 0.5;
-  for (let i = -1; i <= 1; i++) {
-    ctx.fillRect(stumpsX + i * 6 - 2, stumpsBaseY - 48, 4, 48);
-    ctx.strokeRect(stumpsX + i * 6 - 2, stumpsBaseY - 48, 4, 48);
-  }
-
-  // Zing Bails
-  if (!bailsBroke) {
-    ctx.fillStyle = "#f59e0b";
-    ctx.fillRect(stumpsX - 9, stumpsBaseY - 51, 8, 3);
-    ctx.fillRect(stumpsX + 1, stumpsBaseY - 51, 8, 3);
-  } else {
-    // Bails Dislodged & Flying with Red LED Glow
-    const flyT = (p - 0.62) / 0.38;
-    ctx.fillStyle = "#ef4444";
-    ctx.shadowColor = "#ef4444";
-    ctx.shadowBlur = 8;
-    ctx.fillRect(stumpsX - 12 - flyT * 22, stumpsBaseY - 54 - flyT * 18 + flyT * flyT * 25, 7, 3);
-    ctx.fillRect(stumpsX + 3 + flyT * 18, stumpsBaseY - 52 - flyT * 22 + flyT * flyT * 28, 7, 3);
-    ctx.shadowBlur = 0;
-  }
+  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
+    scale: 1.1,
+    bailsDislodged: bailsBroke,
+    dislodgeProgress: dislodgeT,
+    isZing: true,
+  });
 
   // Incoming Ball Throw from Deep Fielder
   if (p < 0.62) {
@@ -572,10 +477,10 @@ function renderRunOutBroadcast(
     const throwX = w * 0.95 + (stumpsX - w * 0.95) * tThrow;
     const throwY = h * 0.25 + (stumpsBaseY - 14 - h * 0.25) * tThrow;
 
-    ctx.fillStyle = "#dc2626";
-    ctx.beginPath();
-    ctx.arc(throwX, throwY, 4.5, 0, Math.PI * 2);
-    ctx.fill();
+    drawCricketBall(ctx, throwX, throwY, {
+      radius: 4.5,
+      seamAngleRad: p * Math.PI * 8,
+    });
   }
 
   // Runner Slide / Dive Kinematics
@@ -592,51 +497,16 @@ function renderRunOutBroadcast(
   }
 
   const diveTechnique = ev?.runnerDiveTechnique || "FULL_DIVE";
-  const runnerY = stumpsBaseY + 6;
+  const runnerY = stumpsBaseY + 12;
 
-  // Ground shadow
-  ctx.fillStyle = "rgba(0,0,0,0.35)";
-  ctx.beginPath();
-  ctx.ellipse(currentRunnerX, runnerY + 12, 45, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Draw Runner Body
-  ctx.fillStyle = "#0f172a";
-  if (diveTechnique === "FULL_DIVE" || diveTechnique === "FEET_FIRST_SLIDE") {
-    // Horizontal Superman Dive
-    ctx.beginPath();
-    ctx.arc(currentRunnerX + 35, runnerY - 6, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(currentRunnerX + 10, runnerY - 2, 24, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // Arm reaching forward
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 4.5;
-    ctx.beginPath();
-    ctx.moveTo(currentRunnerX - 10, runnerY - 2);
-    ctx.lineTo(currentRunnerX - 35, runnerY + 4);
-    ctx.stroke();
-
-    // Bat held in hand stretching towards crease
-    ctx.fillStyle = "#d97706";
-    ctx.strokeStyle = "#78350f";
-    ctx.lineWidth = 0.8;
-    ctx.fillRect(currentRunnerX - 70, runnerY + 2, 42, 6);
-    ctx.strokeRect(currentRunnerX - 70, runnerY + 2, 42, 6);
-    // Bat handle
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(currentRunnerX - 36, runnerY + 3.5, 12, 3);
-  } else {
-    // Upright Sprint
-    ctx.beginPath();
-    ctx.arc(currentRunnerX + 12, runnerY - 28, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillRect(currentRunnerX + 4, runnerY - 20, 16, 26);
-    // Bat lunge
-    ctx.fillStyle = "#d97706";
-    ctx.fillRect(currentRunnerX - 45, runnerY + 2, 45, 6);
-  }
+  // Draw Batter in Diving/Running pose
+  drawBatter(
+    ctx,
+    { x: currentRunnerX - 35, y: runnerY, scale: 1.1, facing: "LEFT" },
+    {
+      pose: diveTechnique === "UPRIGHT_RUN" ? "RUNNING" : "DIVING",
+    }
+  );
 }
 
 /* ================================================================
@@ -710,46 +580,34 @@ function renderBoundaryBroadcast(
     currentFielderX = slideTargetX + t * 12;
   }
 
-  const fielderY = h * 0.55;
+  const fielderY = h * 0.60;
 
-  // Fielder horizontal sliding body
-  ctx.fillStyle = "#0f172a";
-  ctx.beginPath();
-  ctx.arc(currentFielderX + 30, fielderY - 4, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(currentFielderX + 8, fielderY, 24, 7, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Outstretched arm
-  ctx.strokeStyle = "#0f172a";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(currentFielderX - 8, fielderY);
-  ctx.lineTo(currentFielderX - 32, fielderY + 4);
-  ctx.stroke();
+  // Draw Fielder in sliding pose
+  drawBatter(
+    ctx,
+    { x: currentFielderX, y: fielderY, scale: 1.05, facing: "LEFT" },
+    { pose: "SLIDING" }
+  );
 
   // Ball Flight & Relay Flick
   const tossHeight = ev?.ballTossHeightPixels ?? (isBoundary ? 0 : 65);
   let ballX = currentFielderX - 32;
-  let ballY = fielderY + 4;
+  let ballY = fielderY - 8;
 
   if (p >= 0.58) {
     const tFlick = (p - 0.58) / 0.42;
     if (!isBoundary) {
       ballX = currentFielderX - 32 - tFlick * 45;
-      ballY = fielderY + 4 - Math.sin(tFlick * Math.PI) * tossHeight;
+      ballY = fielderY - 8 - Math.sin(tFlick * Math.PI) * tossHeight;
     } else {
       ballX = currentFielderX - 30;
-      ballY = fielderY + 4;
+      ballY = fielderY - 8;
     }
   }
 
   // Draw Ball
-  ctx.fillStyle = "#dc2626";
-  ctx.beginPath();
-  ctx.arc(ballX, ballY, 4.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#991b1b";
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
+  drawCricketBall(ctx, ballX, ballY, {
+    radius: 4.5,
+    seamAngleRad: p * Math.PI * 6,
+  });
 }
