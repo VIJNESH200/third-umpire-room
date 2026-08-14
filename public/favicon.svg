@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="20" fill="#0B0F17" />
+  <rect x="5" y="5" width="90" height="90" rx="16" fill="none" stroke="#FF2E4C" stroke-width="4" />
+  <!-- Stumps -->
+  <line x1="32" y1="35" x2="32" y2="78" stroke="#00E5FF" stroke-width="5" stroke-linecap="round" />
+  <line x1="50" y1="32" x2="50" y2="78" stroke="#00E5FF" stroke-width="5" stroke-linecap="round" />
+  <line x1="68" y1="35" x2="68" y2="78" stroke="#00E5FF" stroke-width="5" stroke-linecap="round" />
+  <!-- Bails with Zing Flare -->
+  <line x1="28" y1="32" x2="48" y2="30" stroke="#FF2E4C" stroke-width="5" stroke-linecap="round" />
+  <line x1="52" y1="30" x2="72" y2="32" stroke="#FF2E4C" stroke-width="5" stroke-linecap="round" />
+  <!-- TV Review Crosshair Target -->
+  <circle cx="50" cy="55" r="22" fill="none" stroke="#00E676" stroke-width="2" stroke-dasharray="4 3" />
+  <circle cx="50" cy="55" r="3" fill="#00E676" />
+</svg>
