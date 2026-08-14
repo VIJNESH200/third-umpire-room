@@ -1,8 +1,8 @@
 /**
  * actorRigs.ts
- * Reusable procedural 2D cricket actor and equipment rendering system.
- * Provides articulated, stylized broadcast-grade figures for Batter, Bowler,
- * Wicketkeeper, Fielder, and Cricket Equipment (Bat, Ball, Stumps, Zing Bails).
+ * Procedural 2D Cricket Actor Rig & Continuous Kinematics Animation System.
+ * Provides continuous smooth articulation, weight, momentum, and follow-through
+ * for Batter, Bowler, Wicketkeeper, Stumps, and Cricket Ball in Phase 1 broadcast replays.
  */
 
 export interface ActorTransform {
@@ -14,74 +14,347 @@ export interface ActorTransform {
   opacity?: number;
 }
 
-export type BatterPoseType =
-  | "NEUTRAL_STANCE"
-  | "FORWARD_DEFENCE"
-  | "COVER_DRIVE"
-  | "LEAVE_ARMS"
-  | "PAD_IMPACT"
-  | "RUNNING"
-  | "DIVING"
-  | "SLIDING";
-
-export interface BatterOptions {
-  pose: BatterPoseType;
-  shotProgress?: number; // 0.0 to 1.0
-  batAngleDeg?: number;
-  batPadSeparationMm?: number;
-  stanceShiftX?: number;
-  isLeftHanded?: boolean;
-  hasPadImpact?: boolean;
-  impactHeightRatio?: number; // 0.0 (shin) to 1.0 (high thigh)
+// Math & Easing Helpers
+export function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
-export type BowlerPoseType =
-  | "RUN_UP"
-  | "DELIVERY_STRIDE"
-  | "WINDUP_RELEASE"
-  | "FOLLOW_THROUGH"
-  | "APPEAL";
-
-export interface BowlerOptions {
-  pose: BowlerPoseType;
-  cycleProgress?: number; // 0.0 to 1.0
-  armAngleDeg?: number;
-  isSpin?: boolean;
+export function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
 }
 
-export type KeeperPoseType =
-  | "CROUCH_WAIT"
-  | "GLOVE_REACH"
-  | "CATCH_GATHER"
-  | "APPEAL_STAND";
-
-export interface KeeperOptions {
-  pose: KeeperPoseType;
-  cycleProgress?: number; // 0.0 to 1.0
-  gloveOffsetX?: number;
-  gloveOffsetY?: number;
+export function easeInOutQuad(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
-export interface StumpsOptions {
-  scale?: number;
-  bailsDislodged?: boolean;
-  dislodgeProgress?: number; // 0.0 to 1.0
-  isZing?: boolean;
+export function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
 }
 
-export interface BallOptions {
-  radius?: number;
-  seamAngleRad?: number;
-  shadowY?: number;
+export function easeInQuad(t: number): number {
+  return t * t;
+}
+
+export function smoothstep(min: number, max: number, value: number): number {
+  const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  return x * x * (3 - 2 * x);
 }
 
 // ================================================================
-// 1. BATTER RIG (Articulated Cricket Batsman)
+// KINEMATIC DATA STRUCTURES
 // ================================================================
-export function drawBatter(
+export interface BatterKinematics {
+  torsoAngleRad: number;
+  headX: number;
+  headY: number;
+  headTiltRad: number;
+  frontLegX: number;
+  frontLegY: number;
+  backLegX: number;
+  backLegY: number;
+  batPivotX: number;
+  batPivotY: number;
+  batRotRad: number;
+  padRecoilX: number;
+  padRecoilY: number;
+}
+
+export interface BowlerKinematics {
+  torsoAngleRad: number;
+  torsoY: number;
+  headTiltRad: number;
+  bowlingArmAngleRad: number;
+  nonBowlingArmAngleRad: number;
+  frontLegX: number;
+  frontLegY: number;
+  backLegX: number;
+  backLegY: number;
+  appealElevation: number; // 0.0 (bowling) to 1.0 (appealing)
+}
+
+export interface KeeperKinematics {
+  crouchElevation: number; // 0.0 (deep crouch) to 1.0 (full standing appeal)
+  torsoAngleRad: number;
+  headTiltRad: number;
+  gloveX: number;
+  gloveY: number;
+  isGlovesOpen: boolean;
+}
+
+// ================================================================
+// CONTINUOUS KINEMATIC SOLVERS
+// ================================================================
+
+/**
+ * Solves continuous batter kinematics across the 2.8s replay loop for LBW.
+ * Neutral -> Trigger stride -> Forward defence / leave -> Pad impact recoil -> Hold.
+ */
+export function solveLBWBatterKinematics(
+  p: number,
+  isNoShot: boolean,
+  _shotType: string,
+  batPadSeparationMm: number = 60
+): BatterKinematics {
+  let stride = 0.0;
+  let impactRecoil = 0.0;
+
+  if (p < 0.20) {
+    // 0% - 20%: Neutral stance with subtle breathing weight shift
+    stride = 0.0;
+  } else if (p >= 0.20 && p < 0.50) {
+    // 20% - 50%: Smooth trigger movement & forward stride
+    const t = (p - 0.20) / 0.30;
+    stride = easeInOutQuad(t);
+  } else {
+    // 50% - 100%: Stride held firmly
+    stride = 1.0;
+  }
+
+  // Pad Impact recoil at p = 0.70
+  if (p >= 0.70 && p < 0.85) {
+    const t = (p - 0.70) / 0.15;
+    impactRecoil = Math.sin(t * Math.PI) * 2.5; // Absorbs momentum and settles
+  }
+
+  const torsoAngleRad = lerp(-0.04, isNoShot ? -0.15 : 0.12, stride);
+  const headX = lerp(-2, isNoShot ? -6 : 4, stride);
+  const headY = lerp(-54, isNoShot ? -56 : -50, stride);
+  const headTiltRad = lerp(0.0, isNoShot ? -0.1 : 0.15, stride);
+
+  const frontLegX = lerp(4, isNoShot ? 2 : 14, stride) - impactRecoil * 0.5;
+  const frontLegY = lerp(-28, -28, stride);
+  const backLegX = lerp(-10, isNoShot ? -8 : -12, stride);
+  const backLegY = lerp(-28, -28, stride);
+
+  let targetBatPivotX = 8;
+  let targetBatPivotY = -30;
+  let targetBatRot = 0.16;
+
+  if (isNoShot) {
+    targetBatPivotX = -14;
+    targetBatPivotY = -44;
+    targetBatRot = -0.65; // High shoulder leave
+  } else {
+    // Forward defensive with bat positioned close to pad
+    const batOffset = batPadSeparationMm < 25 ? -2 : -10;
+    targetBatPivotX = frontLegX + batOffset;
+  }
+
+  const batPivotX = lerp(-6, targetBatPivotX, stride);
+  const batPivotY = lerp(-34, targetBatPivotY, stride);
+  const batRotRad = lerp(0.08, targetBatRot, stride);
+
+  return {
+    torsoAngleRad,
+    headX,
+    headY,
+    headTiltRad,
+    frontLegX,
+    frontLegY,
+    backLegX,
+    backLegY,
+    batPivotX,
+    batPivotY,
+    batRotRad,
+    padRecoilX: -impactRecoil,
+    padRecoilY: 0,
+  };
+}
+
+/**
+ * Solves continuous bowler kinematics across the 2.8s replay loop for LBW.
+ * Run-up -> Delivery stride & 360° arm windmill -> Follow-through -> Smooth appeal.
+ */
+export function solveLBWBowlerKinematics(p: number): BowlerKinematics {
+  let torsoAngleRad = 0.08;
+  let torsoY = 0;
+  let bowlingArmAngleRad = 0.8;
+  let nonBowlingArmAngleRad = -0.6;
+  let frontLegX = 6;
+  let frontLegY = 0;
+  let backLegX = -10;
+  let backLegY = -4;
+  let appealElevation = 0.0;
+
+  if (p < 0.12) {
+    // Run-up & gather stride
+    const t = p / 0.12;
+    const strideCycle = Math.sin(t * Math.PI * 4);
+    frontLegX = 4 + strideCycle * 6;
+    backLegX = -8 - strideCycle * 6;
+    torsoY = Math.abs(strideCycle) * 2;
+    bowlingArmAngleRad = 0.5 + Math.sin(t * Math.PI * 2) * 0.8;
+    nonBowlingArmAngleRad = -0.5 - Math.sin(t * Math.PI * 2) * 0.8;
+  } else if (p >= 0.12 && p < 0.22) {
+    // Delivery gather & continuous 360° arm windmill sweep
+    const t = (p - 0.12) / 0.10;
+    const smoothT = easeInOutQuad(t);
+    // Arm rotates from behind back (-PI/2) over top (PI/2) to release point (1.3PI)
+    bowlingArmAngleRad = lerp(-Math.PI * 0.5, Math.PI * 1.35, smoothT);
+    nonBowlingArmAngleRad = lerp(Math.PI * 0.6, -Math.PI * 0.4, smoothT);
+    torsoAngleRad = lerp(0.05, 0.35, smoothT);
+    frontLegX = lerp(2, 9, smoothT);
+    backLegX = lerp(-6, -14, smoothT);
+  } else if (p >= 0.22 && p < 0.65) {
+    // Follow-through momentum
+    const t = (p - 0.22) / 0.43;
+    const smoothT = easeOutCubic(t);
+    bowlingArmAngleRad = lerp(Math.PI * 1.35, Math.PI * 0.6, smoothT);
+    nonBowlingArmAngleRad = lerp(-Math.PI * 0.4, 0.2, smoothT);
+    torsoAngleRad = lerp(0.35, 0.15, smoothT);
+    frontLegX = lerp(9, 6, smoothT);
+    backLegX = lerp(-14, -8, smoothT);
+  } else {
+    // 65% - 100%: Smooth transition into passionate LBW appeal
+    const t = (p - 0.65) / 0.25;
+    appealElevation = clamp(easeInOutQuad(t), 0, 1);
+    torsoAngleRad = lerp(0.15, -0.15, appealElevation);
+    bowlingArmAngleRad = lerp(Math.PI * 0.6, -Math.PI * 0.75, appealElevation);
+    nonBowlingArmAngleRad = lerp(0.2, -Math.PI * 0.75, appealElevation);
+    frontLegX = lerp(6, 4, appealElevation);
+    backLegX = lerp(-8, -4, appealElevation);
+  }
+
+  return {
+    torsoAngleRad,
+    torsoY,
+    headTiltRad: lerp(0.1, -0.2, appealElevation),
+    bowlingArmAngleRad,
+    nonBowlingArmAngleRad,
+    frontLegX,
+    frontLegY,
+    backLegX,
+    backLegY,
+    appealElevation,
+  };
+}
+
+/**
+ * Solves continuous batter kinematics for Caught Behind (Corridor of Uncertainty).
+ * Neutral -> Backlift & downswing arc -> Ball transit -> Follow-through -> Head track.
+ */
+export function solveCaughtBehindBatterKinematics(
+  p: number,
+  _shotType: string = "FORWARD_DEFENCE",
+  batAngleDeg: number = 14
+): BatterKinematics {
+  let swing = 0.0;
+  let followThrough = 0.0;
+
+  if (p < 0.25) {
+    // Stance & subtle backlift
+    const t = p / 0.25;
+    swing = t * 0.15;
+  } else if (p >= 0.25 && p < 0.50) {
+    // Active downswing arc to meet delivery at p = 0.50
+    const t = (p - 0.25) / 0.25;
+    swing = lerp(0.15, 0.85, easeInOutQuad(t));
+  } else if (p >= 0.50 && p < 0.75) {
+    // Follow-through extension
+    const t = (p - 0.50) / 0.25;
+    followThrough = easeOutCubic(t);
+    swing = lerp(0.85, 1.0, followThrough);
+  } else {
+    // Hold follow-through
+    swing = 1.0;
+    followThrough = 1.0;
+  }
+
+  const baseAngleRad = (batAngleDeg * Math.PI) / 180;
+  const batRotRad = lerp(-0.25, baseAngleRad + 0.15, swing);
+  const torsoAngleRad = lerp(0.04, 0.20, swing);
+
+  const headX = lerp(0, 6, swing);
+  const headY = lerp(-54, -48, swing);
+  const headTiltRad = lerp(0.05, 0.18, swing);
+
+  const frontLegX = lerp(8, 16, swing);
+  const frontLegY = -28;
+  const backLegX = lerp(-10, -12, swing);
+  const backLegY = -28;
+
+  const batPivotX = lerp(-4, 10, swing);
+  const batPivotY = lerp(-38, -28, swing);
+
+  return {
+    torsoAngleRad,
+    headX,
+    headY,
+    headTiltRad,
+    frontLegX,
+    frontLegY,
+    backLegX,
+    backLegY,
+    batPivotX,
+    batPivotY,
+    batRotRad,
+    padRecoilX: 0,
+    padRecoilY: 0,
+  };
+}
+
+/**
+ * Solves continuous wicketkeeper kinematics for Caught Behind.
+ * Crouch wait -> Glove dynamic reach towards ball line -> Catch gather -> Rising appeal.
+ */
+export function solveCaughtBehindKeeperKinematics(
+  p: number,
+  hasEdge: boolean
+): KeeperKinematics {
+  let crouchElevation = 0.0;
+  let gloveX = 12;
+  let gloveY = -16;
+  let isGlovesOpen = true;
+
+  if (p < 0.35) {
+    // Deep crouch waiting
+    crouchElevation = 0.0;
+    gloveX = 12;
+    gloveY = -16;
+  } else if (p >= 0.35 && p < 0.52) {
+    // Dynamic glove extension towards incoming delivery line
+    const t = (p - 0.35) / 0.17;
+    const smoothT = easeInOutQuad(t);
+    gloveX = lerp(12, 18, smoothT);
+    gloveY = lerp(-16, hasEdge ? -22 : -20, smoothT);
+    crouchElevation = lerp(0.0, 0.1, smoothT);
+  } else if (p >= 0.52 && p < 0.70) {
+    // Catch cushioned gather towards body
+    const t = (p - 0.52) / 0.18;
+    const smoothT = easeOutCubic(t);
+    gloveX = lerp(18, 14, smoothT);
+    gloveY = lerp(-22, -18, smoothT);
+    isGlovesOpen = false; // Clamped around ball
+    crouchElevation = lerp(0.1, 0.25, smoothT);
+  } else {
+    // 70% - 100%: Smooth rise into standing appeal
+    const t = (p - 0.70) / 0.25;
+    const smoothT = clamp(easeInOutQuad(t), 0, 1);
+    crouchElevation = lerp(0.25, 1.0, smoothT);
+    gloveX = lerp(14, 0, smoothT);
+    gloveY = lerp(-18, -52, smoothT);
+  }
+
+  const torsoAngleRad = lerp(0.15, -0.1, crouchElevation);
+  const headTiltRad = lerp(0.1, -0.2, crouchElevation);
+
+  return {
+    crouchElevation,
+    torsoAngleRad,
+    headTiltRad,
+    gloveX,
+    gloveY,
+    isGlovesOpen,
+  };
+}
+
+// ================================================================
+// 1. ARTICULATED BATTER RIG RENDERER
+// ================================================================
+export function drawArticulatedBatter(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
-  opts: BatterOptions
+  k: BatterKinematics
 ) {
   const scale = t.scale ?? 1.0;
   const facingDir = t.facing === "LEFT" ? -1 : 1;
@@ -99,72 +372,12 @@ export function drawBatter(
   // --- Ground Contact Shadow ---
   ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
   ctx.beginPath();
-  ctx.ellipse(0, 0, 22, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(k.frontLegX * 0.5, 0, 24, 6, 0, 0, Math.PI * 2);
   ctx.fill();
-
-  // Pose-specific coordinates & joint angles
-  let torsoAngle = -0.04;
-  let headX = -2;
-  let headY = -54;
-  let frontLegX = 4;
-  let frontLegY = -28;
-  let backLegX = -10;
-  let backLegY = -28;
-  let batPivotX = -6;
-  let batPivotY = -34;
-  let batRot = (opts.batAngleDeg ?? 14) * (Math.PI / 180);
-
-  if (opts.pose === "FORWARD_DEFENCE") {
-    torsoAngle = 0.12;
-    headX = 4;
-    headY = -50;
-    frontLegX = 14;
-    backLegX = -12;
-    batPivotX = 8;
-    batPivotY = -30;
-    batRot = 0.18;
-  } else if (opts.pose === "COVER_DRIVE") {
-    torsoAngle = 0.22;
-    headX = 8;
-    headY = -48;
-    frontLegX = 18;
-    backLegX = -14;
-    batPivotX = 12;
-    batPivotY = -26;
-    batRot = 0.38;
-  } else if (opts.pose === "LEAVE_ARMS") {
-    torsoAngle = -0.15;
-    headX = -6;
-    headY = -56;
-    frontLegX = 2;
-    backLegX = -8;
-    batPivotX = -14;
-    batPivotY = -42;
-    batRot = -0.65; // Bat raised behind shoulder
-  } else if (opts.pose === "PAD_IMPACT") {
-    torsoAngle = 0.08;
-    headX = 2;
-    headY = -52;
-    frontLegX = 10;
-    backLegX = -10;
-    batPivotX = 4;
-    batPivotY = -32;
-    batRot = 0.12;
-  } else if (opts.pose === "DIVING" || opts.pose === "SLIDING") {
-    torsoAngle = Math.PI * 0.45;
-    headX = 28;
-    headY = -12;
-    frontLegX = -24;
-    backLegX = -36;
-    batPivotX = 22;
-    batPivotY = -4;
-    batRot = 0.05;
-  }
 
   // --- 1. Rear Leg & Rear Pad (Underlayer) ---
   ctx.save();
-  ctx.translate(backLegX, backLegY);
-  // Rear thigh
+  ctx.translate(k.backLegX, k.backLegY);
   ctx.fillStyle = "#e2e8f0";
   ctx.fillRect(-4, 0, 8, 14);
   // Rear pad
@@ -185,8 +398,7 @@ export function drawBatter(
   // --- 2. Torso & Flannels ---
   ctx.save();
   ctx.translate(0, -32);
-  ctx.rotate(torsoAngle);
-  // White/cream flannel shirt
+  ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1;
@@ -194,7 +406,7 @@ export function drawBatter(
   ctx.roundRect(-10, -18, 20, 26, [4, 4, 2, 2]);
   ctx.fill();
   ctx.stroke();
-  // Collar / V-neck detail
+  // Collar detail
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.moveTo(-4, -18);
@@ -206,8 +418,9 @@ export function drawBatter(
 
   // --- 3. Head & Protective Helmet ---
   ctx.save();
-  ctx.translate(headX, headY);
-  // Helmet Shell (Dark Navy/Green)
+  ctx.translate(k.headX, k.headY);
+  ctx.rotate(k.headTiltRad);
+  // Helmet Shell
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.arc(0, 0, 9, 0, Math.PI * 2);
@@ -217,12 +430,12 @@ export function drawBatter(
   ctx.beginPath();
   ctx.roundRect(1, -3, 9, 4, 1);
   ctx.fill();
-  // Face & Beard Profile
+  // Face Profile
   ctx.fillStyle = "#d4a373";
   ctx.beginPath();
   ctx.arc(2, 2, 5, 0, Math.PI * 2);
   ctx.fill();
-  // Metal Grille / Face Guard
+  // Metal Grille
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 0.8;
   ctx.beginPath();
@@ -234,14 +447,14 @@ export function drawBatter(
   ctx.stroke();
   ctx.restore();
 
-  // --- 4. Front Leg & Front Batting Pad ---
+  // --- 4. Front Leg & Front Batting Pad (with Recoil) ---
   ctx.save();
-  ctx.translate(frontLegX, frontLegY);
-  // Front thigh
+  ctx.translate(k.frontLegX + k.padRecoilX, k.frontLegY + k.padRecoilY);
+  // Thigh
   ctx.fillStyle = "#f1f5f9";
   ctx.fillRect(-5, 0, 10, 14);
 
-  // Front Batting Pad (High-definition cricket pad)
+  // Front Batting Pad
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 1;
@@ -250,7 +463,7 @@ export function drawBatter(
   ctx.fill();
   ctx.stroke();
 
-  // Pad Knee Rolls & Bolsters (3 horizontal ridges)
+  // 3 Horizontal Knee Roll Ridges
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1.2;
   ctx.beginPath();
@@ -262,47 +475,45 @@ export function drawBatter(
   ctx.lineTo(6, 28);
   ctx.stroke();
 
-  // Top hat / wing protector
+  // Top hat wing
   ctx.fillStyle = "#f8fafc";
   ctx.beginPath();
   ctx.roundRect(-5, 8, 11, 4, 1);
   ctx.fill();
 
-  // Front Spiked Shoe
+  // Spiked Shoe
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.ellipse(3, 36, 8, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
-  // White shoe trim
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 34, 5, 2);
   ctx.restore();
 
-  // --- 5. Arms, Batting Gloves & English Willow Bat ---
+  // --- 5. Arms, Gloves & Contoured Willow Bat ---
   ctx.save();
-  ctx.translate(batPivotX, batPivotY);
-  ctx.rotate(batRot);
+  ctx.translate(k.batPivotX, k.batPivotY);
+  ctx.rotate(k.batRotRad);
 
-  // Bat Handle (Cane with white rubber grip)
+  // Bat Handle (Cane with white grip)
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 0.6;
   ctx.fillRect(-2, -18, 4, 18);
   ctx.strokeRect(-2, -18, 4, 18);
 
-  // Dual Batting Gloves (Grip hands attached to handle)
-  ctx.fillStyle = "#0284c7"; // Glove accent
+  // Dual Batting Gloves (Top & Bottom Hand)
+  ctx.fillStyle = "#0284c7";
   ctx.beginPath();
-  ctx.roundRect(-4, -14, 8, 7, 2); // Top hand
-  ctx.roundRect(-4, -6, 8, 7, 2);  // Bottom hand
+  ctx.roundRect(-4, -14, 8, 7, 2);
+  ctx.roundRect(-4, -6, 8, 7, 2);
   ctx.fill();
-  // White glove sausage padding
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(-3, -12, 6, 2.5);
   ctx.fillRect(-3, -4, 6, 2.5);
 
-  // English Willow Cricket Bat Blade
-  ctx.fillStyle = "#d97706"; // Willow wood tone
+  // English Willow Blade
+  ctx.fillStyle = "#d97706";
   ctx.strokeStyle = "#78350f";
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -310,10 +521,10 @@ export function drawBatter(
   ctx.fill();
   ctx.stroke();
 
-  // Bat Face Contour & Spine Highlight
+  // Willow Spine Contour
   ctx.fillStyle = "#b45309";
   ctx.fillRect(-1.5, 4, 3, 38);
-  // Red/Gold Branding Sticker on Shoulders
+  // Red/Gold Branding Decal
   ctx.fillStyle = "#dc2626";
   ctx.fillRect(-3, 2, 6, 6);
 
@@ -323,12 +534,12 @@ export function drawBatter(
 }
 
 // ================================================================
-// 2. BOWLER RIG (Articulated Delivery Stride & Arm Windmill)
+// 2. ARTICULATED BOWLER RIG RENDERER
 // ================================================================
-export function drawBowler(
+export function drawArticulatedBowler(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
-  opts: BowlerOptions
+  k: BowlerKinematics
 ) {
   const scale = t.scale ?? 1.0;
   const facingDir = t.facing === "LEFT" ? -1 : 1;
@@ -349,49 +560,27 @@ export function drawBowler(
   ctx.ellipse(0, 0, 18, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  let bodyTilt = 0.1;
-  let armAngle = (opts.armAngleDeg ?? 45) * (Math.PI / 180);
-
-  if (opts.pose === "APPEAL") {
-    bodyTilt = -0.15;
-    armAngle = -Math.PI * 0.75; // Both arms thrust upwards
-  } else if (opts.pose === "FOLLOW_THROUGH") {
-    bodyTilt = 0.35;
-    armAngle = Math.PI * 0.6;
-  }
-
-  // --- Legs & Stride ---
+  // --- Stride Legs ---
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 3.5;
   ctx.lineCap = "round";
 
-  if (opts.pose === "APPEAL") {
-    // Standing appealing
-    ctx.beginPath();
-    ctx.moveTo(-4, -18);
-    ctx.lineTo(-5, 0);
-    ctx.moveTo(4, -18);
-    ctx.lineTo(5, 0);
-    ctx.stroke();
-  } else {
-    // Landing delivery stride
-    ctx.beginPath();
-    ctx.moveTo(-3, -18);
-    ctx.lineTo(8, -1); // Front landing foot
-    ctx.moveTo(-3, -18);
-    ctx.lineTo(-12, -8); // Trailing kicking leg
-    ctx.stroke();
-  }
+  ctx.beginPath();
+  ctx.moveTo(-3, -18 + k.torsoY);
+  ctx.lineTo(k.frontLegX, k.frontLegY);
+  ctx.moveTo(-3, -18 + k.torsoY);
+  ctx.lineTo(k.backLegX, k.backLegY);
+  ctx.stroke();
 
   // Shoes
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(opts.pose === "APPEAL" ? -7 : 6, -3, 6, 3);
-  ctx.fillRect(opts.pose === "APPEAL" ? 3 : -14, opts.pose === "APPEAL" ? -3 : -10, 6, 3);
+  ctx.fillRect(k.frontLegX - 2, k.frontLegY - 2, 6, 3);
+  ctx.fillRect(k.backLegX - 2, k.backLegY - 2, 6, 3);
 
   // --- Torso & Flannels ---
   ctx.save();
-  ctx.translate(0, -22);
-  ctx.rotate(bodyTilt);
+  ctx.translate(0, -22 + k.torsoY);
+  ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1;
@@ -405,55 +594,45 @@ export function drawBowler(
   ctx.beginPath();
   ctx.arc(0, -20, 6, 0, Math.PI * 2);
   ctx.fill();
-  // Cap peak
   ctx.fillStyle = "#1e293b";
   ctx.fillRect(1, -22, 6, 2.5);
   ctx.restore();
 
-  // --- Bowling Arm & Release Action ---
+  // --- Articulated Arms ---
   ctx.save();
-  ctx.translate(0, -32);
+  ctx.translate(0, -32 + k.torsoY);
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 2.5;
 
-  if (opts.pose === "APPEAL") {
-    // Dual appeal arms
-    ctx.beginPath();
-    ctx.moveTo(-4, 0);
-    ctx.lineTo(-9, -16);
-    ctx.moveTo(4, 0);
-    ctx.lineTo(9, -16);
-    ctx.stroke();
-  } else {
-    // Non-bowling arm pull-down
-    ctx.beginPath();
-    ctx.moveTo(-4, 0);
-    ctx.lineTo(-8, 8);
-    ctx.stroke();
+  // Non-bowling arm
+  ctx.beginPath();
+  ctx.moveTo(-4, 0);
+  ctx.lineTo(-4 + Math.cos(k.nonBowlingArmAngleRad) * 14, Math.sin(k.nonBowlingArmAngleRad) * 14);
+  ctx.stroke();
 
-    // High windmill bowling arm
-    ctx.beginPath();
-    ctx.moveTo(3, 0);
-    ctx.lineTo(3 + Math.cos(armAngle) * 16, Math.sin(armAngle) * 16);
-    ctx.stroke();
-    // Hand
-    ctx.fillStyle = "#d4a373";
-    ctx.beginPath();
-    ctx.arc(3 + Math.cos(armAngle) * 17, Math.sin(armAngle) * 17, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // Bowling windmill arm
+  ctx.beginPath();
+  ctx.moveTo(3, 0);
+  ctx.lineTo(3 + Math.cos(k.bowlingArmAngleRad) * 16, Math.sin(k.bowlingArmAngleRad) * 16);
+  ctx.stroke();
+  // Bowling hand
+  ctx.fillStyle = "#d4a373";
+  ctx.beginPath();
+  ctx.arc(3 + Math.cos(k.bowlingArmAngleRad) * 17, Math.sin(k.bowlingArmAngleRad) * 17, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
 
   ctx.restore();
 }
 
 // ================================================================
-// 3. WICKETKEEPER RIG (Crouched Keeping Stance & Webbed Gloves)
+// 3. ARTICULATED WICKETKEEPER RIG RENDERER
 // ================================================================
-export function drawWicketkeeper(
+export function drawArticulatedWicketkeeper(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
-  opts: KeeperOptions
+  k: KeeperKinematics
 ) {
   const scale = t.scale ?? 1.0;
   const facingDir = t.facing === "LEFT" ? -1 : 1;
@@ -474,75 +653,72 @@ export function drawWicketkeeper(
   ctx.ellipse(0, 0, 20, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const isAppealing = opts.pose === "APPEAL_STAND";
-  const bodyY = isAppealing ? -32 : -20;
-  const headY = isAppealing ? -46 : -32;
+  const bodyY = lerp(-20, -32, k.crouchElevation);
+  const headY = lerp(-32, -46, k.crouchElevation);
 
-  // --- Crouched Legs & Compact Pads ---
+  // Legs
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 0.8;
-  if (!isAppealing) {
-    // Wide flexed knees
-    ctx.fillRect(-12, -14, 8, 14);
-    ctx.fillRect(4, -14, 8, 14);
-    ctx.strokeRect(-12, -14, 8, 14);
-    ctx.strokeRect(4, -14, 8, 14);
-  } else {
-    // Straightened legs
-    ctx.fillRect(-8, -20, 6, 20);
-    ctx.fillRect(2, -20, 6, 20);
-    ctx.strokeRect(-8, -20, 6, 20);
-    ctx.strokeRect(2, -20, 6, 20);
-  }
+  const kneeSpread = lerp(8, 4, k.crouchElevation);
+  const legHeight = lerp(14, 20, k.crouchElevation);
+  ctx.fillRect(-kneeSpread - 4, -legHeight, 6, legHeight);
+  ctx.fillRect(kneeSpread - 2, -legHeight, 6, legHeight);
+  ctx.strokeRect(-kneeSpread - 4, -legHeight, 6, legHeight);
+  ctx.strokeRect(kneeSpread - 2, -legHeight, 6, legHeight);
 
   // Shoes
   ctx.fillStyle = "#0f172a";
-  ctx.fillRect(-14, -2, 9, 3);
-  ctx.fillRect(5, -2, 9, 3);
+  ctx.fillRect(-kneeSpread - 6, -2, 9, 3);
+  ctx.fillRect(kneeSpread - 2, -2, 9, 3);
 
-  // --- Torso & Keeping Jersey ---
+  // Torso
+  ctx.save();
+  ctx.translate(0, bodyY);
+  ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(-8, bodyY, 16, isAppealing ? 18 : 14, 2);
+  ctx.roundRect(-8, -12, 16, 16, 2);
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
 
-  // --- Head & Cap/Helmet ---
+  // Head
+  ctx.save();
+  ctx.translate(0, headY);
+  ctx.rotate(k.headTiltRad);
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.arc(0, headY, 7.5, 0, Math.PI * 2);
+  ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#1e293b";
-  ctx.fillRect(1, headY - 3, 7, 3); // Peak
+  ctx.fillRect(1, -3, 7, 3);
+  ctx.restore();
 
-  // --- Wicketkeeping Webbed Gloves ---
-  const gloveX = (opts.gloveOffsetX ?? 0) + (isAppealing ? 0 : 12);
-  const gloveY = (opts.gloveOffsetY ?? 0) + (isAppealing ? -52 : -16);
-
-  ctx.fillStyle = "#16a34a"; // Green keeping gloves
+  // Webbed Green Keeping Gloves
+  ctx.fillStyle = "#16a34a";
   ctx.strokeStyle = "#14532d";
   ctx.lineWidth = 1;
 
-  if (isAppealing) {
-    // Both gloves raised high
+  if (k.crouchElevation > 0.8) {
+    // Both gloves overhead in appeal
     ctx.beginPath();
-    ctx.arc(-8, gloveY, 6, 0, Math.PI * 2);
-    ctx.arc(8, gloveY, 6, 0, Math.PI * 2);
+    ctx.arc(-8, k.gloveY, 6, 0, Math.PI * 2);
+    ctx.arc(8, k.gloveY, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   } else {
-    // Cupped catching gloves with thumb webbing
+    // Catching cupped gloves
     ctx.beginPath();
-    ctx.ellipse(gloveX, gloveY, 7.5, 6, 0.2, 0, Math.PI * 2);
+    ctx.ellipse(k.gloveX, k.gloveY, 7.5, 6, 0.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    // Inner palm cushion
+    // Inner palm
     ctx.fillStyle = "#ffffff";
     ctx.beginPath();
-    ctx.arc(gloveX - 1, gloveY, 3, 0, Math.PI * 2);
+    ctx.arc(k.gloveX - 1, k.gloveY, 3, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -556,7 +732,7 @@ export function drawStumpsAndBails(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  opts: StumpsOptions = {}
+  opts: { scale?: number; bailsDislodged?: boolean; dislodgeProgress?: number; isZing?: boolean } = {}
 ) {
   const scale = opts.scale ?? 1.0;
   const isDislodged = opts.bailsDislodged ?? false;
@@ -572,7 +748,7 @@ export function drawStumpsAndBails(
   ctx.ellipse(0, 0, 15, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // 3 Wooden Stumps (Off, Middle, Leg)
+  // 3 Wooden Stumps
   ctx.fillStyle = "#f59e0b";
   ctx.strokeStyle = "#78350f";
   ctx.lineWidth = 0.6;
@@ -587,7 +763,6 @@ export function drawStumpsAndBails(
 
   // Wooden Bails vs Zing Illuminated Bails
   if (!isDislodged || dislodgeT <= 0.0) {
-    // Intact in spigot grooves
     ctx.fillStyle = "#fbbf24";
     ctx.strokeStyle = "#b45309";
     ctx.lineWidth = 0.5;
@@ -596,12 +771,10 @@ export function drawStumpsAndBails(
     ctx.fillRect(1, -37, 8, 3);
     ctx.strokeRect(1, -37, 8, 3);
   } else {
-    // Flying dislodged bails with red Zing LED glow
     ctx.fillStyle = "#ef4444";
     ctx.shadowColor = "#ef4444";
     ctx.shadowBlur = 8;
 
-    // Bail 1 flying left
     const b1X = -9 - dislodgeT * 24;
     const b1Y = -37 - dislodgeT * 18 + dislodgeT * dislodgeT * 26;
     ctx.save();
@@ -610,7 +783,6 @@ export function drawStumpsAndBails(
     ctx.fillRect(-4, -1.5, 8, 3);
     ctx.restore();
 
-    // Bail 2 flying right
     const b2X = 1 + dislodgeT * 22;
     const b2Y = -37 - dislodgeT * 22 + dislodgeT * dislodgeT * 30;
     ctx.save();
@@ -626,18 +798,29 @@ export function drawStumpsAndBails(
 }
 
 // ================================================================
-// 5. CRICKET BALL (3D Shaded Sphere with Seam)
+// 5. CRICKET BALL (3D Shaded Sphere with Seam & Motion Blur)
 // ================================================================
 export function drawCricketBall(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  opts: BallOptions = {}
+  opts: { radius?: number; seamAngleRad?: number; shadowY?: number; motionTrail?: boolean; prevX?: number; prevY?: number } = {}
 ) {
   const r = opts.radius ?? 5.5;
   const seamAngle = opts.seamAngleRad ?? 0.0;
 
   ctx.save();
+
+  // Subtle Motion Trail
+  if (opts.motionTrail && opts.prevX !== undefined && opts.prevY !== undefined) {
+    ctx.strokeStyle = "rgba(220, 38, 38, 0.25)";
+    ctx.lineWidth = r * 1.6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(opts.prevX, opts.prevY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
 
   // Shadow
   if (opts.shadowY !== undefined) {
@@ -647,7 +830,7 @@ export function drawCricketBall(
     ctx.fill();
   }
 
-  // Red Leather Sphere with Radial Specular Highlight
+  // 3D Shaded Sphere
   const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
   grad.addColorStop(0, "#ef4444");
   grad.addColorStop(0.7, "#dc2626");
