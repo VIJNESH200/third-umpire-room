@@ -491,6 +491,49 @@ function runAllDRSTests() {
     assert(contextConsistent, "Match Context: Bowler, batter, description, situation, and comms are 100% consistent across scenarios");
   }
 
+  // --- GROUP 9: MATCH FORMAT & OVERS STRICT COMPLIANCE ---
+  console.log("\n--- GROUP 9: MATCH FORMAT & OVERS STRICT COMPLIANCE ---");
+  {
+    let t20Valid = true;
+    let odiValid = true;
+    let testCanExceed50 = false;
+    let bowlerFiguresFormatValid = true;
+    let scorePlausible = true;
+
+    for (let seed = 1; seed <= 100; seed++) {
+      const scn = generateScenario(seed * 7919);
+      const fmt = scn.matchContext.matchFormat;
+      const over = scn.matchContext.over;
+      const figures = scn.matchContext.bowlerFigures;
+
+      // Extract bowler overs from string e.g. "2/24 (3.4)" or "1/40 (10.0)"
+      const match = figures.match(/\(([\d.]+)\)/);
+      const bowlerOvers = match ? parseFloat(match[1]) : 0;
+
+      if (fmt === "T20") {
+        if (over < 0 || over > 19) t20Valid = false;
+        if (bowlerOvers > 4.0) bowlerFiguresFormatValid = false;
+      } else if (fmt === "ODI") {
+        if (over < 0 || over > 49) odiValid = false;
+        if (bowlerOvers > 10.0) bowlerFiguresFormatValid = false;
+      } else if (fmt === "TEST") {
+        if (over > 50) testCanExceed50 = true;
+      }
+
+      // Plausible score validation
+      const scoreParts = scn.matchContext.battingTeamScore.split("/");
+      const runs = parseInt(scoreParts[0], 10);
+      const wickets = parseInt(scoreParts[1], 10);
+      if (runs <= 0 || wickets < 0 || wickets > 10) scorePlausible = false;
+    }
+
+    assert(t20Valid, "Format Compliance: T20 scenario active over never exceeds 19.x");
+    assert(odiValid, "Format Compliance: ODI scenario active over never exceeds 49.x");
+    assert(testCanExceed50, "Format Compliance: TEST scenario active over can legitimately exceed 50");
+    assert(bowlerFiguresFormatValid, "Format Compliance: Bowler figures strictly obey format limits (T20 <= 4.0, ODI <= 10.0)");
+    assert(scorePlausible, "Format Compliance: Batting score and wickets remain plausible for all formats");
+  }
+
   console.log("=================================================");
   console.log(`   TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);
   console.log("=================================================");

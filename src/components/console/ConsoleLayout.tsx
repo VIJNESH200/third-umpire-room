@@ -313,7 +313,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 <IncidentReplayFeed scenario={scenario} />
               </div>
               <SoftSignalBar
-                timeLimitSeconds={10}
+                timeLimitSeconds={15}
                 onDecision={onSoftSignalSubmit}
               />
             </div>

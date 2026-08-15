@@ -157,8 +157,11 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
 /* ================================================================
    1. LBW BROADCAST REPLAY RENDERER
    Strict geometric pitch reference frame:
-   Centerline, bowling crease, popping crease, striker stumps,
-   and ball corridor all share the exact geometric axis.
+   - stumpsDepthY (0.73h) < poppingCreaseY (0.82h)
+   - Batter stands forward on popping crease (batterDepthY = 0.82h)
+   - Stumps stand behind batter at 0.73h, centered on pitch axis
+   - Batter offset to leg side so Off & Middle stumps are visible
+   - Ball is clearly visible with continuous depth scaling and motion trail
    ================================================================ */
 function renderLBWBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -203,7 +206,14 @@ function renderLBWBroadcast(
     return (rightX - leftX) / 2;
   };
 
-  // Render Pitch Surface
+  // --- Explicit Depth Coordinates (Bowler End Perspective) ---
+  const bowlingCreaseY = h * 0.20;
+  const bounceY = h * 0.46;
+  const stumpsDepthY = h * 0.73; // Behind the batter on screen
+  const poppingCreaseY = h * 0.82; // In front of the stumps on screen
+  const batterDepthY = poppingCreaseY; // Batter stands on popping crease
+
+  // Pitch Surface
   ctx.save();
   ctx.fillStyle = "#bda384";
   ctx.beginPath();
@@ -226,7 +236,6 @@ function renderLBWBroadcast(
 
   // --- 3. Geometric Creases (Centered on Pitch Axis) ---
   // A. Bowling Crease (Top)
-  const bowlingCreaseY = h * 0.20;
   const bowlingCreaseCenterX = getPitchCenterX(bowlingCreaseY);
   const bowlingCreaseHalfWidth = getPitchHalfWidth(bowlingCreaseY) * 0.85;
 
@@ -237,21 +246,18 @@ function renderLBWBroadcast(
   ctx.lineTo(bowlingCreaseCenterX + bowlingCreaseHalfWidth, bowlingCreaseY);
   ctx.stroke();
 
-  // B. Striker Bowling Crease (at Stumps)
-  const strikerCreaseY = h * 0.86;
-  const stumpsX = getPitchCenterX(strikerCreaseY);
-  const stumpsBaseY = strikerCreaseY;
-  const strikerCreaseHalfWidth = getPitchHalfWidth(strikerCreaseY) * 0.70;
+  // B. Striker Bowling Crease (at Stumps Depth: stumpsDepthY = 0.73h)
+  const stumpsX = getPitchCenterX(stumpsDepthY);
+  const strikerCreaseHalfWidth = getPitchHalfWidth(stumpsDepthY) * 0.70;
 
-  ctx.strokeStyle = "rgba(255,255,255,0.50)";
+  ctx.strokeStyle = "rgba(255,255,255,0.45)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(stumpsX - strikerCreaseHalfWidth, strikerCreaseY);
-  ctx.lineTo(stumpsX + strikerCreaseHalfWidth, strikerCreaseY);
+  ctx.moveTo(stumpsX - strikerCreaseHalfWidth, stumpsDepthY);
+  ctx.lineTo(stumpsX + strikerCreaseHalfWidth, stumpsDepthY);
   ctx.stroke();
 
-  // C. Popping Crease (in front of Stumps)
-  const poppingCreaseY = h * 0.77;
+  // C. Popping Crease (at poppingCreaseY = 0.82h)
   const poppingCreaseCenterX = getPitchCenterX(poppingCreaseY);
   const poppingCreaseHalfWidth = getPitchHalfWidth(poppingCreaseY) * 0.95;
 
@@ -262,31 +268,30 @@ function renderLBWBroadcast(
   ctx.lineTo(poppingCreaseCenterX + poppingCreaseHalfWidth, poppingCreaseY);
   ctx.stroke();
 
-  // --- 4. Striker Stumps (Centered on Pitch Axis) ---
-  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.0 });
+  // --- 4. Striker Stumps (Rendered BEHIND Batter at stumpsDepthY = 0.73h) ---
+  drawStumpsAndBails(ctx, stumpsX, stumpsDepthY, { scale: 0.95 });
 
   // --- 5. Kinematics Targets along Pitch Axis ---
-  const bounceY = h * 0.48;
   const pitchBounceCenterX = getPitchCenterX(bounceY);
 
   let pitchBounceX = pitchBounceCenterX;
   if (ev) {
-    if (ev.apparentPitchLine === "OUTSIDE_LEG") pitchBounceX = pitchBounceCenterX - 34;
-    else if (ev.apparentPitchLine === "OUTSIDE_OFF") pitchBounceX = pitchBounceCenterX + 32;
-    else pitchBounceX = pitchBounceCenterX + (lbw ? lbw.pitchX * 24 : 0);
+    if (ev.apparentPitchLine === "OUTSIDE_LEG") pitchBounceX = pitchBounceCenterX - 32;
+    else if (ev.apparentPitchLine === "OUTSIDE_OFF") pitchBounceX = pitchBounceCenterX + 30;
+    else pitchBounceX = pitchBounceCenterX + (lbw ? lbw.pitchX * 22 : 0);
   } else if (lbw) {
-    pitchBounceX = pitchBounceCenterX + lbw.pitchX * 28;
+    pitchBounceX = pitchBounceCenterX + lbw.pitchX * 26;
   }
 
-  let impactY = h * 0.69;
-  if (ev?.apparentHeight === "LOW_SHIN") impactY = h * 0.73;
-  else if (ev?.apparentHeight === "HIGH_THIGH") impactY = h * 0.63;
+  let impactY = h * 0.74;
+  if (ev?.apparentHeight === "LOW_SHIN") impactY = h * 0.78;
+  else if (ev?.apparentHeight === "HIGH_THIGH") impactY = h * 0.68;
 
   const impactPitchCenterX = getPitchCenterX(impactY);
   let padImpactX = impactPitchCenterX - 6;
   if (ev) {
-    if (ev.apparentImpactLine === "OUTSIDE_OFF") padImpactX = impactPitchCenterX + 28;
-    else if (ev.apparentImpactLine === "OUTSIDE_LEG") padImpactX = impactPitchCenterX - 30;
+    if (ev.apparentImpactLine === "OUTSIDE_OFF") padImpactX = impactPitchCenterX + 26;
+    else if (ev.apparentImpactLine === "OUTSIDE_LEG") padImpactX = impactPitchCenterX - 28;
     else padImpactX = impactPitchCenterX - 6 + (lbw ? lbw.impactX * 18 : 0);
   } else if (lbw) {
     padImpactX = impactPitchCenterX - 6 + lbw.impactX * 22;
@@ -295,10 +300,10 @@ function renderLBWBroadcast(
   const shotType = ev?.shotOfferedType || (lbw?.shotOffered ? "DEFENSIVE_FORWARD" : "PADDED_AWAY_NO_SHOT");
   const isNoShot = shotType === "PADDED_AWAY_NO_SHOT" || shotType === "LEAVE_WITHDRAWN";
 
-  // --- 6. Striker Batter Positioning (Bug 1B) ---
-  // Batter stands forward on popping crease, offset naturally to leg-side of stumps
-  const batterBaseX = poppingCreaseCenterX - 16 + (ev?.batterStanceShiftX || 0) * 0.35;
-  const batterY = poppingCreaseY;
+  // --- 6. Striker Batter Positioning (In Front of Stumps at batterDepthY = 0.82h) ---
+  // Offset to leg side so Off & Middle stumps are cleanly visible
+  const batterBaseX = poppingCreaseCenterX - 18 + (ev?.batterStanceShiftX || 0) * 0.35;
+  const batterY = batterDepthY;
 
   // Bowler at Top of Pitch
   const bowlerX = pitchBowlingCenterX;
@@ -319,52 +324,60 @@ function renderLBWBroadcast(
   );
   drawArticulatedBatter(
     ctx,
-    { x: batterBaseX, y: batterY, scale: 1.08, facing: "RIGHT" },
+    { x: batterBaseX, y: batterY, scale: 1.12, facing: "RIGHT" },
     batterK
   );
 
   // --- 7. Ball Trajectory Corridor (from Bowler to Batter) ---
   let ballX = bowlerX;
   let ballY = bowlerY;
-  let ballRadius = 2.5;
+  let ballRadius = 3.5;
   let prevBallX = ballX;
   let prevBallY = ballY;
 
   if (p < 0.20) {
+    // Bowler Windmill Release
     const rad = bowlerK.bowlingArmAngleRad;
     ballX = bowlerX + 3 + Math.cos(rad) * 16;
     ballY = bowlerY + 18 - 32 + Math.sin(rad) * 16;
-  } else if (p >= 0.20 && p < 0.50) {
-    const t = (p - 0.20) / 0.30;
+    ballRadius = 3.5;
+  } else if (p >= 0.20 && p < 0.48) {
+    // Flight in air to pitch bounce
+    const t = (p - 0.20) / 0.28;
     ballX = bowlerX + (pitchBounceX - bowlerX) * t;
     ballY = bowlerY + (bounceY - bowlerY) * (t * t);
-    ballRadius = 2.5 + t * 2.5;
-    prevBallX = ballX - (pitchBounceX - bowlerX) * 0.04;
+    ballRadius = 3.5 + t * 2.0; // 3.5px to 5.5px
+    prevBallX = ballX - (pitchBounceX - bowlerX) * 0.05;
     prevBallY = ballY - 6;
-  } else if (p >= 0.50 && p < 0.70) {
-    const t = (p - 0.50) / 0.20;
+  } else if (p >= 0.48 && p < 0.68) {
+    // Rise from bounce to pad impact
+    const t = (p - 0.48) / 0.20;
     ballX = pitchBounceX + (padImpactX - pitchBounceX) * t;
     ballY = bounceY + (impactY - bounceY) * t;
-    ballRadius = 5.0 + t * 1.8;
+    ballRadius = 5.5 + t * 1.7; // 5.5px to 7.2px
     prevBallX = ballX - (padImpactX - pitchBounceX) * 0.05;
     prevBallY = ballY - 4;
 
+    // Pitch turf scuff mark
     ctx.fillStyle = "rgba(80,58,40,0.6)";
     ctx.beginPath();
     ctx.ellipse(pitchBounceX, bounceY, 6, 3, 0, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    const t = (p - 0.70) / 0.30;
+    // Post-impact deflection / aftermath
+    const t = (p - 0.68) / 0.32;
     ballX = padImpactX + (lbw?.impactX ? lbw.impactX * 12 * t : 4 * t);
-    ballY = impactY + t * 16;
-    ballRadius = 6.8;
+    ballY = impactY + t * 18;
+    ballRadius = 7.0;
+    prevBallX = ballX - 2;
+    prevBallY = ballY - 3;
   }
 
   drawCricketBall(ctx, ballX, ballY, {
     radius: ballRadius,
-    seamAngleRad: p * Math.PI * 4,
-    shadowY: Math.min(strikerCreaseY, ballY + ballRadius * 1.2),
-    motionTrail: p >= 0.20 && p < 0.70,
+    seamAngleRad: p * Math.PI * 6,
+    shadowY: Math.min(poppingCreaseY + 6, ballY + ballRadius * 1.1),
+    motionTrail: p >= 0.20 && p < 0.68,
     prevX: prevBallX,
     prevY: prevBallY,
   });

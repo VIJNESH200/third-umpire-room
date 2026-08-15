@@ -83,14 +83,52 @@ export function generateScenario(
   const types: IncidentType[] = ["LBW", "RUN_OUT", "STUMPING", "CAUGHT_BEHIND", "BOUNDARY"];
   const incidentType: IncidentType = forcedType || rng.pick(types);
 
-  // 3. Match Context
+  // 3. Match Context with Strict Format Rules
   const pool = rng.pick(MATCH_POOLS);
   const batterObj = rng.pick(pool.batters);
   const bowlerObj = rng.pick(pool.bowlers);
-  const over = rng.rangeInt(14, 49);
+
+  let over: number;
+  let bowlerMaxOvers: number;
+  let rpo: number;
+
+  if (pool.matchFormat === "T20") {
+    // T20: Maximum 20 overs (active over is 0 to 19). Typically 5 to 19.
+    over = rng.rangeInt(5, 19);
+    bowlerMaxOvers = 4;
+    rpo = rng.range(7.2, 10.2);
+  } else if (pool.matchFormat === "ODI") {
+    // ODI: Maximum 50 overs (active over is 0 to 49). Typically 14 to 49.
+    over = rng.rangeInt(14, 49);
+    bowlerMaxOvers = 10;
+    rpo = rng.range(4.8, 6.6);
+  } else {
+    // TEST: Multi-day match, overs can exceed 50 (e.g. 24 to 88).
+    over = rng.rangeInt(24, 88);
+    bowlerMaxOvers = 28;
+    rpo = rng.range(2.8, 3.8);
+  }
+
   const ballInOver = rng.rangeInt(1, 6);
-  const totalWickets = rng.rangeInt(3, 8);
-  const totalRuns = over * 6 + rng.rangeInt(20, 80);
+
+  // Plausible format-aware team score
+  const totalRuns = Math.max(over * 3, Math.round(over * rpo) + rng.rangeInt(-8, 14));
+  const maxWicketsForOver = pool.matchFormat === "T20" 
+    ? Math.min(8, Math.max(2, Math.floor(over / 2.5)))
+    : pool.matchFormat === "ODI"
+    ? Math.min(8, Math.max(2, Math.floor(over / 6.0)))
+    : Math.min(8, Math.max(2, Math.floor(over / 11.0)));
+  const totalWickets = rng.rangeInt(1, maxWicketsForOver);
+
+  // Plausible format-aware bowler figures
+  const bowlerWickets = rng.rangeInt(0, Math.min(3, totalWickets));
+  const maxPossibleBowlerOvers = Math.min(bowlerMaxOvers, Math.max(1, Math.floor(over / 4.0)));
+  const bowlerCompletedOvers = rng.rangeInt(Math.max(1, maxPossibleBowlerOvers - 2), maxPossibleBowlerOvers);
+  const bowlerRuns = Math.max(4, Math.round(bowlerCompletedOvers * (rpo + rng.range(-0.8, 1.2))));
+  const bowlerOverStr = bowlerCompletedOvers >= bowlerMaxOvers 
+    ? `${bowlerMaxOvers}.0` 
+    : `${Math.max(0, bowlerCompletedOvers - 1)}.${ballInOver}`;
+  const bowlerFigures = `${bowlerWickets}/${bowlerRuns} (${bowlerOverStr})`;
 
   const matchSituation = generateDynamicMatchSituation(
     incidentType,
@@ -112,7 +150,7 @@ export function generateScenario(
     batter: batterObj.name,
     batterScore: batterObj.score,
     bowler: bowlerObj.name,
-    bowlerFigures: bowlerObj.figures,
+    bowlerFigures,
     appealType: incidentType === "LBW" ? "LBW (DRS Review)" :
                 incidentType === "CAUGHT_BEHIND" ? "Caught Behind (DRS Review)" :
                 incidentType === "RUN_OUT" ? "Run Out (Direct Referral)" :
