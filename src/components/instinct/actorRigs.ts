@@ -169,52 +169,87 @@ export function solveLBWBatterKinematics(
   };
 }
 
+export interface BowlerKinematicsOptions {
+  isNoBall?: boolean;
+  frontFootOverstepMm?: number;
+  deliveryLine?: string;
+}
+
 /**
  * Solves continuous bowler kinematics across the 2.8s replay loop for LBW.
+ * Accurately models front-foot landing relative to popping crease:
+ * - Legal delivery: front foot lands firmly behind the popping crease (+Y).
+ * - No-ball delivery: front foot visibly oversteps the popping crease (-Y) proportional to overstepMm.
  */
-export function solveLBWBowlerKinematics(p: number): BowlerKinematics {
+export function solveLBWBowlerKinematics(
+  p: number,
+  opts: BowlerKinematicsOptions = {}
+): BowlerKinematics {
+  const isNoBall = opts.isNoBall ?? false;
+  const overstepMm = opts.frontFootOverstepMm ?? 0;
+
+  // Front foot landing target Y relative to the popping crease anchor:
+  // In canvas coordinate space (+Y is down towards bowling crease / camera, -Y is up towards batsman / pitch).
+  // Legal delivery: front foot lands 6px to 8px behind the popping crease (+Y).
+  // No-Ball: front foot oversteps over the line (-Y) scaled to overstep distance.
+  const landedFrontLegY = isNoBall
+    ? -Math.max(6, Math.min(18, overstepMm * 0.35 + 4))
+    : 6;
+
   let torsoAngleRad = 0.08;
   let torsoY = 0;
   let bowlingArmAngleRad = 0.8;
   let nonBowlingArmAngleRad = -0.6;
   let frontLegX = 6;
-  let frontLegY = 0;
+  let frontLegY = 6;
   let backLegX = -10;
-  let backLegY = -4;
+  let backLegY = 2;
   let appealElevation = 0.0;
 
   if (p < 0.12) {
+    // Run-up stride cycle approaching crease
     const t = p / 0.12;
     const strideCycle = Math.sin(t * Math.PI * 4);
     frontLegX = 4 + strideCycle * 6;
+    frontLegY = 8 - Math.abs(strideCycle) * 4;
     backLegX = -8 - strideCycle * 6;
+    backLegY = 8 - Math.abs(Math.cos(t * Math.PI * 4)) * 4;
     torsoY = Math.abs(strideCycle) * 2;
     bowlingArmAngleRad = 0.5 + Math.sin(t * Math.PI * 2) * 0.8;
     nonBowlingArmAngleRad = -0.5 - Math.sin(t * Math.PI * 2) * 0.8;
   } else if (p >= 0.12 && p < 0.22) {
+    // Delivery gather and front foot stride plant
     const t = (p - 0.12) / 0.10;
     const smoothT = easeInOutQuad(t);
     bowlingArmAngleRad = lerp(-Math.PI * 0.5, Math.PI * 1.35, smoothT);
     nonBowlingArmAngleRad = lerp(Math.PI * 0.6, -Math.PI * 0.4, smoothT);
     torsoAngleRad = lerp(0.05, 0.35, smoothT);
     frontLegX = lerp(2, 9, smoothT);
+    frontLegY = lerp(12, landedFrontLegY, smoothT);
     backLegX = lerp(-6, -14, smoothT);
+    backLegY = lerp(6, 12, smoothT);
   } else if (p >= 0.22 && p < 0.65) {
+    // Release follow-through: front foot remains firmly planted on the turf
     const t = (p - 0.22) / 0.43;
     const smoothT = easeOutCubic(t);
     bowlingArmAngleRad = lerp(Math.PI * 1.35, Math.PI * 0.6, smoothT);
     nonBowlingArmAngleRad = lerp(-Math.PI * 0.4, 0.2, smoothT);
     torsoAngleRad = lerp(0.35, 0.15, smoothT);
     frontLegX = lerp(9, 6, smoothT);
+    frontLegY = landedFrontLegY;
     backLegX = lerp(-14, -8, smoothT);
+    backLegY = lerp(12, 6, smoothT);
   } else {
+    // Turn & appeal towards camera / umpire
     const t = (p - 0.65) / 0.25;
     appealElevation = clamp(easeInOutQuad(t), 0, 1);
     torsoAngleRad = lerp(0.15, -0.15, appealElevation);
     bowlingArmAngleRad = lerp(Math.PI * 0.6, -Math.PI * 0.75, appealElevation);
     nonBowlingArmAngleRad = lerp(0.2, -Math.PI * 0.75, appealElevation);
     frontLegX = lerp(6, 4, appealElevation);
+    frontLegY = lerp(landedFrontLegY, 6, appealElevation);
     backLegX = lerp(-8, -4, appealElevation);
+    backLegY = 4;
   }
 
   return {

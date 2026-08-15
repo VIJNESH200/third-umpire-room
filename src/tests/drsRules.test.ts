@@ -8,6 +8,7 @@ import {
 import { generateScenario, generateSession } from "../engine/scenarioGenerator";
 import { computeSessionStats, getRankInfo } from "../engine/scoring";
 import { computePitchStations } from "../components/instinct/IncidentReplayFeed";
+import { solveLBWBowlerKinematics } from "../components/instinct/actorRigs";
 import type {
   LBWData,
   RunOutData,
@@ -535,42 +536,52 @@ function runAllDRSTests() {
     assert(scorePlausible, "Format Compliance: Batting score and wickets remain plausible for all formats");
   }
 
-  // --- GROUP 10: LBW 22-YARD PITCH DEPTH & GEOMETRY INVARIANTS ---
-  console.log("\n--- GROUP 10: LBW 22-YARD PITCH DEPTH & GEOMETRY INVARIANTS ---");
+  // --- GROUP 10: LBW BOWLER-END PITCH DEPTH & NO-BALL GEOMETRY INVARIANTS ---
+  console.log("\n--- GROUP 10: LBW BOWLER-END PITCH DEPTH & NO-BALL GEOMETRY INVARIANTS ---");
   {
     const w = 640;
     const h = 360;
     const stations = computePitchStations(w, h);
 
-    // Test 51: Spatial depth order invariant: bowlerWicket < bowler < pitchBounce < batter < strikerWicket
+    // Test 51: Spatial depth order invariant for Bowler-End Umpire perspective:
+    // strikerWicket < strikerCrease < pitchBounce < bowlerCrease < bowlerWicket on screen Y
     const orderValid =
-      stations.bowlerWicket.y < stations.bowlerCrease.y &&
-      stations.bowlerCrease.y < stations.bowlerRelease.y &&
-      stations.bowlerRelease.y < stations.pitchBounce.y &&
-      stations.pitchBounce.y < stations.strikerCrease.y &&
-      stations.strikerCrease.y < stations.strikerWicket.y;
-    assert(orderValid, "Pitch Depth Invariant: bowlerWicket < bowler < bounce < batter < strikerWicket on screen Y");
+      stations.strikerWicket.y < stations.strikerCrease.y &&
+      stations.strikerCrease.y < stations.pitchBounce.y &&
+      stations.pitchBounce.y < stations.bowlerCrease.y &&
+      stations.bowlerCrease.y < stations.bowlerWicket.y;
+    assert(orderValid, "Pitch Depth Invariant: strikerWicket < batter < bounce < bowlerCrease < bowlerWicket on screen Y");
 
-    // Test 52: Striker wicket is closest to camera (bottom of screen / between camera and batter)
-    const strikerAtForeground = stations.strikerWicket.y > stations.strikerCrease.y;
-    assert(strikerAtForeground, "Camera Perspective: Striker stumps are between camera and batsman (strikerWicket > strikerCrease)");
+    // Test 52: Bowler stumps are closest to camera (bottom foreground)
+    const bowlerAtForeground = stations.bowlerWicket.y > stations.bowlerCrease.y;
+    assert(bowlerAtForeground, "Camera Perspective: Bowler stumps are in foreground near camera (bowlerWicket > bowlerCrease)");
 
-    // Test 53: Bowler wicket is at far top end (behind bowler from camera view)
-    const bowlerAtFarTop = stations.bowlerWicket.y < stations.bowlerRelease.y;
-    assert(bowlerAtFarTop, "Camera Perspective: Bowler stumps are at far end behind bowler (bowlerWicket < bowlerRelease)");
+    // Test 53: Striker stumps are at far end behind batsman
+    const strikerAtFarTop = stations.strikerWicket.y < stations.strikerCrease.y;
+    assert(strikerAtFarTop, "Camera Perspective: Striker stumps are at far end behind batsman (strikerWicket < strikerCrease)");
 
-    // Test 54: Perspective scaling: far objects (bowler stumps) have smaller scale than near objects (striker stumps)
+    // Test 54: Perspective scaling: near objects (bowler stumps) have larger scale than far objects (striker stumps)
     const scaleValid =
-      stations.bowlerWicket.scale < stations.bowlerRelease.scale &&
-      stations.bowlerRelease.scale < stations.strikerCrease.scale &&
-      stations.strikerCrease.scale < stations.strikerWicket.scale;
-    assert(scaleValid, "Perspective Scale: Far bowler stumps scale < near striker stumps scale");
+      stations.strikerWicket.scale < stations.strikerCrease.scale &&
+      stations.strikerCrease.scale < stations.bowlerCrease.scale &&
+      stations.bowlerCrease.scale < stations.bowlerWicket.scale;
+    assert(scaleValid, "Perspective Scale: Far striker stumps scale < near bowler stumps scale");
 
-    // Test 55: Pitch trapezoid geometry: width increases from bowler end to striker end
+    // Test 55: Pitch trapezoid geometry: width expands towards bowler end / camera at bottom
     const trapezoidValid =
       (stations.pitchTopRightX - stations.pitchTopLeftX) <
       (stations.pitchBottomRightX - stations.pitchBottomLeftX);
-    assert(trapezoidValid, "Pitch Geometry: Pitch width expands down-perspective towards camera");
+    assert(trapezoidValid, "Pitch Geometry: Pitch width expands down-perspective towards bowler end / camera");
+
+    // Test 56: Bowler front-foot kinematics: Legal delivery lands behind popping crease (+Y)
+    const legalKinematics = solveLBWBowlerKinematics(0.30, { isNoBall: false, frontFootOverstepMm: 0 });
+    const legalFootBehind = legalKinematics.frontLegY > 0;
+    assert(legalFootBehind, "Bowler Foot Kinematics: Legal delivery front foot lands behind popping crease");
+
+    // Test 57: Bowler front-foot kinematics: No-ball delivery lands over/beyond popping crease (-Y)
+    const noBallKinematics = solveLBWBowlerKinematics(0.30, { isNoBall: true, frontFootOverstepMm: 35 });
+    const noBallFootOver = noBallKinematics.frontLegY < 0;
+    assert(noBallFootOver, "Bowler Foot Kinematics: No-ball delivery front foot oversteps popping crease");
   }
 
   console.log("=================================================");

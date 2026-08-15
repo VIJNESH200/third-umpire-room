@@ -155,30 +155,27 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
 };
 
 /* ================================================================
-   22-YARD CRICKET PITCH GEOMETRY & PROJECTION MODEL
-   Physical Reference Stations along Pitch Depth Axis:
-   Depth 0.00: Far pitch turf boundary (top)
-   Depth 0.05: Bowler-end Bowling Crease & Stumps (Far / Top)
-   Depth 0.10: Bowler-end Popping Crease (1.22m / 4ft in front of bowling crease)
-   Depth 0.13: Bowler delivery & release stride (in front of bowler stumps)
-   Depth 0.48: Pitch landing & bounce zone
-   Depth 0.82: Striker-end Popping Crease & Batsman (1.22m in front of striker stumps)
-   Depth 0.94: Striker-end Bowling Crease & Stumps (Foreground / Camera side)
-   Depth 1.00: Near pitch turf boundary (bottom)
+   22-YARD CRICKET PITCH GEOMETRY & BOWLER-END CAMERA PROJECTION
+   Perspective Viewpoint: Bowler-End Umpire / Pitch-End Broadcast Cam
+   The camera sits at the bowler end looking down the pitch towards the striker.
 
-   Camera Perspective (Screen Y: 0 = Top/Far, Height = Bottom/Near):
+   Spatial Order (Top / Far to Bottom / Near / Camera):
    TOP / FAR:
-     BOWLER-END STUMPS (0.16h)
+     STRIKER-END STUMPS (0.17h, scale ≈ 0.48, behind batsman)
              ↑
-           BOWLER (0.23h)
+          BATSMAN & STRIKER POPPING CREASE (0.23h, scale ≈ 0.58)
              ↑
-           PITCH
+           PITCH BOUNCE ZONE (0.48h)
              ↑
-          BATSMAN (0.76h)
+           PITCH WEAR STRIP & 22-YARD SURFACE
              ↑
-     STRIKER-END STUMPS (0.86h)
+     BOWLER POPPING CREASE (0.78h - front foot landing & crease check)
              ↑
-   BOTTOM / CAMERA
+     BOWLER ACTOR (0.78h - 0.80h, scale ≈ 1.08, delivering down-pitch)
+             ↑
+     BOWLER-END STUMPS (0.87h, scale ≈ 1.15, in foreground)
+             ↑
+   BOTTOM / NEAR / CAMERA
    ================================================================ */
 export interface PitchStation {
   name: string;
@@ -190,13 +187,17 @@ export interface PitchStation {
 }
 
 export function computePitchStations(w: number, h: number) {
+  // Far end of pitch (Striker End / Top of Screen)
   const pitchTopY = h * 0.12;
-  const pitchBottomY = h * 0.94;
-  const pitchTopLeftX = w * 0.35;
-  const pitchTopRightX = w * 0.55;
-  const pitchBottomLeftX = w * 0.20;
-  const pitchBottomRightX = w * 0.74;
+  const pitchTopLeftX = w * 0.38;
+  const pitchTopRightX = w * 0.62;
 
+  // Near end of pitch (Bowler End / Bottom of Screen / Camera)
+  const pitchBottomY = h * 0.94;
+  const pitchBottomLeftX = w * 0.16;
+  const pitchBottomRightX = w * 0.84;
+
+  // Depth parameter d from 0.0 (Far / Striker End) to 1.0 (Near / Bowler End)
   const project = (depth: number): PitchStation => {
     const t = clamp(depth, 0, 1);
     const y = lerp(pitchTopY, pitchBottomY, t);
@@ -204,7 +205,8 @@ export function computePitchStations(w: number, h: number) {
     const rightX = lerp(pitchTopRightX, pitchBottomRightX, t);
     const x = (leftX + rightX) / 2;
     const halfWidth = (rightX - leftX) / 2;
-    const scale = lerp(0.45, 1.15, t);
+    // Scale: smaller at far striker end (0.48), larger at near bowler end (1.15)
+    const scale = lerp(0.48, 1.15, t);
     return { name: "", depth, x, y, halfWidth, scale };
   };
 
@@ -215,18 +217,20 @@ export function computePitchStations(w: number, h: number) {
     pitchTopRightX,
     pitchBottomLeftX,
     pitchBottomRightX,
-    bowlerWicket: { ...project(0.05), name: "BOWLER_WICKET" },
-    bowlerCrease: { ...project(0.10), name: "BOWLER_CREASE" },
-    bowlerRelease: { ...project(0.13), name: "BOWLER_RELEASE" },
-    pitchBounce: { ...project(0.48), name: "PITCH_BOUNCE" },
-    strikerCrease: { ...project(0.82), name: "STRIKER_CREASE" },
-    strikerWicket: { ...project(0.94), name: "STRIKER_WICKET" },
+    // Far Striker End Stations:
+    strikerWicket: { ...project(0.06), name: "STRIKER_WICKET" }, // Far bowling crease (0.17h)
+    strikerCrease: { ...project(0.14), name: "STRIKER_CREASE" }, // Far popping crease & batsman (0.23h)
+    pitchBounce: { ...project(0.44), name: "PITCH_BOUNCE" },     // Pitch bounce landing zone (0.48h)
+    // Near Bowler End Stations:
+    bowlerCrease: { ...project(0.80), name: "BOWLER_CREASE" },   // Bowler popping crease line (0.78h)
+    bowlerRelease: { ...project(0.82), name: "BOWLER_RELEASE" }, // Bowler delivery anchor (0.79h)
+    bowlerWicket: { ...project(0.92), name: "BOWLER_WICKET" },   // Bowler stumps in foreground (0.87h)
     projectDepth: project,
   };
 }
 
 /* ================================================================
-   1. LBW BROADCAST REPLAY RENDERER
+   1. LBW BROADCAST REPLAY RENDERER (BOWLER-END UMPIRE PERSPECTIVE)
    ================================================================ */
 function renderLBWBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -244,6 +248,8 @@ function renderLBWBroadcast(
   // --- 2. Determine Batter Handedness & Delivery Angle ---
   const isLeftHand = (lbw?.batterHand ?? "RIGHT") === "LEFT";
   const deliveryLine = ev?.deliveryLine || "OVER_WICKET";
+  const isNoBall = lbw?.isNoBall ?? false;
+  const overstepMm = lbw?.frontFootOverstepMm ?? 0;
 
   // --- 3. Outfield Grass Background ---
   const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
@@ -254,13 +260,13 @@ function renderLBWBroadcast(
   ctx.fillRect(0, 0, w, h);
 
   // Stadium lighting ground ambience
-  const gradLight = ctx.createRadialGradient(w * 0.48, h * 0.45, 20, w * 0.48, h * 0.45, w * 0.6);
+  const gradLight = ctx.createRadialGradient(w * 0.50, h * 0.45, 20, w * 0.50, h * 0.45, w * 0.6);
   gradLight.addColorStop(0, "rgba(255, 255, 220, 0.06)");
   gradLight.addColorStop(1, "rgba(0, 0, 0, 0)");
   ctx.fillStyle = gradLight;
   ctx.fillRect(0, 0, w, h);
 
-  // --- 4. Pitch Surface Trapezoid ---
+  // --- 4. 22-Yard Pitch Surface Trapezoid (Receding from Bowler to Striker) ---
   ctx.save();
   ctx.fillStyle = "#bda384";
   ctx.beginPath();
@@ -274,80 +280,43 @@ function renderLBWBroadcast(
   // Pitch Wear Track down the 22-yard corridor
   ctx.fillStyle = "#cca885";
   ctx.beginPath();
-  ctx.moveTo(pitch.bowlerWicket.x - pitch.bowlerWicket.halfWidth * 0.6, pitch.pitchTopY);
-  ctx.lineTo(pitch.bowlerWicket.x + pitch.bowlerWicket.halfWidth * 0.6, pitch.pitchTopY);
-  ctx.lineTo(pitch.strikerWicket.x + pitch.strikerWicket.halfWidth * 0.6, pitch.pitchBottomY);
-  ctx.lineTo(pitch.strikerWicket.x - pitch.strikerWicket.halfWidth * 0.6, pitch.pitchBottomY);
+  ctx.moveTo(pitch.strikerWicket.x - pitch.strikerWicket.halfWidth * 0.6, pitch.pitchTopY);
+  ctx.lineTo(pitch.strikerWicket.x + pitch.strikerWicket.halfWidth * 0.6, pitch.pitchTopY);
+  ctx.lineTo(pitch.bowlerWicket.x + pitch.bowlerWicket.halfWidth * 0.6, pitch.pitchBottomY);
+  ctx.lineTo(pitch.bowlerWicket.x - pitch.bowlerWicket.halfWidth * 0.6, pitch.pitchBottomY);
   ctx.closePath();
   ctx.fill();
 
-  // --- 5. Bowler-End Creases & Stumps (Far / Top) ---
-  // A. Bowler's Bowling Crease
-  ctx.strokeStyle = "rgba(255,255,255,0.70)";
-  ctx.lineWidth = 1.2;
+  // --- 5. Far Striker-End Creases & Stumps (Far / Top) ---
+  // A. Striker's Bowling Crease (Behind Batsman)
+  ctx.strokeStyle = "rgba(255,255,255,0.45)";
+  ctx.lineWidth = 1.0;
   ctx.beginPath();
-  ctx.moveTo(pitch.bowlerWicket.x - pitch.bowlerWicket.halfWidth * 0.85, pitch.bowlerWicket.y);
-  ctx.lineTo(pitch.bowlerWicket.x + pitch.bowlerWicket.halfWidth * 0.85, pitch.bowlerWicket.y);
+  ctx.moveTo(pitch.strikerWicket.x - pitch.strikerWicket.halfWidth * 0.70, pitch.strikerWicket.y);
+  ctx.lineTo(pitch.strikerWicket.x + pitch.strikerWicket.halfWidth * 0.70, pitch.strikerWicket.y);
   ctx.stroke();
 
-  // B. Bowler's Popping Crease (in front of bowler stumps)
-  ctx.strokeStyle = "rgba(255,255,255,0.50)";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(pitch.bowlerCrease.x - pitch.bowlerCrease.halfWidth * 0.85, pitch.bowlerCrease.y);
-  ctx.lineTo(pitch.bowlerCrease.x + pitch.bowlerCrease.halfWidth * 0.85, pitch.bowlerCrease.y);
-  ctx.stroke();
-
-  // C. Bowler-End Stumps (Rendered at far bowling crease behind bowler)
-  drawStumpsAndBails(ctx, pitch.bowlerWicket.x, pitch.bowlerWicket.y, {
-    scale: pitch.bowlerWicket.scale,
+  // B. Striker-End Stumps (Rendered BEHIND Batsman at far bowling crease)
+  drawStumpsAndBails(ctx, pitch.strikerWicket.x, pitch.strikerWicket.y, {
+    scale: pitch.strikerWicket.scale,
   });
 
-  // --- 6. Bowler Actor (Running in and delivering in front of far stumps) ---
-  let bowlerApproachOffsetX = -12; // Standard right-arm over the wicket
-  if (deliveryLine === "ROUND_WICKET") bowlerApproachOffsetX = +14;
-  else if (deliveryLine === "WIDE_OF_CREASE") bowlerApproachOffsetX = -22;
-
-  const bowlerX = pitch.bowlerRelease.x + bowlerApproachOffsetX;
-  const bowlerY = pitch.bowlerRelease.y;
-  const bowlerK = solveLBWBowlerKinematics(p);
-  drawArticulatedBowler(
-    ctx,
-    { x: bowlerX, y: bowlerY, scale: 0.68, facing: "RIGHT" },
-    bowlerK
-  );
-
-  // --- 7. Ball Pitch Bounce Target & Scuff Mark ---
-  let pitchBounceX = pitch.pitchBounce.x;
-  if (ev) {
-    if (ev.apparentPitchLine === "OUTSIDE_LEG") pitchBounceX = pitch.pitchBounce.x + (isLeftHand ? 28 : -28);
-    else if (ev.apparentPitchLine === "OUTSIDE_OFF") pitchBounceX = pitch.pitchBounce.x + (isLeftHand ? -26 : 26);
-    else pitchBounceX = pitch.pitchBounce.x + (lbw ? lbw.pitchX * 20 : 0);
-  } else if (lbw) {
-    pitchBounceX = pitch.pitchBounce.x + lbw.pitchX * 22;
-  }
-
-  if (p >= 0.48) {
-    ctx.fillStyle = "rgba(80,58,40,0.55)";
-    ctx.beginPath();
-    ctx.ellipse(pitchBounceX, pitch.pitchBounce.y, 6, 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // --- 8. Striker-End Popping Crease (where Batter stands) ---
-  ctx.strokeStyle = "rgba(255,255,255,0.85)";
-  ctx.lineWidth = 2.5;
+  // C. Striker's Popping Crease (where Batsman stands)
+  ctx.strokeStyle = "rgba(255,255,255,0.80)";
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
-  ctx.moveTo(pitch.strikerCrease.x - pitch.strikerCrease.halfWidth * 0.95, pitch.strikerCrease.y);
-  ctx.lineTo(pitch.strikerCrease.x + pitch.strikerCrease.halfWidth * 0.95, pitch.strikerCrease.y);
+  ctx.moveTo(pitch.strikerCrease.x - pitch.strikerCrease.halfWidth * 0.90, pitch.strikerCrease.y);
+  ctx.lineTo(pitch.strikerCrease.x + pitch.strikerCrease.halfWidth * 0.90, pitch.strikerCrease.y);
   ctx.stroke();
 
-  // --- 9. Striker Batter Actor (Standing at Popping Crease) ---
+  // --- 6. Far Batsman Actor (Facing Bowler / Camera) ---
   const shotType = ev?.shotOfferedType || (lbw?.shotOffered ? "DEFENSIVE_FORWARD" : "PADDED_AWAY_NO_SHOT");
   const isNoShot = shotType === "PADDED_AWAY_NO_SHOT" || shotType === "LEAVE_WITHDRAWN";
 
-  const guardOffsetX = isLeftHand ? 3 : -3;
-  const stanceShiftX = (ev?.batterStanceShiftX || 0) * 0.3;
+  // Batter stance facing: Right-hander faces off-side (screen-left from bowler's view), Left-hander faces screen-right
+  const batterFacing = isLeftHand ? "RIGHT" : "LEFT";
+  const guardOffsetX = isLeftHand ? -2 : 2;
+  const stanceShiftX = (ev?.batterStanceShiftX || 0) * 0.18;
   const batterAnchorX = pitch.strikerCrease.x + guardOffsetX + stanceShiftX;
   const batterAnchorY = pitch.strikerCrease.y;
 
@@ -359,82 +328,125 @@ function renderLBWBroadcast(
   );
   drawArticulatedBatter(
     ctx,
-    { x: batterAnchorX, y: batterAnchorY, scale: 1.08, facing: isLeftHand ? "LEFT" : "RIGHT" },
+    { x: batterAnchorX, y: batterAnchorY, scale: pitch.strikerCrease.scale, facing: batterFacing },
     batterK
   );
 
-  // --- 10. Striker-End Bowling Crease & Stumps (Foreground / Camera side) ---
-  // A. Striker's Bowling Crease
-  ctx.strokeStyle = "rgba(255,255,255,0.45)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(pitch.strikerWicket.x - pitch.strikerWicket.halfWidth * 0.70, pitch.strikerWicket.y);
-  ctx.lineTo(pitch.strikerWicket.x + pitch.strikerWicket.halfWidth * 0.70, pitch.strikerWicket.y);
-  ctx.stroke();
-
-  // B. Striker-End Stumps (Rendered in FOREGROUND between camera and batsman)
-  drawStumpsAndBails(ctx, pitch.strikerWicket.x, pitch.strikerWicket.y, {
-    scale: pitch.strikerWicket.scale,
-  });
-
-  // --- 11. Ball Flight & Trajectory ---
-  let padImpactX = pitch.strikerCrease.x;
+  // --- 7. Ball Pitch Bounce Target & Scuff Mark ---
+  let pitchBounceX = pitch.pitchBounce.x;
   if (ev) {
-    if (ev.apparentImpactLine === "OUTSIDE_OFF") padImpactX = pitch.strikerCrease.x + (isLeftHand ? -22 : 22);
-    else if (ev.apparentImpactLine === "OUTSIDE_LEG") padImpactX = pitch.strikerCrease.x + (isLeftHand ? 22 : -22);
-    else padImpactX = pitch.strikerCrease.x + (lbw ? lbw.impactX * 16 : 0);
+    if (ev.apparentPitchLine === "OUTSIDE_LEG") pitchBounceX = pitch.pitchBounce.x + (isLeftHand ? -18 : 18);
+    else if (ev.apparentPitchLine === "OUTSIDE_OFF") pitchBounceX = pitch.pitchBounce.x + (isLeftHand ? 18 : -18);
+    else pitchBounceX = pitch.pitchBounce.x + (lbw ? lbw.pitchX * 14 : 0);
   } else if (lbw) {
-    padImpactX = pitch.strikerCrease.x + lbw.impactX * 18;
+    pitchBounceX = pitch.pitchBounce.x + lbw.pitchX * 16;
   }
 
-  let impactY = pitch.strikerCrease.y - 10;
-  if (ev?.apparentHeight === "LOW_SHIN") impactY = pitch.strikerCrease.y - 4;
-  else if (ev?.apparentHeight === "HIGH_THIGH") impactY = pitch.strikerCrease.y - 20;
+  if (p >= 0.48) {
+    ctx.fillStyle = "rgba(80,58,40,0.55)";
+    ctx.beginPath();
+    ctx.ellipse(pitchBounceX, pitch.pitchBounce.y, 4.5, 2.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // --- 8. Near Bowler-End Creases & Stumps (Near / Foreground) ---
+  // A. Bowler's Popping Crease (Crucial line for No-Ball Crease Check)
+  ctx.strokeStyle = "rgba(255,255,255,0.90)";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(pitch.bowlerCrease.x - pitch.bowlerCrease.halfWidth * 0.95, pitch.bowlerCrease.y);
+  ctx.lineTo(pitch.bowlerCrease.x + pitch.bowlerCrease.halfWidth * 0.95, pitch.bowlerCrease.y);
+  ctx.stroke();
+
+  // B. Bowler's Bowling Crease
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(pitch.bowlerWicket.x - pitch.bowlerWicket.halfWidth * 0.85, pitch.bowlerWicket.y);
+  ctx.lineTo(pitch.bowlerWicket.x + pitch.bowlerWicket.halfWidth * 0.85, pitch.bowlerWicket.y);
+  ctx.stroke();
+
+  // C. Bowler-End Stumps (Rendered in Foreground near camera)
+  drawStumpsAndBails(ctx, pitch.bowlerWicket.x, pitch.bowlerWicket.y, {
+    scale: pitch.bowlerWicket.scale,
+  });
+
+  // --- 9. Bowler Actor (Delivering at Popping Crease with Legal / No-Ball Foot Placement) ---
+  let bowlerApproachOffsetX = -16; // Standard right-arm over the wicket (releases from left of bowler stumps)
+  if (deliveryLine === "ROUND_WICKET") bowlerApproachOffsetX = +18;
+  else if (deliveryLine === "WIDE_OF_CREASE") bowlerApproachOffsetX = -28;
+
+  const bowlerX = pitch.bowlerCrease.x + bowlerApproachOffsetX;
+  const bowlerY = pitch.bowlerCrease.y;
+  const bowlerK = solveLBWBowlerKinematics(p, {
+    isNoBall,
+    frontFootOverstepMm: overstepMm,
+    deliveryLine,
+  });
+  drawArticulatedBowler(
+    ctx,
+    { x: bowlerX, y: bowlerY, scale: 1.08, facing: "RIGHT" },
+    bowlerK
+  );
+
+  // --- 10. Ball Flight & Trajectory (Receding from Bowler to Batsman) ---
+  let padImpactX = pitch.strikerCrease.x;
+  if (ev) {
+    if (ev.apparentImpactLine === "OUTSIDE_OFF") padImpactX = pitch.strikerCrease.x + (isLeftHand ? 14 : -14);
+    else if (ev.apparentImpactLine === "OUTSIDE_LEG") padImpactX = pitch.strikerCrease.x + (isLeftHand ? -14 : 14);
+    else padImpactX = pitch.strikerCrease.x + (lbw ? lbw.impactX * 10 : 0);
+  } else if (lbw) {
+    padImpactX = pitch.strikerCrease.x + lbw.impactX * 12;
+  }
+
+  let impactY = pitch.strikerCrease.y - 6;
+  if (ev?.apparentHeight === "LOW_SHIN") impactY = pitch.strikerCrease.y - 2;
+  else if (ev?.apparentHeight === "HIGH_THIGH") impactY = pitch.strikerCrease.y - 12;
 
   let ballX = bowlerX;
   let ballY = bowlerY;
-  let ballRadius = 2.8;
+  let ballRadius = 6.0;
   let prevBallX = ballX;
   let prevBallY = ballY;
 
   if (p < 0.20) {
-    // Bowler windmill arm release
+    // Bowler windmill arm release in foreground
     const rad = bowlerK.bowlingArmAngleRad;
-    ballX = bowlerX + 2 + Math.cos(rad) * 12;
-    ballY = bowlerY - 22 + Math.sin(rad) * 12;
-    ballRadius = 2.8;
+    ballX = bowlerX + 3 + Math.cos(rad) * 18;
+    ballY = bowlerY - 32 + Math.sin(rad) * 18;
+    ballRadius = 6.0;
   } else if (p >= 0.20 && p < 0.48) {
-    // Delivery flight from bowler's hand to pitch bounce
+    // Delivery flight: recedes down-pitch from bowler's hand to pitch bounce
     const t = (p - 0.20) / 0.28;
-    const releaseX = bowlerX + 2;
-    const releaseY = bowlerY - 22;
+    const releaseX = bowlerX + 3;
+    const releaseY = bowlerY - 32;
     ballX = releaseX + (pitchBounceX - releaseX) * t;
     ballY = releaseY + (pitch.pitchBounce.y - releaseY) * (t * t);
-    ballRadius = 2.8 + t * 2.0; // 2.8px -> 4.8px
+    ballRadius = 6.0 - t * 1.8; // 6.0px -> 4.2px (receding into distance)
     prevBallX = ballX - (pitchBounceX - releaseX) * 0.05;
-    prevBallY = ballY - 5;
+    prevBallY = ballY + 4;
   } else if (p >= 0.48 && p < 0.68) {
-    // Rise from bounce to pad impact
+    // Rise from bounce to batsman pad at far end
     const t = (p - 0.48) / 0.20;
     ballX = pitchBounceX + (padImpactX - pitchBounceX) * t;
     ballY = pitch.pitchBounce.y + (impactY - pitch.pitchBounce.y) * t;
-    ballRadius = 4.8 + t * 1.8; // 4.8px -> 6.6px
+    ballRadius = 4.2 - t * 1.2; // 4.2px -> 3.0px
     prevBallX = ballX - (padImpactX - pitchBounceX) * 0.05;
-    prevBallY = ballY - 3;
+    prevBallY = ballY + 2;
   } else {
-    // Post-impact deflection or continuation
+    // Post-impact deflection or continuation past pad towards far stumps
     const t = (p - 0.68) / 0.32;
-    ballX = padImpactX + (lbw?.impactX ? lbw.impactX * 12 * t : (isLeftHand ? -4 : 4) * t);
-    ballY = impactY + t * 16;
-    ballRadius = 6.5;
-    prevBallX = ballX - 2;
-    prevBallY = ballY - 2;
+    ballX = padImpactX + (lbw?.impactX ? lbw.impactX * 8 * t : (isLeftHand ? 3 : -3) * t);
+    ballY = impactY - t * 10;
+    ballRadius = 3.0;
+    prevBallX = ballX - 1;
+    prevBallY = ballY + 1;
   }
 
   drawCricketBall(ctx, ballX, ballY, {
     radius: ballRadius,
     seamAngleRad: p * Math.PI * 6,
-    shadowY: Math.min(pitch.strikerWicket.y + 4, ballY + ballRadius * 1.1),
+    shadowY: Math.min(pitch.bowlerWicket.y + 4, ballY + ballRadius * 1.1),
     motionTrail: p >= 0.20 && p < 0.68,
     prevX: prevBallX,
     prevY: prevBallY,
