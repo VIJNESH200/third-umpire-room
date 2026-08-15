@@ -203,6 +203,8 @@ export interface IncidentResult {
   umpiresCallComplied: boolean; // Did player respect the Umpire's Call rule properly?
   timeSpentReviewingMs: number;
   toolsUsed: string[];
+  playerBatGroundedMs?: number | null;
+  playerBailsDislodgedMs?: number | null;
 }
 
 export interface SessionStats {

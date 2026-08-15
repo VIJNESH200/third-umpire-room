@@ -13,7 +13,7 @@ import { VerdictPanel } from "./VerdictPanel";
 import { ResultReveal } from "./ResultReveal";
 import { IncidentReplayFeed } from "../instinct/IncidentReplayFeed";
 import { sounds } from "../../engine/audioSynth";
-import { Tv, Radio } from "lucide-react";
+import { Tv, Radio, Crosshair, Clock } from "lucide-react";
 
 export type ConsolePhase = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
 
@@ -26,7 +26,11 @@ interface ConsoleLayoutProps {
   currentResult: IncidentResult | null;
   onToggleMute: () => void;
   onSoftSignalSubmit: (choice: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS", elapsedMs: number) => void;
-  onFinalVerdictSubmit: (verdict: DecisionVerdict, dismissalReason: string) => void;
+  onFinalVerdictSubmit: (
+    verdict: DecisionVerdict,
+    dismissalReason: string,
+    playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
+  ) => void;
   onNextIncident: () => void;
 }
 
@@ -56,12 +60,18 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
   const [activeTool, setActiveTool] = useState<string>(() => getDefaultTool(scenario.incidentType));
 
-  // Reset active tool whenever scenario changes
+  // Player Manual Forensic Evidence Markers for Run-Out / Stumping
+  const [playerBatGroundedMs, setPlayerBatGroundedMs] = useState<number | null>(null);
+  const [playerBailsDislodgedMs, setPlayerBailsDislodgedMs] = useState<number | null>(null);
+
+  // Reset active tool & markers whenever scenario changes
   useEffect(() => {
     setActiveTool(getDefaultTool(scenario.incidentType));
     setCurrentTimeMs(1200);
     setIsPlaying(false);
     setIsRockAndRoll(false);
+    setPlayerBatGroundedMs(null);
+    setPlayerBailsDislodgedMs(null);
   }, [scenario.id, scenario.incidentType]);
 
   // Central Shared Timeline & Transport Engine
@@ -193,11 +203,24 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
         { label: "Pad Impact", timeMs: 1500, color: "#EF4444" },
       ];
     }
-    if ((scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") && scenario.runOut) {
-      const markers: KeyframeMarker[] = [
-        { label: "Bails Dislodge", timeMs: scenario.runOut.bailsDislodgedFrameMs, color: "#FF2E4C" },
-        { label: "Bat Grounded", timeMs: scenario.runOut.groundedFrameMs, color: "#00E676" },
-      ];
+    if (scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") {
+      const markers: KeyframeMarker[] = [];
+      if (playerBatGroundedMs !== null) {
+        const frameNum = Math.round((playerBatGroundedMs / 1000) * currentFps);
+        markers.push({
+          label: `Bat Grounded (F${frameNum})`,
+          timeMs: playerBatGroundedMs,
+          color: "#38BDF8",
+        });
+      }
+      if (playerBailsDislodgedMs !== null) {
+        const frameNum = Math.round((playerBailsDislodgedMs / 1000) * currentFps);
+        markers.push({
+          label: `Bails Dislodged (F${frameNum})`,
+          timeMs: playerBailsDislodgedMs,
+          color: "#FACC15",
+        });
+      }
       return markers;
     }
     if (scenario.incidentType === "CAUGHT_BEHIND" && scenario.caughtBehind) {
@@ -330,6 +353,84 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 />
               </div>
 
+              {/* Forensic Timing Marker Deck (Player observations for Run-Out / Stumping) */}
+              {(scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") && (
+                <div className="hardware-panel p-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2.5 font-mono text-xs border border-slate-700/60 shadow-md">
+                  <div className="flex items-center gap-2">
+                    <Crosshair size={14} className="text-cyan-400" />
+                    <span className="text-[11px] font-bold text-slate-300 font-display">FORENSIC TIMING MARKERS</span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Mark Bat Grounded Button & Display */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlayerBatGroundedMs(currentTimeMs);
+                          sounds.playClick(900);
+                        }}
+                        className={`px-2.5 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 border ${
+                          playerBatGroundedMs !== null
+                            ? "bg-cyan-950/80 border-cyan-500 text-cyan-200"
+                            : "bg-slate-900 border-slate-700 hover:border-cyan-500 text-slate-300"
+                        }`}
+                      >
+                        <span>MARK BAT GROUNDED</span>
+                      </button>
+                      {playerBatGroundedMs !== null ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleTimeChange(playerBatGroundedMs);
+                            sounds.playClick(800);
+                          }}
+                          title="Click to jump to marked frame"
+                          className="text-[10px] text-cyan-300 bg-cyan-950/90 border border-cyan-500/50 px-2 py-1 rounded font-bold hover:underline"
+                        >
+                          FRAME {Math.round((playerBatGroundedMs / 1000) * currentFps)} ({playerBatGroundedMs}ms)
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 italic px-1">[NOT MARKED]</span>
+                      )}
+                    </div>
+
+                    {/* Mark Bails Dislodged Button & Display */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlayerBailsDislodgedMs(currentTimeMs);
+                          sounds.playClick(950);
+                        }}
+                        className={`px-2.5 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 border ${
+                          playerBailsDislodgedMs !== null
+                            ? "bg-amber-950/80 border-amber-500 text-amber-200"
+                            : "bg-slate-900 border-slate-700 hover:border-amber-500 text-slate-300"
+                        }`}
+                      >
+                        <span>MARK BAILS DISLODGED</span>
+                      </button>
+                      {playerBailsDislodgedMs !== null ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleTimeChange(playerBailsDislodgedMs);
+                            sounds.playClick(800);
+                          }}
+                          title="Click to jump to marked frame"
+                          className="text-[10px] text-amber-300 bg-amber-950/90 border border-amber-500/50 px-2 py-1 rounded font-bold hover:underline"
+                        >
+                          FRAME {Math.round((playerBailsDislodgedMs / 1000) * currentFps)} ({playerBailsDislodgedMs}ms)
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 italic px-1">[NOT MARKED]</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Central Replay Transport Scrub Bar */}
               <ScrubBar
                 currentTimeMs={currentTimeMs}
@@ -433,6 +534,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                   incidentType={scenario.incidentType}
                   onFieldSignal={scenario.onFieldSignal}
                   drsEvaluation={scenario.drsEvaluation}
+                  playerBatGroundedMs={playerBatGroundedMs}
+                  playerBailsDislodgedMs={playerBailsDislodgedMs}
                   onVerdictSubmit={onFinalVerdictSubmit}
                 />
               )}

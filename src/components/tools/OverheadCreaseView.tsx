@@ -200,48 +200,29 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
           <circle cx={batTipX} cy="195" r="2.5" fill={isPastCrease ? "#10B981" : "#EF4444"} />
         </svg>
 
-        {/* Real-time Position Pill Overlay */}
+        {/* Real-time Camera Feed Overlay */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
-          <div
-            className={`px-3 py-1.5 rounded-md text-xs font-bold border backdrop-blur-md shadow-lg ${
-              isPastCrease
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
-                : "bg-rose-950/90 border-rose-500 text-rose-200"
-            }`}
-          >
-            {isPastCrease
-              ? `BAT BEHIND CREASE LINE (+${Math.abs(currentMarginMm)} mm INSIDE)`
-              : `BAT SHORT OF CREASE (-${Math.abs(currentMarginMm)} mm OUTSIDE)`}
+          <div className="px-3 py-1.5 rounded-md text-[11px] font-bold border border-cyan-500/40 bg-cyan-950/80 text-cyan-200 backdrop-blur-md shadow-lg">
+            CAMERA: OVERHEAD POPPING CREASE (CAM 07)
           </div>
         </div>
-
-        {/* Airborne Warning if bounced */}
-        {isAirborne && (
-          <div className="absolute bottom-2.5 left-2.5 bg-amber-950/90 border border-amber-500 px-3 py-1 rounded text-[11px] font-mono text-amber-200 backdrop-blur-sm z-20 animate-pulse">
-            ⚠️ BAT IS AIRBORNE / NOT GROUNDED BEHIND LINE
-          </div>
-        )}
       </div>
 
       {/* Footer Metrics */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">CREASE MARGIN</div>
-          <div className={`text-[11px] font-black ${isPastCrease ? "text-emerald-400" : "text-rose-400"}`}>
-            {currentMarginMm >= 0 ? `+${currentMarginMm} mm (SAFE)` : `${currentMarginMm} mm (SHORT)`}
+          <div className="text-[9px] text-slate-400 font-bold">SENSOR</div>
+          <div className="text-[11px] font-black text-cyan-300">HIGH-SPEED OVERHEAD 4K</div>
+        </div>
+        <div className="hardware-panel p-2 rounded-lg">
+          <div className="text-[9px] text-slate-400 font-bold">TIMECODE</div>
+          <div className="text-[11px] font-black text-slate-200">
+            00:01:{(clampedTime % 1000).toString().padStart(3, "0")}
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">GROUNDING STATUS</div>
-          <div className={`text-[11px] font-black ${isAirborne ? "text-amber-400" : "text-cyan-300"}`}>
-            {isAirborne ? "AIRBORNE / BOUNCED" : "GROUNDED ON PITCH"}
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">BAIL STATE</div>
-          <div className={`text-[11px] font-black ${isBailsDislodged ? "text-rose-400" : "text-slate-300"}`}>
-            {isBailsDislodged ? "DISLODGED / ILLUMINATED" : "IN SPIGOT GROOVES"}
-          </div>
+          <div className="text-[9px] text-slate-400 font-bold">ALIGNMENT</div>
+          <div className="text-[11px] font-black text-amber-300">ORTHOGRAPHIC CREASE</div>
         </div>
       </div>
     </div>

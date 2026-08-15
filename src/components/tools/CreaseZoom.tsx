@@ -191,55 +191,34 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
           </g>
         </svg>
 
-        {/* Real-time Zing Sensor HUD (Top Left) */}
+        {/* Neutral Zing Camera Sensor HUD (Top Left) */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
-          <div
-            className={`px-3 py-1.5 rounded-md text-[11px] border backdrop-blur-md flex items-center gap-2 shadow-lg ${
-              bailsDislodged
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : "bg-emerald-950/90 border-emerald-500/60 text-emerald-200"
-            }`}
-          >
-            <Zap size={13} className={bailsDislodged ? "text-rose-400" : "text-emerald-400"} />
+          <div className="px-3 py-1.5 rounded-md text-[11px] border border-cyan-500/40 bg-cyan-950/80 text-cyan-200 backdrop-blur-md flex items-center gap-2 shadow-lg">
+            <Zap size={13} className="text-cyan-400" />
             <div>
-              <span className="font-black">ZING SENSOR: </span>
-              <span>{bailsDislodged ? "BAILS DISLODGED (IGNITED)" : "INTACT IN GROOVE"}</span>
+              <span className="font-black">ZING CAMERA: </span>
+              <span className="text-slate-300">ACTIVE FEED (500 FPS)</span>
             </div>
-          </div>
-        </div>
-
-        {/* Crease Grounding Status HUD (Bottom Left) */}
-        <div className="absolute bottom-2.5 left-2.5 z-20 font-mono">
-          <div
-            className={`px-3 py-1.5 rounded-md text-[11px] font-bold border backdrop-blur-md shadow-lg ${
-              isAirborne
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : isPastCrease
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
-                : "bg-amber-950/90 border-amber-500 text-amber-200"
-            }`}
-          >
-            GROUNDING: {isAirborne ? "BAT AIRBORNE / BOUNCED" : isPastCrease ? "BAT GROUNDED BEHIND LINE" : "BAT SHORT OF CREASE"}
           </div>
         </div>
       </div>
 
-      {/* Diagnostics Footer */}
+      {/* Neutral Diagnostics Footer */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
           <div className="text-[9px] text-slate-400 font-bold">FRAME RATE</div>
           <div className="text-[11px] font-black text-cyan-300">500 FPS HIGH-SPEED</div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">CREASE MARGIN</div>
-          <div className={`text-[11px] font-black ${isPastCrease ? "text-emerald-400" : "text-rose-400"}`}>
-            {runOut.creaseMarginMm > 0 ? `+${runOut.creaseMarginMm} mm (SAFE)` : `${runOut.creaseMarginMm} mm (OUT)`}
+          <div className="text-[9px] text-slate-400 font-bold">CURRENT FRAME</div>
+          <div className="text-[11px] font-black text-slate-200">
+            FRAME {currentFrame} / 1100
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">BAILS SEPARATION</div>
+          <div className="text-[9px] text-slate-400 font-bold">OPTICAL FEED</div>
           <div className="text-[11px] font-black text-amber-300">
-            {bailsDislodged ? `+${Math.round(bailDelta)} ms DISPLACED` : "INTACT IN GROOVE"}
+            CAM 02 • POPPING CREASE
           </div>
         </div>
       </div>

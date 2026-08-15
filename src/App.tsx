@@ -80,7 +80,8 @@ export const App: React.FC = () => {
   // Phase 2: Final verdict submitted
   const handleFinalVerdictSubmit = (
     verdict: DecisionVerdict,
-    _dismissalReason: string
+    _dismissalReason: string,
+    playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
   ) => {
     const currentScenario = sessionScenarios[currentIncidentIndex];
     const isVerdictCorrect = verdict === currentScenario.correctFinalVerdict;
@@ -110,6 +111,8 @@ export const App: React.FC = () => {
       umpiresCallComplied: compliance.complied,
       timeSpentReviewingMs: Date.now() - reviewStartTime,
       toolsUsed: [currentScenario.incidentType],
+      playerBatGroundedMs: playerTimings?.playerBatGroundedMs,
+      playerBailsDislodgedMs: playerTimings?.playerBailsDislodgedMs,
     };
 
     setCurrentIncidentResult(result);

@@ -171,11 +171,11 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
           </g>
         </svg>
 
-        {/* Real-time Status Overlay */}
+        {/* Real-time Camera Feed Overlay */}
         <div className="absolute top-2.5 left-2.5 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded text-[11px] font-mono backdrop-blur-sm z-20">
-          <span className="text-slate-400 font-bold">STATE: </span>
-          <span className={isBailsDislodged ? "text-rose-400 font-black" : "text-cyan-300 font-bold"}>
-            {isBailsDislodged ? "ZING BAILS DISLODGED" : "BATTER SPRINTING TO CREASE"}
+          <span className="text-slate-400 font-bold">CAMERA: </span>
+          <span className="text-cyan-300 font-bold">
+            SIDE-ON WIDE (1080P 50FPS)
           </span>
         </div>
       </div>
@@ -187,8 +187,8 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
           <div className="text-[11px] font-black text-slate-200">SIDE-ON WIDE (CAM 01)</div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">DISLODGEMENT FRAME</div>
-          <div className="text-[11px] font-black text-rose-300">{runOut.bailsDislodgedFrameMs} ms</div>
+          <div className="text-[9px] text-slate-400 font-bold">FRAME RATE</div>
+          <div className="text-[11px] font-black text-cyan-300">50 FPS HIGH-DEFINITION</div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
           <div className="text-[9px] text-slate-400 font-bold">DIVE TECHNIQUE</div>

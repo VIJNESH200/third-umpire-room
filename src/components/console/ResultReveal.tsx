@@ -126,6 +126,50 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
         </div>
       </div>
 
+      {/* Forensic Timing & Alignment Breakdown for Run-Out / Stumping */}
+      {(scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") && scenario.runOut && (
+        <div className="bg-slate-950/90 border border-slate-700/80 p-3.5 rounded-lg text-xs space-y-2 font-mono">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span className="text-[11px] font-bold text-cyan-300 font-display">FORENSIC TIMING & CREASE TELEMETRY</span>
+            <span className="text-[10px] text-slate-400">GROUND TRUTH REVEAL</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+            <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+              <div className="text-[9px] text-slate-400 font-bold">YOUR BAT MARK</div>
+              <div className="text-slate-200 font-bold">
+                {result.playerBatGroundedMs !== null && result.playerBatGroundedMs !== undefined
+                  ? `${result.playerBatGroundedMs} ms`
+                  : "N/A"}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+              <div className="text-[9px] text-slate-400 font-bold">YOUR BAILS MARK</div>
+              <div className="text-slate-200 font-bold">
+                {result.playerBailsDislodgedMs !== null && result.playerBailsDislodgedMs !== undefined
+                  ? `${result.playerBailsDislodgedMs} ms`
+                  : "N/A"}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+              <div className="text-[9px] text-slate-400 font-bold">ACTUAL BAILS TIME</div>
+              <div className="text-amber-300 font-bold">{scenario.runOut.bailsDislodgedFrameMs} ms</div>
+            </div>
+
+            <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+              <div className="text-[9px] text-slate-400 font-bold">ACTUAL CREASE MARGIN</div>
+              <div className={`font-black ${scenario.runOut.creaseMarginMm > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                {scenario.runOut.creaseMarginMm > 0
+                  ? `+${scenario.runOut.creaseMarginMm} mm (SAFE)`
+                  : `${scenario.runOut.creaseMarginMm} mm (OUT)`}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Broadcast Radio Comms & Stadium Flavor */}
       <div className="bg-console-950 p-3 rounded-lg border border-console-800 space-y-2 text-xs">
         <div className="flex items-center space-x-1.5 text-slate-400 text-[10px]">

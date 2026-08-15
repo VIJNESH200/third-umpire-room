@@ -11,17 +11,29 @@ interface VerdictPanelProps {
   incidentType: string;
   onFieldSignal: OnFieldSignal;
   drsEvaluation: DRSRuleEvaluation;
-  onVerdictSubmit: (verdict: DecisionVerdict, dismissalReason: string) => void;
+  playerBatGroundedMs?: number | null;
+  playerBailsDislodgedMs?: number | null;
+  onVerdictSubmit: (
+    verdict: DecisionVerdict,
+    dismissalReason: string,
+    playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
+  ) => void;
 }
 
 export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   incidentType,
   onFieldSignal,
   drsEvaluation,
+  playerBatGroundedMs = null,
+  playerBailsDislodgedMs = null,
   onVerdictSubmit,
 }) => {
   const [selectedVerdict, setSelectedVerdict] = useState<DecisionVerdict | null>(null);
   const [dismissalReason, setDismissalReason] = useState<string>("STANDARD");
+
+  const isRunOutOrStumping = incidentType === "RUN_OUT" || incidentType === "STUMPING";
+  const areMarkersPlaced = !isRunOutOrStumping || (playerBatGroundedMs !== null && playerBailsDislodgedMs !== null);
+  const canTransmit = selectedVerdict !== null && areMarkersPlaced;
 
   const handleSelectVerdict = (verdict: DecisionVerdict) => {
     setSelectedVerdict(verdict);
@@ -29,9 +41,12 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   };
 
   const handleTransmit = () => {
-    if (!selectedVerdict) return;
+    if (!canTransmit || !selectedVerdict) return;
     sounds.playVerdictReveal(true);
-    onVerdictSubmit(selectedVerdict, dismissalReason);
+    onVerdictSubmit(selectedVerdict, dismissalReason, {
+      playerBatGroundedMs,
+      playerBailsDislodgedMs,
+    });
   };
 
   const isUmpiresCall = incidentType === "LBW" && drsEvaluation.isUmpiresCall;
@@ -121,12 +136,22 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
         </button>
       </div>
 
+      {/* Forensic Marker Placement Warning for Run-Out / Stumping */}
+      {isRunOutOrStumping && !areMarkersPlaced && (
+        <div className="bg-amber-950/40 border border-amber-500/40 p-2.5 rounded-lg text-[11px] text-amber-300 flex items-center gap-2">
+          <AlertTriangle size={14} className="text-amber-400 shrink-0 animate-pulse" />
+          <span>
+            <b>MARK BOTH EVENTS:</b> Identify and mark both 'Bat Grounded' and 'Bails Dislodged' frames before transmitting verdict.
+          </span>
+        </div>
+      )}
+
       {/* Final Transmission Trigger */}
       <button
-        disabled={!selectedVerdict}
+        disabled={!canTransmit}
         onClick={handleTransmit}
         className={`w-full py-3 rounded-xl font-black text-xs tracking-wider uppercase transition-all flex items-center justify-center gap-2 shadow-xl font-display ${
-          selectedVerdict
+          canTransmit
             ? "bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-slate-950 shadow-cyan-500/25 active:scale-98 cursor-pointer"
             : "bg-console-950 text-slate-600 border border-console-800 cursor-not-allowed opacity-60"
         }`}
