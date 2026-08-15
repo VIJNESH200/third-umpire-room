@@ -7,6 +7,7 @@ import {
 } from "../engine/drsRules";
 import { generateScenario, generateSession } from "../engine/scenarioGenerator";
 import { computeSessionStats, getRankInfo } from "../engine/scoring";
+import { computePitchStations } from "../components/instinct/IncidentReplayFeed";
 import type {
   LBWData,
   RunOutData,
@@ -534,6 +535,44 @@ function runAllDRSTests() {
     assert(scorePlausible, "Format Compliance: Batting score and wickets remain plausible for all formats");
   }
 
+  // --- GROUP 10: LBW 22-YARD PITCH DEPTH & GEOMETRY INVARIANTS ---
+  console.log("\n--- GROUP 10: LBW 22-YARD PITCH DEPTH & GEOMETRY INVARIANTS ---");
+  {
+    const w = 640;
+    const h = 360;
+    const stations = computePitchStations(w, h);
+
+    // Test 51: Spatial depth order invariant: bowlerWicket < bowler < pitchBounce < batter < strikerWicket
+    const orderValid =
+      stations.bowlerWicket.y < stations.bowlerCrease.y &&
+      stations.bowlerCrease.y < stations.bowlerRelease.y &&
+      stations.bowlerRelease.y < stations.pitchBounce.y &&
+      stations.pitchBounce.y < stations.strikerCrease.y &&
+      stations.strikerCrease.y < stations.strikerWicket.y;
+    assert(orderValid, "Pitch Depth Invariant: bowlerWicket < bowler < bounce < batter < strikerWicket on screen Y");
+
+    // Test 52: Striker wicket is closest to camera (bottom of screen / between camera and batter)
+    const strikerAtForeground = stations.strikerWicket.y > stations.strikerCrease.y;
+    assert(strikerAtForeground, "Camera Perspective: Striker stumps are between camera and batsman (strikerWicket > strikerCrease)");
+
+    // Test 53: Bowler wicket is at far top end (behind bowler from camera view)
+    const bowlerAtFarTop = stations.bowlerWicket.y < stations.bowlerRelease.y;
+    assert(bowlerAtFarTop, "Camera Perspective: Bowler stumps are at far end behind bowler (bowlerWicket < bowlerRelease)");
+
+    // Test 54: Perspective scaling: far objects (bowler stumps) have smaller scale than near objects (striker stumps)
+    const scaleValid =
+      stations.bowlerWicket.scale < stations.bowlerRelease.scale &&
+      stations.bowlerRelease.scale < stations.strikerCrease.scale &&
+      stations.strikerCrease.scale < stations.strikerWicket.scale;
+    assert(scaleValid, "Perspective Scale: Far bowler stumps scale < near striker stumps scale");
+
+    // Test 55: Pitch trapezoid geometry: width increases from bowler end to striker end
+    const trapezoidValid =
+      (stations.pitchTopRightX - stations.pitchTopLeftX) <
+      (stations.pitchBottomRightX - stations.pitchBottomLeftX);
+    assert(trapezoidValid, "Pitch Geometry: Pitch width expands down-perspective towards camera");
+  }
+
   console.log("=================================================");
   console.log(`   TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);
   console.log("=================================================");
@@ -544,3 +583,4 @@ function runAllDRSTests() {
 }
 
 runAllDRSTests();
+
