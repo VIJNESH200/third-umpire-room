@@ -24,7 +24,7 @@ import {
   evaluateCaughtBehind,
   evaluateBoundary,
 } from "./drsRules";
-import { MATCH_POOLS } from "../data/matchContextPool";
+import { MATCH_POOLS, generateDynamicMatchSituation } from "../data/matchContextPool";
 
 // Deterministic pseudo-random generator with seed support
 export class SeededRandom {
@@ -92,6 +92,17 @@ export function generateScenario(
   const totalWickets = rng.rangeInt(3, 8);
   const totalRuns = over * 6 + rng.rangeInt(20, 80);
 
+  const matchSituation = generateDynamicMatchSituation(
+    incidentType,
+    batterObj.name,
+    bowlerObj.name,
+    pool.battingTeam,
+    pool.bowlingTeam,
+    over,
+    ballInOver,
+    bowlerObj.type === "SPIN"
+  );
+
   const matchContext: MatchContext = {
     over,
     ballInOver,
@@ -109,7 +120,7 @@ export function generateScenario(
     onFieldSignal: "REFERRED",
     matchFormat: pool.matchFormat,
     tournament: pool.tournament,
-    matchSituation: rng.pick(pool.situations),
+    matchSituation,
   };
 
   let lbwData: LBWData | undefined;

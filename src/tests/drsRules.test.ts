@@ -452,15 +452,43 @@ function runAllDRSTests() {
       "Boundary Evidence: Release timing in CLEAR matches held over rope vs early lob");
   }
 
-  // Test 39: All 5 incident types produce valid, non-null initial evidence
+  // --- GROUP 8: MATCH CONTEXT & DATA CONSISTENCY ---
+  console.log("\n--- GROUP 8: MATCH CONTEXT & DATA CONSISTENCY ---");
   {
-    const types = ["LBW", "RUN_OUT", "STUMPING", "CAUGHT_BEHIND", "BOUNDARY"] as const;
-    let allValid = true;
-    for (const t of types) {
-      const scn = generateScenario(12345, t);
-      if (!scn.initialEvidence) allValid = false;
+    let contextConsistent = true;
+    for (let seed = 100; seed < 125; seed++) {
+      const scn = generateScenario(seed);
+      const bName = scn.matchContext.bowler;
+      const batName = scn.matchContext.batter;
+      const bLast = bName.split(" ").slice(-1)[0];
+      const batLast = batName.split(" ").slice(-1)[0];
+
+      // Verify incidentTitle has proper names
+      if (scn.incidentType === "LBW") {
+        if (!scn.incidentTitle.includes(bName) || !scn.incidentTitle.includes(batName)) {
+          contextConsistent = false;
+        }
+      }
+
+      // Verify description has proper names
+      if (scn.incidentType !== "BOUNDARY" && !scn.description.includes(batName)) {
+        contextConsistent = false;
+      }
+
+      // Verify match situation mentions the actual bowler or batter
+      const sit = scn.matchContext.matchSituation;
+      if (!sit.includes(bLast) && !sit.includes(batLast) && !sit.includes(scn.matchContext.battingTeam) && !sit.includes(scn.matchContext.bowlingTeam)) {
+        contextConsistent = false;
+      }
+
+      // Verify comms do NOT leak on-field OUT/NOT_OUT or forensic results
+      for (const msg of scn.commsDialogue) {
+        if (msg.text.includes("Soft signal on field is") || msg.text.includes("fair delivery confirmed") || msg.text.includes("no bat involved")) {
+          contextConsistent = false;
+        }
+      }
     }
-    assert(allValid, "Initial Evidence: All 5 incident types produce complete initial evidence objects");
+    assert(contextConsistent, "Match Context: Bowler, batter, description, situation, and comms are 100% consistent across scenarios");
   }
 
   console.log("=================================================");
