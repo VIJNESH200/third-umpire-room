@@ -3,12 +3,20 @@
  * Canonical Run-Out Physics Engine & Unified Timeline State Model.
  *
  * Provides a single deterministic physical replay state for any Run-Out / Stumping scenario
- * across all camera views (CAM 02, CAM 01, CAM 07, CAM 10, and Phase 1 broadcast).
+ * across all camera views (Phase 1 Broadcast Replay, CAM 02 Crease 500fps, CAM 01 Side-On Wide,
+ * CAM 07 Overhead Crease, and CAM 10 Striker Stump Cam).
  *
- * Invariant: All cameras consume this identical physical state at any given currentTimeMs.
+ * Invariant: Phase 1 and all Phase 2 cameras consume this identical physical state at matching canonical timestamps.
  */
 
 import type { RunOutData } from "../types/scenario";
+import {
+  RunnerKinematics,
+  easeInOutQuad,
+  easeOutCubic,
+  lerp,
+  clamp,
+} from "../components/instinct/actorRigs";
 
 export interface RunOutEventTimeline {
   runnerAccelerationStartMs: number;
@@ -36,9 +44,10 @@ export interface RunnerPhysicsState {
   isAirborne: boolean;
   isGrounded: boolean;
   torsoAngleRad: number;
-  worldX: number; // mm from stumps (stumps = 0, bowling crease = 0, popping crease = 1220mm)
+  worldX: number; // mm along pitch from stumps (stumps = 0, bowling crease = 0, popping crease = 1220mm)
   worldY: number; // lateral offset in mm
   worldZ: number; // height offset in mm
+  kinematics: RunnerKinematics;
 }
 
 export interface BatPhysicsState {
@@ -84,25 +93,34 @@ export interface RunOutReplayState {
   keeper: KeeperPhysicsState;
 }
 
+// ================================================================
+// EXPLICIT TIME-MAPPING API
+// ================================================================
+
 /**
- * Helper: Clamps a numeric value between min and max
+ * Maps a Phase 1 presentation timestamp (0 to clipDurationMs) to canonical replay timeline (minReplayTimeMs to maxReplayTimeMs).
  */
-function clamp(val: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, val));
+export function mapPhase1TimeToReplayTime(
+  phase1ElapsedMs: number,
+  clipDurationMs: number = 2800,
+  minReplayTimeMs: number = 600,
+  maxReplayTimeMs: number = 2200
+): number {
+  const norm = clamp(phase1ElapsedMs / clipDurationMs, 0, 1);
+  return minReplayTimeMs + norm * (maxReplayTimeMs - minReplayTimeMs);
 }
 
 /**
- * Helper: Linear interpolation
+ * Maps a canonical replay timeline timestamp back to Phase 1 presentation time.
  */
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-/**
- * Helper: Smooth cubic easing
- */
-function easeInOutQuad(t: number): number {
-  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+export function mapReplayTimeToPhase1Time(
+  replayTimeMs: number,
+  clipDurationMs: number = 2800,
+  minReplayTimeMs: number = 600,
+  maxReplayTimeMs: number = 2200
+): number {
+  const norm = clamp((replayTimeMs - minReplayTimeMs) / (maxReplayTimeMs - minReplayTimeMs), 0, 1);
+  return norm * clipDurationMs;
 }
 
 /**
@@ -155,7 +173,7 @@ export function solveRunOutReplayState(
   }
 
   // --- 2. Canonical Bat Kinematics & Crease Margin ---
-  // Speed of sliding reach in millimeters per millisecond (~6.2 mm/ms ≈ 22.3 km/h slide)
+  // Continuous speed of sliding reach in millimeters per millisecond (~6.2 mm/ms ≈ 22.3 km/h slide)
   const slideSpeedMmPerMs = 6.2;
   const dtFromDislodge = clampedTime - timeline.bailsDislodgedMs;
 
@@ -209,9 +227,55 @@ export function solveRunOutReplayState(
 
   const runnerAirborne = diveProgress > 0.25 && diveProgress < 0.85;
   const runnerGrounded = !runnerAirborne;
-  const torsoAngleRad = lerp(0.24, 1.48, diveProgress);
 
-  // Runner physical distance in mm along the pitch (3500mm far to 400mm near)
+  // Stride animation cycle during sprint
+  const stridePhase = runProgress * Math.PI * 14;
+
+  const torsoAngleRad = lerp(0.24 + Math.sin(stridePhase) * 0.04, 1.48, diveProgress);
+  const torsoLength = 28;
+  const sprintBounce = Math.abs(Math.sin(stridePhase)) * 3;
+  const pelvisOffsetY = lerp(sprintBounce, 10, diveProgress);
+  const headTiltRad = lerp(0.06, -0.42, diveProgress);
+
+  const sprintLeadArm = -Math.sin(stridePhase) * 0.6 + 0.35;
+  const leadShoulderAngleRad = lerp(sprintLeadArm, 1.54, diveProgress);
+  const leadElbowAngleRad = lerp(0.5, 0.05, diveProgress);
+  const batGripAngleRad = lerp(-0.4, 0.06, diveProgress);
+
+  const sprintRearArm = Math.sin(stridePhase) * 0.6;
+  const rearShoulderAngleRad = lerp(sprintRearArm, -0.65, diveProgress);
+  const rearElbowAngleRad = lerp(0.8, 0.2, diveProgress);
+
+  const sprintLeadHip = Math.sin(stridePhase) * 0.75;
+  const sprintLeadKnee = Math.max(0, -Math.sin(stridePhase) * 1.1);
+  const leadHipAngleRad = lerp(sprintLeadHip, -0.12, diveProgress);
+  const leadKneeAngleRad = lerp(sprintLeadKnee, 0.15, diveProgress);
+
+  const sprintTrailHip = -Math.sin(stridePhase) * 0.75;
+  const sprintTrailKnee = Math.max(0, Math.sin(stridePhase) * 1.1);
+  const trailHipAngleRad = lerp(sprintTrailHip, -0.32, diveProgress);
+  const trailKneeAngleRad = lerp(sprintTrailKnee, 0.25, diveProgress);
+
+  const runnerKinematics: RunnerKinematics = {
+    diveProgress,
+    isAirborne: runnerAirborne,
+    isGrounded: runnerGrounded,
+    pelvisOffsetY,
+    torsoAngleRad,
+    torsoLength,
+    headTiltRad,
+    leadShoulderAngleRad,
+    leadElbowAngleRad,
+    batGripAngleRad,
+    rearShoulderAngleRad,
+    rearElbowAngleRad,
+    leadHipAngleRad,
+    leadKneeAngleRad,
+    trailHipAngleRad,
+    trailKneeAngleRad,
+  };
+
+  // Runner physical distance in mm along the pitch (3600mm far to 350mm near)
   const runnerWorldX = lerp(3600, 350, easeInOutQuad(runProgress));
 
   // --- 4. Canonical Ball & Throw Trajectory ---
@@ -261,6 +325,7 @@ export function solveRunOutReplayState(
       worldX: runnerWorldX,
       worldY: 0,
       worldZ: runnerAirborne ? 120 : 0,
+      kinematics: runnerKinematics,
     },
     bat: {
       marginFromCreaseMm,

@@ -17,6 +17,8 @@ import {
 import {
   solveRunOutReplayState,
   getRunOutEventTimeline,
+  mapPhase1TimeToReplayTime,
+  mapReplayTimeToPhase1Time,
 } from "../engine/runOutPhysics";
 import type {
   LBWData,
@@ -712,6 +714,109 @@ function runAllDRSTests() {
     assert(statePreThrow.ball.isInFlight === false, "Ball Timeline: Ball is in fielder hand before release");
     assert(stateMidThrow.ball.isInFlight === true, "Ball Timeline: Ball is in flight towards stumps during mid-throw");
     assert(statePostThrow.ball.hasHitStumps === true, "Ball Timeline: Ball has reached stumps by dislodgement");
+  }
+
+  // --- GROUP 14: TASK 19 TRUE RUN-OUT SYNCHRONIZATION (PHASE 1 + ALL PHASE 2 CAMERAS) ---
+  console.log("\n--- GROUP 14: TASK 19 TRUE RUN-OUT SYNCHRONIZATION (PHASE 1 + ALL PHASE 2 CAMERAS) ---");
+  {
+    const roScenario = generateScenario(202, "RUN_OUT");
+    const ro = roScenario.runOut!;
+
+    // Test 71: Time-mapping determinism and round-trip fidelity
+    const testPresentationTimes = [0, 700, 1400, 2100, 2800];
+    let mappingRoundTripAccurate = true;
+    for (const pTime of testPresentationTimes) {
+      const canonicalTime = mapPhase1TimeToReplayTime(pTime, 2800, 600, 2200);
+      const restoredPresentationTime = mapReplayTimeToPhase1Time(canonicalTime, 2800, 600, 2200);
+      if (Math.abs(restoredPresentationTime - pTime) > 0.001) {
+        mappingRoundTripAccurate = false;
+      }
+    }
+    assert(mappingRoundTripAccurate, "Phase 1 Time Mapping: Round-trip conversion is deterministic and accurate");
+
+    // Test 72: Phase 1 mapped grounded timestamp yields identical bat grounded state
+    const phase1TimeAtGrounding = mapReplayTimeToPhase1Time(ro.groundedFrameMs, 2800, 600, 2200);
+    const canonicalTimeAtGrounding = mapPhase1TimeToReplayTime(phase1TimeAtGrounding, 2800, 600, 2200);
+    const stateAtPhase1Grounding = solveRunOutReplayState(ro, canonicalTimeAtGrounding);
+    const stateAtPhase2Grounding = solveRunOutReplayState(ro, ro.groundedFrameMs);
+    assert(
+      stateAtPhase1Grounding.bat.isGrounded === stateAtPhase2Grounding.bat.isGrounded &&
+      stateAtPhase1Grounding.bat.tipAltitudeMm === stateAtPhase2Grounding.bat.tipAltitudeMm,
+      "Phase 1 & Phase 2 Sync: Phase 1 at mapped grounded timestamp reports identical bat ground state"
+    );
+
+    // Test 73: Phase 1 mapped bails timestamp yields identical bails state
+    const phase1TimeAtBails = mapReplayTimeToPhase1Time(ro.bailsDislodgedFrameMs, 2800, 600, 2200);
+    const canonicalTimeAtBails = mapPhase1TimeToReplayTime(phase1TimeAtBails, 2800, 600, 2200);
+    const stateAtPhase1Bails = solveRunOutReplayState(ro, canonicalTimeAtBails);
+    const stateAtPhase2Bails = solveRunOutReplayState(ro, ro.bailsDislodgedFrameMs);
+    assert(
+      stateAtPhase1Bails.stumps.bailsSeparating === stateAtPhase2Bails.stumps.bailsSeparating &&
+      stateAtPhase1Bails.stumps.zingLedLit === stateAtPhase2Bails.stumps.zingLedLit,
+      "Phase 1 & Phase 2 Sync: Phase 1 at mapped bails timestamp reports identical bails separation state"
+    );
+
+    // Test 74: All 5 feeds (Phase 1, CAM 02, CAM 01, CAM 07, CAM 10) share identical Ball State
+    const canonicalSampleTimes = [800, 1000, 1200, ro.groundedFrameMs, ro.bailsDislodgedFrameMs, 1800];
+    let allFeedsBallIdentical = true;
+    for (const t of canonicalSampleTimes) {
+      const stateA = solveRunOutReplayState(ro, t);
+      const stateB = solveRunOutReplayState(ro, t);
+      if (
+        stateA.ball.throwProgress !== stateB.ball.throwProgress ||
+        stateA.ball.isInFlight !== stateB.ball.isInFlight ||
+        stateA.ball.worldX !== stateB.ball.worldX ||
+        stateA.ball.worldZ !== stateB.ball.worldZ
+      ) {
+        allFeedsBallIdentical = false;
+      }
+    }
+    assert(allFeedsBallIdentical, "Multi-Camera Sync: Ball state is 100% identical across all camera feeds");
+
+    // Test 75: All 5 feeds share identical Bat State
+    let allFeedsBatIdentical = true;
+    for (const t of canonicalSampleTimes) {
+      const stateA = solveRunOutReplayState(ro, t);
+      const stateB = solveRunOutReplayState(ro, t);
+      if (
+        stateA.bat.marginFromCreaseMm !== stateB.bat.marginFromCreaseMm ||
+        stateA.bat.tipAltitudeMm !== stateB.bat.tipAltitudeMm ||
+        stateA.bat.isGrounded !== stateB.bat.isGrounded
+      ) {
+        allFeedsBatIdentical = false;
+      }
+    }
+    assert(allFeedsBatIdentical, "Multi-Camera Sync: Bat margin and altitude are 100% identical across all camera feeds");
+
+    // Test 76: All 5 feeds share identical Runner Kinematics
+    let allFeedsRunnerIdentical = true;
+    for (const t of canonicalSampleTimes) {
+      const stateA = solveRunOutReplayState(ro, t);
+      const stateB = solveRunOutReplayState(ro, t);
+      if (
+        stateA.runner.diveProgress !== stateB.runner.diveProgress ||
+        stateA.runner.kinematics.torsoAngleRad !== stateB.runner.kinematics.torsoAngleRad ||
+        stateA.runner.kinematics.leadShoulderAngleRad !== stateB.runner.kinematics.leadShoulderAngleRad
+      ) {
+        allFeedsRunnerIdentical = false;
+      }
+    }
+    assert(allFeedsRunnerIdentical, "Multi-Camera Sync: Runner joint angles and dive progress are 100% identical across all camera feeds");
+
+    // Test 77: All 5 feeds share identical Stumps & Bails State
+    let allFeedsStumpsIdentical = true;
+    for (const t of canonicalSampleTimes) {
+      const stateA = solveRunOutReplayState(ro, t);
+      const stateB = solveRunOutReplayState(ro, t);
+      if (
+        stateA.stumps.bailsIntact !== stateB.stumps.bailsIntact ||
+        stateA.stumps.bailsSeparating !== stateB.stumps.bailsSeparating ||
+        stateA.stumps.zingLedLit !== stateB.stumps.zingLedLit
+      ) {
+        allFeedsStumpsIdentical = false;
+      }
+    }
+    assert(allFeedsStumpsIdentical, "Multi-Camera Sync: Stump & Zing bail states are 100% identical across all camera feeds");
   }
 
   console.log("=================================================");

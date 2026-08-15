@@ -2,6 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Scenario } from "../../types/scenario";
 import { Camera } from "lucide-react";
 import {
+  mapPhase1TimeToReplayTime,
+  solveRunOutReplayState,
+} from "../../engine/runOutPhysics";
+import {
   lerp,
   clamp,
   solveLBWBatterKinematics,
@@ -66,6 +70,9 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
       const width = canvas.width;
       const height = canvas.height;
 
+      // Canonical replay timeline mapping (600ms to 2200ms)
+      const canonicalTimeMs = mapPhase1TimeToReplayTime(elapsed, CLIP_DURATION_MS);
+
       // Clear frame
       ctx.clearRect(0, 0, width, height);
 
@@ -73,9 +80,9 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
       if (scenario.incidentType === "LBW") {
         renderLBWBroadcast(ctx, width, height, progress, scenario);
       } else if (scenario.incidentType === "RUN_OUT") {
-        renderRunOutBroadcast(ctx, width, height, progress, scenario);
+        renderRunOutBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
       } else if (scenario.incidentType === "STUMPING") {
-        renderStumpingBroadcast(ctx, width, height, progress, scenario);
+        renderStumpingBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
       } else if (scenario.incidentType === "CAUGHT_BEHIND") {
         renderCaughtBehindBroadcast(ctx, width, height, progress, scenario);
       } else if (scenario.incidentType === "BOUNDARY") {
@@ -464,10 +471,11 @@ function renderRunOutBroadcast(
   w: number,
   h: number,
   p: number,
-  scenario: Scenario
+  scenario: Scenario,
+  canonicalTimeMs: number
 ) {
-  const ev = scenario.initialEvidence?.runOut;
   const ro = scenario.runOut;
+  const state = ro ? solveRunOutReplayState(ro, canonicalTimeMs) : null;
 
   // --- 1. Outfield Grass with Mowing Bands & Ambience ---
   const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
@@ -532,14 +540,16 @@ function renderRunOutBroadcast(
   ctx.fillText("POPPING CREASE", creaseX + 6, pitchTopY + 18);
   ctx.restore();
 
-  // --- 4. Striker Stumps & Zing Bails ---
-  const bailsBroke = p >= 0.62;
-  const dislodgeT = bailsBroke ? (p - 0.62) / 0.38 : 0.0;
+  // --- 4. Striker Stumps & Zing Bails (Driven by canonical state.stumps) ---
+  const bailsBroke = state ? state.stumps.bailsSeparating : p >= 0.62;
+  const dislodgeProgress = state
+    ? clamp((canonicalTimeMs - state.timeline.bailsDislodgedMs) / 300, 0, 1)
+    : (bailsBroke ? (p - 0.62) / 0.38 : 0.0);
 
   drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
     scale: 1.12,
     bailsDislodged: bailsBroke,
-    dislodgeProgress: dislodgeT,
+    dislodgeProgress,
     isZing: true,
   });
 
@@ -551,9 +561,10 @@ function renderRunOutBroadcast(
     keeperK
   );
 
-  // --- 6. Incoming Throw Trajectory from Deep ---
-  if (p < 0.62) {
-    const tThrow = p / 0.62;
+  // --- 6. Incoming Throw Trajectory from Deep (Driven by canonical state.ball) ---
+  const ballInFlight = state ? state.ball.isInFlight : p < 0.62;
+  if (ballInFlight) {
+    const tThrow = state ? state.ball.throwProgress : p / 0.62;
     const originX = w * 0.98;
     const originY = h * 0.18;
     const targetX = stumpsX + 4;
@@ -573,28 +584,35 @@ function renderRunOutBroadcast(
       radius: 4.8,
       seamAngleRad: p * Math.PI * 10,
       shadowY: Math.min(pitchTopY + 40, throwY + 24),
-      motionTrail: p > 0.10,
+      motionTrail: tThrow > 0.05,
       prevX: prevThrowX,
       prevY: prevThrowY,
     });
   }
 
-  // --- 7. Single Coherent Athlete Runner Kinematics & Sliding Reach ---
-  const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
-  const runnerResult = solveRunOutRunnerKinematics(
-    p,
-    creaseX,
-    marginPx,
-    ev?.runnerDiveTechnique
-  );
+  // --- 7. Single Coherent Athlete Runner Kinematics & Sliding Reach (Driven by canonical state.runner) ---
+  let runnerX: number;
+  let runnerK = state?.runner.kinematics;
+
+  if (state && runnerK) {
+    const marginPx = Math.round(state.bat.marginFromCreaseMm * 0.45);
+    const reachOffset = runnerK.diveProgress > 0 ? 65 : 35;
+    runnerX = creaseX - marginPx + reachOffset;
+  } else {
+    const ev = scenario.initialEvidence?.runOut;
+    const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
+    const fallbackResult = solveRunOutRunnerKinematics(p, creaseX, marginPx, ev?.runnerDiveTechnique);
+    runnerX = fallbackResult.runnerX;
+    runnerK = fallbackResult.runnerK;
+  }
 
   // Sliding turf dust spray during high-speed ground reach
-  if (p >= 0.56 && p < 0.88) {
-    const dustT = (p - 0.56) / 0.32;
+  if (state ? (state.phase === "GROUNDED_SLIDE" || state.phase === "POST_INCIDENT") : (p >= 0.56 && p < 0.88)) {
+    const dustT = state ? clamp((canonicalTimeMs - state.timeline.batReachStartMs) / 600, 0, 1) : (p - 0.56) / 0.32;
     ctx.save();
     ctx.fillStyle = "rgba(180, 150, 110, 0.35)";
     for (let i = 0; i < 4; i++) {
-      const offsetX = runnerResult.runnerX + (i * 12) - dustT * 20;
+      const offsetX = runnerX + (i * 12) - dustT * 20;
       const offsetY = stumpsBaseY + 12 + Math.sin(i * 1.5) * 3;
       ctx.beginPath();
       ctx.ellipse(offsetX, offsetY, 8 * (1 - dustT * 0.5), 3, 0, 0, Math.PI * 2);
@@ -605,8 +623,8 @@ function renderRunOutBroadcast(
 
   drawArticulatedRunner(
     ctx,
-    { x: runnerResult.runnerX, y: stumpsBaseY + 12, scale: 1.12, facing: "LEFT" },
-    runnerResult.runnerK
+    { x: runnerX, y: stumpsBaseY + 12, scale: 1.12, facing: "LEFT" },
+    runnerK
   );
 }
 
@@ -618,10 +636,11 @@ function renderStumpingBroadcast(
   w: number,
   h: number,
   p: number,
-  scenario: Scenario
+  scenario: Scenario,
+  canonicalTimeMs: number
 ) {
-  const ev = scenario.initialEvidence?.runOut;
   const ro = scenario.runOut;
+  const state = ro ? solveRunOutReplayState(ro, canonicalTimeMs) : null;
 
   // --- 1. Outfield Grass ---
   const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
@@ -672,14 +691,16 @@ function renderStumpingBroadcast(
   ctx.fillText("POPPING CREASE", creaseX + 6, pitchTopY + 18);
   ctx.restore();
 
-  // --- 4. Striker Stumps & Zing Bails ---
-  const bailsBroke = p >= 0.65;
-  const dislodgeT = bailsBroke ? (p - 0.65) / 0.35 : 0.0;
+  // --- 4. Striker Stumps & Zing Bails (Driven by canonical state.stumps) ---
+  const bailsBroke = state ? state.stumps.bailsSeparating : p >= 0.65;
+  const dislodgeProgress = state
+    ? clamp((canonicalTimeMs - state.timeline.bailsDislodgedMs) / 300, 0, 1)
+    : (bailsBroke ? (p - 0.65) / 0.35 : 0.0);
 
   drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
     scale: 1.15,
     bailsDislodged: bailsBroke,
-    dislodgeProgress: dislodgeT,
+    dislodgeProgress,
     isZing: true,
   });
 
@@ -692,7 +713,7 @@ function renderStumpingBroadcast(
   );
 
   // --- 6. Batter Advance & Back-Foot Drag ---
-  const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
+  const marginPx = state ? Math.round(state.bat.marginFromCreaseMm * 0.45) : (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
   const stumpingResult = solveStumpingBatterKinematics(p, creaseX, marginPx);
 
   drawArticulatedBatter(
@@ -702,8 +723,9 @@ function renderStumpingBroadcast(
   );
 
   // --- 7. Ball Flight Past Bat to Wicketkeeper ---
-  if (p < 0.52) {
-    const t = p / 0.52;
+  const ballInFlight = state ? state.ball.isInFlight : p < 0.52;
+  if (ballInFlight) {
+    const t = state ? state.ball.throwProgress : p / 0.52;
     const originX = w * 0.88;
     const originY = h * 0.32;
     const targetX = stumpsX + 16;
@@ -717,7 +739,7 @@ function renderStumpingBroadcast(
     drawCricketBall(ctx, bX, bY, {
       radius: 5.0,
       seamAngleRad: p * Math.PI * 6,
-      motionTrail: p > 0.15,
+      motionTrail: t > 0.15,
       prevX: prevBX,
       prevY: prevBY,
     });
