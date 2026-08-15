@@ -25,6 +25,9 @@ export interface RunOutEventTimeline {
   diveLaunchMs: number;
   batReachStartMs: number;
   batGroundContactMs: number;
+  bounceStartMs?: number;
+  bouncePeakMs?: number;
+  bounceLandingMs?: number;
   bailsContactMs: number;
   bailsDislodgedMs: number;
   postIncidentMs: number;
@@ -130,6 +133,10 @@ export function getRunOutEventTimeline(runOut: RunOutData): RunOutEventTimeline 
   const bailsDislodgedMs = runOut.bailsDislodgedFrameMs;
   const batGroundContactMs = runOut.groundedFrameMs;
 
+  const bounceStartMs = runOut.batBounced ? Math.max(900, bailsDislodgedMs - 180) : undefined;
+  const bouncePeakMs = runOut.batBounced ? bailsDislodgedMs : undefined;
+  const bounceLandingMs = runOut.batBounced ? bailsDislodgedMs + 200 : undefined;
+
   return {
     runnerAccelerationStartMs: 600,
     throwReleaseMs: 800,
@@ -137,6 +144,9 @@ export function getRunOutEventTimeline(runOut: RunOutData): RunOutEventTimeline 
     diveLaunchMs: 1100,
     batReachStartMs: 1200,
     batGroundContactMs,
+    bounceStartMs,
+    bouncePeakMs,
+    bounceLandingMs,
     bailsContactMs: Math.max(850, bailsDislodgedMs - 30),
     bailsDislodgedMs,
     postIncidentMs: 2200,
@@ -164,7 +174,7 @@ export function solveRunOutReplayState(
     phase = "DIVE_LAUNCH";
   } else if (clampedTime < timeline.batGroundContactMs) {
     phase = "REACHING";
-  } else if (runOut.batBounced && !runOut.batGrounded && clampedTime >= timeline.bailsContactMs - 80 && clampedTime <= timeline.bailsContactMs + 160) {
+  } else if (runOut.batBounced && !runOut.batGrounded && timeline.bounceStartMs && timeline.bounceLandingMs && clampedTime >= timeline.bounceStartMs && clampedTime <= timeline.bounceLandingMs) {
     phase = "AIRBORNE_BOUNCE";
   } else if (clampedTime >= timeline.bailsDislodgedMs) {
     phase = "POST_INCIDENT";
@@ -187,15 +197,16 @@ export function solveRunOutReplayState(
 
   // Bat Altitude (0 = grounded, > 0 = airborne in mm)
   let tipAltitudeMm = 0;
-  if (runOut.batBounced && !runOut.batGrounded) {
-    // Bounced airborne bat
-    const bounceCenter = timeline.bailsDislodgedMs;
-    const bounceDelta = Math.abs(clampedTime - bounceCenter);
-    if (bounceDelta < 220) {
-      const bounceNorm = 1 - bounceDelta / 220;
-      tipAltitudeMm = Math.round(14 * Math.sin(bounceNorm * Math.PI * 0.5));
+  if (runOut.batBounced && !runOut.batGrounded && timeline.bounceStartMs && timeline.bounceLandingMs) {
+    if (clampedTime >= timeline.bounceStartMs && clampedTime <= timeline.bounceLandingMs) {
+      const bounceTotal = timeline.bounceLandingMs - timeline.bounceStartMs;
+      const bounceNorm = (clampedTime - timeline.bounceStartMs) / bounceTotal; // 0 to 1
+      tipAltitudeMm = Math.round(16 * Math.sin(bounceNorm * Math.PI));
+    } else if (clampedTime < timeline.bounceStartMs) {
+      const airNorm = (timeline.bounceStartMs - clampedTime) / Math.max(1, timeline.bounceStartMs - timeline.batReachStartMs);
+      tipAltitudeMm = Math.round(clamp(airNorm * 24, 0, 30));
     } else {
-      tipAltitudeMm = clampedTime < timeline.batGroundContactMs ? 18 : 0;
+      tipAltitudeMm = 0;
     }
   } else {
     // Normal reach & ground contact
