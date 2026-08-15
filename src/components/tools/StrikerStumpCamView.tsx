@@ -8,6 +8,55 @@ interface StrikerStumpCamViewProps {
   currentTimeMs: number;
 }
 
+/**
+ * 3D Perspective Projection for CAM 10 (Striker Stump Ground Cam)
+ * Origin (0,0,0) is at the base of the middle stump on the bowling crease.
+ * - worldX: distance along pitch corridor from stumps (0 to 3500mm). Popping crease is at X = 1220mm.
+ * - worldY: lateral offset across pitch (-1500mm off-side to +1500mm leg-side).
+ * - worldZ: height above pitch turf (0 = turf, >0 = airborne).
+ */
+export function projectPitchToCAM10(
+  worldX: number,
+  worldY: number,
+  worldZ: number = 0
+): { x: number; y: number; scale: number } {
+  // Camera world coordinates: placed 1.1m behind stumps, 1.8m on off-side, 380mm height
+  const camX = -1100;
+  const camY = -1800;
+  const camZ = 380;
+
+  // Normalized camera basis vectors
+  const fx = 0.797;
+  const fy = 0.592;
+  const fz = -0.115;
+
+  const rx = 0.597;
+  const ry = -0.802;
+  const rz = 0.0;
+
+  const ux = -0.092;
+  const uy = -0.069;
+  const uz = 0.993;
+
+  const dx = worldX - camX;
+  const dy = worldY - camY;
+  const dz = worldZ - camZ;
+
+  const depth = dx * fx + dy * fy + dz * fz;
+  const u = dx * rx + dy * ry + dz * rz;
+  const v = dx * ux + dy * uy + dz * uz;
+
+  const focal = 380;
+  const centerX = 235;
+  const centerY = 160;
+
+  const screenX = centerX + (u / depth) * focal;
+  const screenY = centerY - (v / depth) * focal;
+  const scale = focal / depth;
+
+  return { x: screenX, y: screenY, scale };
+}
+
 export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
   runOut,
   currentTimeMs,
@@ -18,20 +67,62 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
   // Canonical shared physical replay state
   const state = solveRunOutReplayState(runOut, currentTimeMs);
 
-  // Low-angle perspective projection along the pitch corridor:
-  // Stumps are at left/foreground (X=100, Y=240)
-  // Crease line center is at X=295, Y=212
-  // Project bat tip from canonical margin in mm (positive = inside crease / closer to camera and stumps)
-  const pxPerMm = 0.48;
-  const creaseCenterProjX = 295;
-  const creaseCenterProjY = 212;
-  const batTipX = creaseCenterProjX - state.bat.marginFromCreaseMm * pxPerMm * 0.86;
-  const batTipY = creaseCenterProjY + state.bat.marginFromCreaseMm * pxPerMm * 0.50;
+  // Project Pitch Surface Corners (from Stumps X=0 to Deep Pitch X=3600)
+  const pitchNearLeft = projectPitchToCAM10(0, -1500, 0);
+  const pitchNearRight = projectPitchToCAM10(0, 1500, 0);
+  const pitchFarRight = projectPitchToCAM10(3600, 1500, 0);
+  const pitchFarLeft = projectPitchToCAM10(3600, -1500, 0);
+
+  // Project Popping Crease White Line at X = 1220mm
+  const creaseLeft = projectPitchToCAM10(1220, -1350, 0);
+  const creaseRight = projectPitchToCAM10(1220, 1350, 0);
+  const creaseLeftBack = projectPitchToCAM10(1170, -1350, 0);
+  const creaseRightBack = projectPitchToCAM10(1170, 1350, 0);
+
+  // Project Laser Guide
+  const laserLeft = projectPitchToCAM10(1220, -1600, 0);
+  const laserRight = projectPitchToCAM10(1220, 1600, 0);
+
+  // Project Stumps (Base and Top for Middle, Off, Leg)
+  const offStumpBase = projectPitchToCAM10(0, -114, 0);
+  const offStumpTop = projectPitchToCAM10(0, -114, 711);
+
+  const midStumpBase = projectPitchToCAM10(0, 0, 0);
+  const midStumpTop = projectPitchToCAM10(0, 0, 711);
+
+  const legStumpBase = projectPitchToCAM10(0, 114, 0);
+  const legStumpTop = projectPitchToCAM10(0, 114, 711);
+
+  // Project Bat Tip, Handle, and Ground Shadow
+  const pTip = projectPitchToCAM10(
+    state.bat.tipWorldX,
+    state.bat.tipWorldY,
+    state.bat.tipWorldZ
+  );
+  const pHandle = projectPitchToCAM10(
+    state.bat.handleWorldX,
+    state.bat.handleWorldY,
+    state.bat.handleWorldZ
+  );
+
+  const pShadowTip = projectPitchToCAM10(
+    state.bat.tipWorldX,
+    state.bat.tipWorldY,
+    0
+  );
+  const pShadowHandle = projectPitchToCAM10(
+    state.bat.handleWorldX,
+    state.bat.handleWorldY,
+    0
+  );
 
   // Project Zing bails from canonical state
   const bailsDislodged = state.stumps.bailsSeparating;
-  const bailDisplacementY = state.stumps.bailDisplacementMm.z * 0.14;
-  const bailDisplacementX = state.stumps.bailDisplacementMm.x * 0.10;
+  const bailZ = state.stumps.bailDisplacementMm.z;
+  const bailX = state.stumps.bailDisplacementMm.x;
+  const bailY = state.stumps.bailDisplacementMm.y;
+
+  const bailCenter = projectPitchToCAM10(bailX, bailY, 711 + bailZ);
   const bailRotation = state.stumps.bailRotationDeg;
 
   // Virtual 500 FPS frame counter
@@ -39,7 +130,6 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
 
   // Grounding vs Airborne Bat
   const isAirborne = !state.bat.isGrounded;
-  const batAltitude = state.bat.tipAltitudeMm * 0.8;
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
@@ -113,35 +203,44 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
           {/* Outfield Grass */}
           <rect x="0" y="0" width="500" height="280" fill="url(#stumpTurf)" />
 
-          {/* Perspective Pitch Corridor receding from Near (Bottom-Left) to Far (Top-Right) */}
+          {/* Perspective Pitch Corridor receding from Stumps (Left) to Deep Pitch (Right) */}
           <polygon
-            points="40,280 480,150 430,135 0,230"
+            points={`${pitchNearLeft.x},${pitchNearLeft.y} ${pitchNearRight.x},${pitchNearRight.y} ${pitchFarRight.x},${pitchFarRight.y} ${pitchFarLeft.x},${pitchFarLeft.y}`}
             fill="url(#stumpPitchClay)"
           />
+
           {/* Pitch surface wear strip */}
           <polygon
-            points="70,280 460,155 425,142 30,240"
+            points={`${pitchNearLeft.x + 15},${pitchNearLeft.y - 4} ${pitchNearRight.x - 10},${pitchNearRight.y + 2} ${pitchFarRight.x - 8},${pitchFarRight.y + 1} ${pitchFarLeft.x + 10},${pitchFarLeft.y - 2}`}
             fill="#b89a74"
-            opacity="0.3"
+            opacity="0.25"
           />
 
-          {/* Popping Crease White Line in Ground Perspective (Trapezoid line across pitch corridor) */}
+          {/* Popping Crease White Line in 3D Perspective (Runs across pitch at X = 1220mm) */}
           <polygon
-            points="240,245 350,178 356,180 244,248"
+            points={`${creaseLeft.x},${creaseLeft.y} ${creaseRight.x},${creaseRight.y} ${creaseRightBack.x},${creaseRightBack.y} ${creaseLeftBack.x},${creaseLeftBack.y}`}
             fill="#FFFFFF"
             opacity="0.95"
           />
-          <text x="260" y="225" fill="#38BDF8" fontSize="8" fontFamily="monospace" fontWeight="bold" transform="rotate(-30 260 225)">
+          <text
+            x={(creaseLeft.x + creaseRight.x) / 2 - 20}
+            y={(creaseLeft.y + creaseRight.y) / 2 - 8}
+            fill="#38BDF8"
+            fontSize="7"
+            fontFamily="monospace"
+            fontWeight="bold"
+            transform={`rotate(-12 ${(creaseLeft.x + creaseRight.x) / 2} ${(creaseLeft.y + creaseRight.y) / 2})`}
+          >
             POPPING CREASE
           </text>
 
-          {/* Laser Guide Alignment Beam across Popping Crease Plane */}
+          {/* Laser Guide Alignment Beam along Popping Crease Plane */}
           {showLaser && (
             <line
-              x1="220"
-              y1="258"
-              x2="370"
-              y2="168"
+              x1={laserLeft.x}
+              y1={laserLeft.y}
+              x2={laserRight.x}
+              y2={laserRight.y}
               stroke="#00E5FF"
               strokeWidth="1.2"
               strokeDasharray="4 2"
@@ -149,81 +248,168 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
             />
           )}
 
-          {/* Sliding Cricket Bat entering from top-right towards popping crease */}
-          <g transform={`translate(${batTipX}, ${batTipY - batAltitude})`}>
-            {/* Dynamic Ground Shadow */}
+          {/* Dynamic Ground Shadow of Bat on Turf (Z = 0) */}
+          <line
+            x1={pShadowTip.x}
+            y1={pShadowTip.y}
+            x2={pShadowHandle.x}
+            y2={pShadowHandle.y}
+            stroke="#000000"
+            strokeWidth={10 * pShadowTip.scale}
+            strokeLinecap="round"
+            opacity={isAirborne ? 0.20 : 0.60}
+          />
+
+          {/* Cricket Bat Blade & Handle projected in 3D Space */}
+          <g>
+            {/* Bat Blade Line / Polygon from Tip to Shoulder */}
+            {/* Blade thickness offset perpendicular to blade axis */}
+            {(() => {
+              const bladeLength = Math.hypot(pHandle.x - pTip.x, pHandle.y - pTip.y);
+              const nx = (-(pHandle.y - pTip.y) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
+              const ny = ((pHandle.x - pTip.x) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
+
+              // Bat shoulder is ~75% along handle path
+              const pShoulder = {
+                x: pTip.x + (pHandle.x - pTip.x) * 0.72,
+                y: pTip.y + (pHandle.y - pTip.y) * 0.72,
+              };
+
+              return (
+                <>
+                  {/* Willow Blade Body */}
+                  <polygon
+                    points={`${pTip.x},${pTip.y} ${pShoulder.x + nx},${pShoulder.y + ny} ${pShoulder.x - nx},${pShoulder.y - ny}`}
+                    fill="url(#stumpWillow)"
+                    stroke="#78350f"
+                    strokeWidth="0.8"
+                  />
+
+                  {/* Protective White Toe Cap at Bat Tip */}
+                  <circle
+                    cx={pTip.x}
+                    cy={pTip.y}
+                    r={3.2 * pTip.scale}
+                    fill="#FFFFFF"
+                    stroke="#334155"
+                    strokeWidth="0.5"
+                  />
+
+                  {/* Cane Handle & Rubber Grip */}
+                  <line
+                    x1={pShoulder.x}
+                    y1={pShoulder.y}
+                    x2={pHandle.x}
+                    y2={pHandle.y}
+                    stroke="#0284C7"
+                    strokeWidth={4.5 * pTip.scale}
+                    strokeLinecap="round"
+                  />
+
+                  {/* Runner Glove at Handle End */}
+                  <circle
+                    cx={pHandle.x}
+                    cy={pHandle.y}
+                    r={5.5 * pTip.scale}
+                    fill="#f8fafc"
+                    stroke="#64748b"
+                    strokeWidth="0.8"
+                  />
+                </>
+              );
+            })()}
+          </g>
+
+          {/* Striker Stumps Assembly in 3D (Left-side Foreground) */}
+          <g>
+            {/* Stump Base Shadow */}
             <ellipse
-              cx="45"
-              cy={2 + batAltitude}
-              rx="55"
-              ry="5"
-              fill="#000000"
-              opacity={isAirborne ? 0.25 : 0.65}
-              transform="rotate(-15)"
+              cx={midStumpBase.x}
+              cy={midStumpBase.y + 1}
+              rx={22}
+              ry={6}
+              fill="rgba(0,0,0,0.6)"
             />
 
-            {/* Bat Blade in Low-Angle Ground Perspective */}
-            <path
-              d="M 0,0 L 85,-18 L 88,-12 L 3,6 Z"
-              fill="url(#stumpWillow)"
-              stroke="#78350f"
-              strokeWidth="0.8"
+            {/* Socket Ground Base Plate */}
+            <polygon
+              points={`${offStumpBase.x - 14},${offStumpBase.y - 2} ${legStumpBase.x + 14},${legStumpBase.y - 2} ${legStumpBase.x + 18},${legStumpBase.y + 3} ${offStumpBase.x - 18},${offStumpBase.y + 3}`}
+              fill="#1e293b"
             />
-            {/* White Protective Toe Cap */}
-            <circle cx="0" cy="1" r="3" fill="#FFFFFF" stroke="#334155" strokeWidth="0.5" />
 
-            {/* Cane Handle & Rubber Grip */}
-            <path
-              d="M 85,-18 Q 110,-24 125,-20"
-              fill="none"
-              stroke="#0284C7"
-              strokeWidth="4.5"
+            {/* Off Stump */}
+            <line
+              x1={offStumpBase.x}
+              y1={offStumpBase.y}
+              x2={offStumpTop.x}
+              y2={offStumpTop.y}
+              stroke="#cbd5e1"
+              strokeWidth={7 * offStumpBase.scale}
               strokeLinecap="round"
             />
 
-            {/* Batter Glove at Handle */}
-            <circle cx="115" cy="-22" r="6" fill="#f8fafc" stroke="#64748b" strokeWidth="0.8" />
-            <circle cx="102" cy="-21" r="5.5" fill="#0284c7" stroke="#0369a1" strokeWidth="0.6" />
-          </g>
-
-          {/* Striker Stumps Assembly in Near Foreground (Left-side low-angle perspective) */}
-          <g transform="translate(100, 240)">
-            {/* Stump Base Shadow */}
-            <ellipse cx="0" cy="2" rx="22" ry="5" fill="rgba(0,0,0,0.6)" />
-
-            {/* Socket Ground Base Plate */}
-            <polygon points="-18,-2 18,-2 22,2 -22,2" fill="#1e293b" />
-
-            {/* Off Stump (Far left) */}
-            <rect x="-14" y="-105" width="7" height="105" fill="#cbd5e1" stroke="#334155" strokeWidth="0.6" rx="1" />
             {/* Middle Stump */}
-            <rect x="-3.5" y="-108" width="7" height="108" fill="#e2e8f0" stroke="#334155" strokeWidth="0.6" rx="1" />
-            {/* Leg Stump (Near right) */}
-            <rect x="7" y="-111" width="7.5" height="111" fill="#cbd5e1" stroke="#334155" strokeWidth="0.6" rx="1" />
+            <line
+              x1={midStumpBase.x}
+              y1={midStumpBase.y}
+              x2={midStumpTop.x}
+              y2={midStumpTop.y}
+              stroke="#e2e8f0"
+              strokeWidth={7.5 * midStumpBase.scale}
+              strokeLinecap="round"
+            />
+
+            {/* Leg Stump */}
+            <line
+              x1={legStumpBase.x}
+              y1={legStumpBase.y}
+              x2={legStumpTop.x}
+              y2={legStumpTop.y}
+              stroke="#cbd5e1"
+              strokeWidth={7 * legStumpBase.scale}
+              strokeLinecap="round"
+            />
 
             {/* Zing Bails with LED Glow & Separation */}
             <g
-              transform={`translate(${bailDisplacementX}, ${-110 - bailDisplacementY}) rotate(${bailRotation})`}
+              transform={`translate(${bailCenter.x - midStumpTop.x}, ${bailCenter.y - midStumpTop.y}) rotate(${bailRotation} ${midStumpTop.x} ${midStumpTop.y})`}
             >
-              {/* Wooden Bail Crossbars */}
-              <rect
-                x="-16"
-                y="-7"
-                width="34"
-                height="7"
-                fill={bailsDislodged ? "#EF4444" : "#F59E0B"}
-                rx="1.5"
-                stroke={bailsDislodged ? "#FCA5A5" : "#B45309"}
-                strokeWidth="0.8"
+              {/* Wooden Bail Crossbar */}
+              <line
+                x1={offStumpTop.x - 5}
+                y1={offStumpTop.y - 4}
+                x2={legStumpTop.x + 5}
+                y2={legStumpTop.y - 4}
+                stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
+                strokeWidth={5 * midStumpTop.scale}
+                strokeLinecap="round"
               />
+
               {/* Zing Internal LED Core */}
               {bailsDislodged ? (
                 <>
-                  <circle cx="0" cy="-3.5" r="7" fill="#EF4444" opacity="0.8" />
-                  <circle cx="0" cy="-3.5" r="3" fill="#FFFFFF" />
+                  <circle
+                    cx={midStumpTop.x}
+                    cy={midStumpTop.y - 4}
+                    r={6.5 * midStumpTop.scale}
+                    fill="#EF4444"
+                    opacity="0.85"
+                  />
+                  <circle
+                    cx={midStumpTop.x}
+                    cy={midStumpTop.y - 4}
+                    r={3 * midStumpTop.scale}
+                    fill="#FFFFFF"
+                  />
                 </>
               ) : (
-                <rect x="-10" y="-5" width="20" height="3" fill="#FDE68A" opacity="0.6" rx="0.5" />
+                <circle
+                  cx={midStumpTop.x}
+                  cy={midStumpTop.y - 4}
+                  r={2.5 * midStumpTop.scale}
+                  fill="#FDE68A"
+                  opacity="0.7"
+                />
               )}
             </g>
           </g>

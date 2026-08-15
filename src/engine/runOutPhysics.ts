@@ -55,6 +55,12 @@ export interface RunnerPhysicsState {
 
 export interface BatPhysicsState {
   marginFromCreaseMm: number; // Signed distance: positive = inside crease (safe), negative = short of crease (out)
+  tipWorldX: number; // mm along pitch from stumps (stumps = 0, popping crease = 1220mm; >1220 is outside, <1220 is inside)
+  tipWorldY: number; // mm lateral across pitch
+  tipWorldZ: number; // mm altitude above turf (0 = grounded)
+  handleWorldX: number; // mm along pitch of handle end
+  handleWorldY: number; // mm lateral of handle end
+  handleWorldZ: number; // mm altitude of handle end
   tipAltitudeMm: number; // 0 = firmly grounded on pitch turf, > 0 = airborne/bounced
   isGrounded: boolean; // True only if tip touches ground (tipAltitudeMm === 0)
   isPastCrease: boolean; // True if marginFromCreaseMm >= 0
@@ -220,8 +226,18 @@ export function solveRunOutReplayState(
 
   const isGrounded = tipAltitudeMm === 0;
 
-  // Bat blade tilt angle
+  // Bat blade tilt angle (descends to low sliding angle ~0.04 rad)
   const batAngleRad = lerp(0.35, 0.04, easeInOutQuad(reachProgress));
+
+  // Canonical 3D World-Space Coordinates for Bat (origin at striker stumps X=0, Y=0, Z=0)
+  // Popping crease is at X = 1220mm. tipWorldX > 1220 is short of crease (outside); tipWorldX <= 1220 is inside crease (safe).
+  const tipWorldX = 1220 - marginFromCreaseMm;
+  const tipWorldY = 140; // mm lateral across pitch corridor
+  const tipWorldZ = tipAltitudeMm; // mm vertical altitude above turf
+  const batLengthMm = 850; // standard full length of cricket bat
+  const handleWorldX = tipWorldX + Math.round(batLengthMm * Math.cos(batAngleRad));
+  const handleWorldY = tipWorldY + 25;
+  const handleWorldZ = tipWorldZ + Math.round(batLengthMm * Math.sin(batAngleRad));
 
   // --- 3. Canonical Runner Kinematics ---
   const runProgress = clamp((clampedTime - minTime) / (maxTime - minTime), 0, 1);
@@ -340,6 +356,12 @@ export function solveRunOutReplayState(
     },
     bat: {
       marginFromCreaseMm,
+      tipWorldX,
+      tipWorldY,
+      tipWorldZ,
+      handleWorldX,
+      handleWorldY,
+      handleWorldZ,
       tipAltitudeMm,
       isGrounded,
       isPastCrease,

@@ -20,6 +20,7 @@ import {
   mapPhase1TimeToReplayTime,
   mapReplayTimeToPhase1Time,
 } from "../engine/runOutPhysics";
+import { projectPitchToCAM10 } from "../components/tools/StrikerStumpCamView";
 import type {
   LBWData,
   RunOutData,
@@ -817,6 +818,70 @@ function runAllDRSTests() {
       }
     }
     assert(allFeedsStumpsIdentical, "Multi-Camera Sync: Stump & Zing bail states are 100% identical across all camera feeds");
+  }
+
+  // --- GROUP 15: TASK 20 CAM 10 3D WORLD-SPACE BAT TRAJECTORY & CREASE CROSSING ---
+  console.log("\n--- GROUP 15: TASK 20 CAM 10 3D WORLD-SPACE BAT TRAJECTORY & CREASE CROSSING ---");
+  {
+    const roScenario = generateScenario(55555, "RUN_OUT");
+    const ro = roScenario.runOut!;
+
+    // Test 78: Invariant: Bat tip tipWorldX decreases monotonically along the crease normal over time
+    const t1 = 800;
+    const t2 = 1100;
+    const t3 = ro.bailsDislodgedFrameMs;
+    const t4 = 2000;
+
+    const s1 = solveRunOutReplayState(ro, t1);
+    const s2 = solveRunOutReplayState(ro, t2);
+    const s3 = solveRunOutReplayState(ro, t3);
+    const s4 = solveRunOutReplayState(ro, t4);
+
+    const isMonotonicApproach =
+      s1.bat.tipWorldX > s2.bat.tipWorldX &&
+      s2.bat.tipWorldX > s3.bat.tipWorldX &&
+      s3.bat.tipWorldX > s4.bat.tipWorldX;
+
+    assert(isMonotonicApproach, "Bat 3D Trajectory: tipWorldX monotonically decreases across crease normal towards stumps");
+
+    // Test 79: Invariant: Bat tip tipWorldX strictly matches 1220 - creaseMarginMm at decisive dislodgement frame
+    const expectedTipWorldX = 1220 - ro.creaseMarginMm;
+    assert(
+      s3.bat.tipWorldX === expectedTipWorldX,
+      "Bat 3D Trajectory: tipWorldX strictly equals (1220 - creaseMarginMm) at bailsDislodgedFrameMs"
+    );
+
+    // Test 80: Invariant: Bat handle handleWorldX > tipWorldX (toe leads the reach towards the crease)
+    assert(
+      s2.bat.handleWorldX > s2.bat.tipWorldX && s3.bat.handleWorldX > s3.bat.tipWorldX,
+      "Bat 3D Orientation: Handle end is behind toe (handleWorldX > tipWorldX) so toe leads into crease"
+    );
+
+    // Test 81: Physical crease crossing in 3D perspective projection
+    // Popping crease is at worldX = 1220mm
+    const creaseCenter = projectPitchToCAM10(1220, 140, 0);
+    const preCreaseProj = projectPitchToCAM10(1600, 140, 0);
+    const postCreaseProj = projectPitchToCAM10(800, 140, 0);
+
+    // As worldX decreases from 1600 -> 1220 -> 800, screenX decreases (moves from right to left across crease line)
+    const isCrossingPerpendicular =
+      preCreaseProj.x > creaseCenter.x &&
+      creaseCenter.x > postCreaseProj.x;
+
+    assert(
+      isCrossingPerpendicular,
+      "CAM 10 Perspective: 3D projection guarantees bat moves across popping crease line into the crease"
+    );
+
+    // Test 82: Dynamic Bat Ground Altitude tipWorldZ consistency
+    if (ro.batBounced && !ro.batGrounded) {
+      assert(s3.bat.tipWorldZ > 0 && s3.bat.isGrounded === false,
+        "Bat 3D Altitude: Bounced bat has tipWorldZ > 0 at dislodgement");
+    } else {
+      const groundedState = solveRunOutReplayState(ro, ro.groundedFrameMs + 50);
+      assert(groundedState.bat.tipWorldZ === 0 && groundedState.bat.isGrounded === true,
+        "Bat 3D Altitude: Grounded bat has tipWorldZ === 0 on turf");
+    }
   }
 
   console.log("=================================================");
