@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { RunOutData } from "../../types/scenario";
+import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { ZoomIn, Crosshair, Zap } from "lucide-react";
 
 interface CreaseZoomProps {
@@ -15,30 +16,30 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(1.35);
   const [showLaser, setShowLaser] = useState<boolean>(true);
 
-  // Physics animation formulas
-  const bailsTime = runOut.bailsDislodgedFrameMs; // default ~1500ms
-  const bailsDislodged = currentTimeMs >= bailsTime;
-  const batProgress = Math.max(0, Math.min(1, (currentTimeMs - 1000) / 1000));
+  // Canonical shared physical replay state
+  const state = solveRunOutReplayState(runOut, currentTimeMs);
 
-  // Crease is at X = 250
+  // Projection Geometry:
+  // Crease is at X = 250 (popping crease reference line)
+  // Stumps are at X = 160
   const creaseX = 250;
-  const batTipX = 380 - batProgress * 260; // moves from right to left across crease
-  const isPastCrease = batTipX < creaseX;
-
-  // Stumps at X = 160
   const stumpsX = 160;
 
-  // Zing bail flight animation upon spigot groove separation
-  const bailDelta = currentTimeMs - bailsTime;
-  const bailDisplacementY = bailsDislodged ? Math.min(30, bailDelta * 0.12) : 0;
-  const bailRotation = bailsDislodged ? Math.min(35, bailDelta * 0.25) : 0;
+  // Project bat tip from canonical margin in mm (positive = inside crease / left of crease line)
+  // 1 mm physical margin ≈ 0.52 pixels in this close-up zoom lens
+  const pxPerMm = 0.52;
+  const batTipX = creaseX - state.bat.marginFromCreaseMm * pxPerMm;
+
+  // Project bat altitude from canonical state (0 = grounded)
+  const batAltitude = state.bat.tipAltitudeMm * 0.85;
+
+  // Project Zing bails from canonical state
+  const bailsDislodged = state.stumps.bailsSeparating;
+  const bailDisplacementY = state.stumps.bailDisplacementMm.z * 0.14;
+  const bailRotation = state.stumps.bailRotationDeg;
 
   // Virtual 500 FPS frame counter
   const currentFrame = Math.round((currentTimeMs / 1000) * 500);
-
-  // Grounding vs Airborne Bat
-  const isAirborne = runOut.batBounced && !runOut.batGrounded;
-  const batAltitude = isAirborne ? 12 : 0;
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
@@ -164,7 +165,7 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
               rx="65"
               ry="4"
               fill="#000000"
-              opacity={isAirborne ? 0.2 : 0.65}
+              opacity={!state.bat.isGrounded ? 0.2 : 0.65}
             />
 
             {/* Willow Blade Geometry */}

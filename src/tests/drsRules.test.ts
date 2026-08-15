@@ -14,6 +14,10 @@ import {
   solveStumpingBatterKinematics,
   solveStumpingKeeperKinematics,
 } from "../components/instinct/actorRigs";
+import {
+  solveRunOutReplayState,
+  getRunOutEventTimeline,
+} from "../engine/runOutPhysics";
 import type {
   LBWData,
   RunOutData,
@@ -637,6 +641,79 @@ function runAllDRSTests() {
       "Multi-Camera Sync: Decisive bail dislodgement timestamp is well-formed for all 4 camera feeds");
   }
 
+  // --- GROUP 13: TASK 18 CANONICAL TIMELINE & MULTI-CAMERA PHYSICAL SYNCHRONIZATION ---
+  console.log("\n--- GROUP 13: TASK 18 CANONICAL TIMELINE & MULTI-CAMERA PHYSICAL SYNCHRONIZATION ---");
+  {
+    const scenario = generateScenario(44444, "RUN_OUT");
+    const ro = scenario.runOut!;
+    const timeline = getRunOutEventTimeline(ro);
+
+    // Test 65: Canonical Timeline Determinism & Ordering Invariant
+    const timelineOrdered =
+      timeline.runnerAccelerationStartMs <= timeline.throwReleaseMs &&
+      timeline.throwReleaseMs <= timeline.diveLaunchMs &&
+      timeline.diveLaunchMs <= timeline.batReachStartMs &&
+      timeline.batReachStartMs <= timeline.bailsDislodgedMs &&
+      timeline.bailsDislodgedMs <= timeline.postIncidentMs;
+    assert(timelineOrdered, "Canonical Timeline: Key incident events follow strict chronological order");
+
+    // Test 66: Evaluation at 9 Sample Timestamps
+    const sampleTimes = [600, 800, 1000, 1200, 1400, 1500, 1600, 1800, 2200];
+    let allSamplesValid = true;
+    for (const t of sampleTimes) {
+      const state = solveRunOutReplayState(ro, t);
+      if (
+        isNaN(state.bat.marginFromCreaseMm) ||
+        isNaN(state.runner.runProgress) ||
+        isNaN(state.ball.worldX) ||
+        typeof state.stumps.bailsIntact !== "boolean"
+      ) {
+        allSamplesValid = false;
+      }
+    }
+    assert(allSamplesValid, "Multi-Camera Sync: solveRunOutReplayState produces well-formed physical state at all sample timestamps");
+
+    // Test 67: Invariant: Bail separation strictly triggers at bailsDislodgedFrameMs
+    const statePreDislodge = solveRunOutReplayState(ro, ro.bailsDislodgedFrameMs - 10);
+    const stateAtDislodge = solveRunOutReplayState(ro, ro.bailsDislodgedFrameMs);
+    const statePostDislodge = solveRunOutReplayState(ro, ro.bailsDislodgedFrameMs + 50);
+
+    assert(statePreDislodge.stumps.bailsIntact === true && statePreDislodge.stumps.zingLedLit === false,
+      "Canonical Bail Physics: Bails remain intact and unlit before bailsDislodgedFrameMs");
+    assert(stateAtDislodge.stumps.bailsSeparating === true && stateAtDislodge.stumps.zingLedLit === true,
+      "Canonical Bail Physics: Bails begin separating and Zing LED activates at bailsDislodgedFrameMs");
+    assert(statePostDislodge.stumps.bailsDislodged === true,
+      "Canonical Bail Physics: Bails are confirmed dislodged after separation window");
+
+    // Test 68: Invariant: Exact margin match at decisive bails dislodgement moment
+    assert(stateAtDislodge.bat.marginFromCreaseMm === ro.creaseMarginMm,
+      "Canonical Bat Physics: Bat margin equals ground-truth creaseMarginMm exactly at dislodgement moment");
+
+    // Test 69: Invariant: Bat grounding transition matches groundedFrameMs
+    if (!ro.batBounced) {
+      const statePreGround = solveRunOutReplayState(ro, ro.groundedFrameMs - 50);
+      const statePostGround = solveRunOutReplayState(ro, ro.groundedFrameMs + 50);
+      assert(statePreGround.bat.isGrounded === false,
+        "Canonical Bat Grounding: Bat is not grounded before groundedFrameMs");
+      assert(statePostGround.bat.isGrounded === true && statePostGround.bat.tipAltitudeMm === 0,
+        "Canonical Bat Grounding: Bat is confirmed grounded on turf after groundedFrameMs");
+    } else {
+      const stateDuringBounce = solveRunOutReplayState(ro, ro.bailsDislodgedFrameMs);
+      if (!ro.batGrounded) {
+        assert(stateDuringBounce.bat.isGrounded === false && stateDuringBounce.bat.tipAltitudeMm > 0,
+          "Canonical Bat Grounding: Bounced bat remains airborne at dislodgement moment");
+      }
+    }
+
+    // Test 70: Invariant: Ball throw flight consistency across all 4 cameras
+    const statePreThrow = solveRunOutReplayState(ro, 700);
+    const stateMidThrow = solveRunOutReplayState(ro, 1100);
+    const statePostThrow = solveRunOutReplayState(ro, 1600);
+    assert(statePreThrow.ball.isInFlight === false, "Ball Timeline: Ball is in fielder hand before release");
+    assert(stateMidThrow.ball.isInFlight === true, "Ball Timeline: Ball is in flight towards stumps during mid-throw");
+    assert(statePostThrow.ball.hasHitStumps === true, "Ball Timeline: Ball has reached stumps by dislodgement");
+  }
+
   console.log("=================================================");
   console.log(`   TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);
   console.log("=================================================");
@@ -647,5 +724,6 @@ function runAllDRSTests() {
 }
 
 runAllDRSTests();
+
 
 

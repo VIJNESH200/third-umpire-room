@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { RunOutData } from "../../types/scenario";
+import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { ZoomIn, Crosshair, Video } from "lucide-react";
 
 interface StrikerStumpCamViewProps {
@@ -14,32 +15,31 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(1.25);
   const [showLaser, setShowLaser] = useState<boolean>(true);
 
-  // Physics animation formulas
-  const bailsTime = runOut.bailsDislodgedFrameMs; // default ~1500ms
-  const bailsDislodged = currentTimeMs >= bailsTime;
+  // Canonical shared physical replay state
+  const state = solveRunOutReplayState(runOut, currentTimeMs);
 
-  // Normalized bat motion progress (1000ms to 2000ms)
-  const batProgress = Math.max(0, Math.min(1, (currentTimeMs - 1000) / 1000));
+  // Low-angle perspective projection along the pitch corridor:
+  // Stumps are at left/foreground (X=100, Y=240)
+  // Crease line center is at X=295, Y=212
+  // Project bat tip from canonical margin in mm (positive = inside crease / closer to camera and stumps)
+  const pxPerMm = 0.48;
+  const creaseCenterProjX = 295;
+  const creaseCenterProjY = 212;
+  const batTipX = creaseCenterProjX - state.bat.marginFromCreaseMm * pxPerMm * 0.86;
+  const batTipY = creaseCenterProjY + state.bat.marginFromCreaseMm * pxPerMm * 0.50;
 
-  // In stump cam perspective (low angle looking down-pitch from striker stumps towards bowler end):
-  // Stumps are in the immediate foreground/left (X=110, Y=140 to 240)
-  // Popping crease line extends across the pitch ahead at depth Z/Y (perspective Y=190, X=150 to 450)
-  // Bat slides towards the camera and across the crease line from deep (far X=420, Y=175 -> near X=190, Y=225)
-  const batTipX = 430 - batProgress * 250;
-  const batTipY = 175 + batProgress * 50;
-
-  // Zing bail flight animation upon spigot groove separation
-  const bailDelta = currentTimeMs - bailsTime;
-  const bailDisplacementY = bailsDislodged ? Math.min(32, bailDelta * 0.14) : 0;
-  const bailDisplacementX = bailsDislodged ? Math.min(20, bailDelta * 0.08) : 0;
-  const bailRotation = bailsDislodged ? Math.min(42, bailDelta * 0.28) : 0;
+  // Project Zing bails from canonical state
+  const bailsDislodged = state.stumps.bailsSeparating;
+  const bailDisplacementY = state.stumps.bailDisplacementMm.z * 0.14;
+  const bailDisplacementX = state.stumps.bailDisplacementMm.x * 0.10;
+  const bailRotation = state.stumps.bailRotationDeg;
 
   // Virtual 500 FPS frame counter
   const currentFrame = Math.round((currentTimeMs / 1000) * 500);
 
   // Grounding vs Airborne Bat
-  const isAirborne = runOut.batBounced && !runOut.batGrounded;
-  const batAltitude = isAirborne ? 10 : 0;
+  const isAirborne = !state.bat.isGrounded;
+  const batAltitude = state.bat.tipAltitudeMm * 0.8;
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">

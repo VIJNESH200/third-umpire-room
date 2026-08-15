@@ -1,5 +1,6 @@
 import React from "react";
 import type { RunOutData } from "../../types/scenario";
+import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 
 interface SideOnWideCreaseViewProps {
   runOut: RunOutData;
@@ -10,24 +11,18 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
   runOut,
   currentTimeMs,
 }) => {
-  const minTime = 800;
-  const maxTime = 2200;
-  const clampedTime = Math.max(minTime, Math.min(maxTime, currentTimeMs));
+  // Canonical shared physical replay state
+  const state = solveRunOutReplayState(runOut, currentTimeMs);
 
-  // Normalized timeline progress
-  const progress = (clampedTime - minTime) / (maxTime - minTime);
+  // Timing events from canonical state
+  const isBailsDislodged = state.stumps.bailsSeparating;
 
-  // Timing events
-  const bailsTime = runOut.bailsDislodgedFrameMs; // default ~1500ms
-  const isBailsDislodged = clampedTime >= bailsTime;
+  // Batsman sprinting/diving across pitch (from right towards crease X=180)
+  const batterX = 460 - state.runner.runProgress * 320;
 
-  // Batsman sprinting/diving across pitch (from right X=480 to crease X=180)
-  const batterX = 460 - progress * 320;
-
-  // Incoming throw ball from deep (top-left/center X=50, Y=40 towards stumps at X=120, Y=220)
-  const ballProgress = Math.min(1, Math.max(0, (clampedTime - 900) / (bailsTime - 900)));
-  const throwBallX = 30 + ballProgress * 90;
-  const throwBallY = 60 + ballProgress * 150;
+  // Incoming throw ball from deep towards stumps at X=120, Y=210
+  const throwBallX = 30 + state.ball.throwProgress * 90;
+  const throwBallY = 60 + state.ball.throwProgress * 150;
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 
@@ -117,7 +112,7 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
           </g>
 
           {/* Fielder's Incoming Throw in Air */}
-          {clampedTime < bailsTime && (
+          {state.ball.isInFlight && (
             <g>
               {/* Ball trajectory path */}
               <line x1="30" y1="60" x2="120" y2="210" stroke="rgba(239, 68, 68, 0.25)" strokeWidth="1.5" strokeDasharray="3 3" />

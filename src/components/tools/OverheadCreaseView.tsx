@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { RunOutData } from "../../types/scenario";
+import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { Crosshair } from "lucide-react";
 
 interface OverheadCreaseViewProps {
@@ -13,32 +14,25 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
 }) => {
   const [showLaser, setShowLaser] = useState<boolean>(true);
 
-  const minTime = 800;
-  const maxTime = 2200;
-  const clampedTime = Math.max(minTime, Math.min(maxTime, currentTimeMs));
+  // Canonical shared physical replay state
+  const state = solveRunOutReplayState(runOut, currentTimeMs);
 
-  // Physics animation formula
-  const bailsTime = runOut.bailsDislodgedFrameMs; // default ~1500ms
-  const isBailsDislodged = clampedTime >= bailsTime;
-
-  // Bat sliding progress (from right to left)
-  const batProgress = Math.max(0, Math.min(1, (clampedTime - 1000) / 1000));
+  // Timing events
+  const isBailsDislodged = state.stumps.bailsSeparating;
 
   // Crease is at X = 250
   const creaseX = 250;
 
-  // Bat tip position (moves from right X=420 across crease to X=140)
-  const batTipX = 420 - batProgress * 280;
-  const isPastCrease = batTipX < creaseX;
-
-  // Millimeters past/short of crease
-  const currentMarginMm = Math.round((creaseX - batTipX) * 2.5);
+  // Bat tip position projected from canonical margin in mm (positive = inside crease / left of crease line)
+  const pxPerMm = 0.52;
+  const batTipX = creaseX - state.bat.marginFromCreaseMm * pxPerMm;
+  const isPastCrease = state.bat.isPastCrease;
 
   // Stumps at X = 130 (Top-down circles)
   const stumpsX = 130;
 
-  // Airborne / bounced bat check
-  const isAirborne = runOut.batBounced && !runOut.batGrounded;
+  // Airborne / bounced bat check from canonical state
+  const isAirborne = !state.bat.isGrounded;
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 
@@ -217,7 +211,7 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
         <div className="hardware-panel p-2 rounded-lg">
           <div className="text-[9px] text-slate-400 font-bold">TIMECODE</div>
           <div className="text-[11px] font-black text-slate-200">
-            00:01:{(clampedTime % 1000).toString().padStart(3, "0")}
+            00:01:{(currentTimeMs % 1000).toString().padStart(3, "0")}
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
