@@ -95,6 +95,37 @@ export interface FielderKinematics {
   slideProgress: number; // 0.0 to 1.0
 }
 
+export interface RunnerKinematics {
+  diveProgress: number; // 0.0 (upright sprint) to 1.0 (full dive reach/slide)
+  isAirborne: boolean;
+  isGrounded: boolean;
+  pelvisOffsetY: number; // vertical height of hips
+
+  // Spine & Torso (derives from pelvis)
+  torsoAngleRad: number; // forward pitch angle
+  torsoLength: number;
+
+  // Head (derives from neck at top of torso)
+  headTiltRad: number;
+
+  // Lead Arm & Bat (derives from shoulder at top of torso)
+  leadShoulderAngleRad: number;
+  leadElbowAngleRad: number;
+  batGripAngleRad: number;
+
+  // Rear Arm (derives from shoulder at top of torso)
+  rearShoulderAngleRad: number;
+  rearElbowAngleRad: number;
+
+  // Lead Leg (derives from lead hip socket on pelvis)
+  leadHipAngleRad: number;
+  leadKneeAngleRad: number;
+
+  // Trail Leg (derives from trail hip socket on pelvis)
+  trailHipAngleRad: number;
+  trailKneeAngleRad: number;
+}
+
 // ================================================================
 // CONTINUOUS KINEMATIC SOLVERS
 // ================================================================
@@ -377,6 +408,7 @@ export function solveCaughtBehindKeeperKinematics(
 
 /**
  * Solves continuous runner kinematics for Run-Out across the replay timeline.
+ * Forward Kinematic Hierarchy: Pelvis Root -> Spine/Torso -> Neck/Head -> Shoulders/Arms/Bat -> Hips/Knees/Feet.
  * Sprint acceleration -> Dive launch -> Crease reach -> Skidding momentum.
  */
 export function solveRunOutRunnerKinematics(
@@ -384,62 +416,103 @@ export function solveRunOutRunnerKinematics(
   creaseX: number,
   marginPx: number,
   diveTechnique: string = "FULL_DIVE"
-): { runnerX: number; runnerY: number; batterK: BatterKinematics } {
+): { runnerX: number; runnerY: number; runnerK: RunnerKinematics } {
   const targetBatTipX = creaseX - marginPx; // Safe = inside (left), Out = short (right)
   const isUpright = diveTechnique === "UPRIGHT_RUN";
 
-  let runnerX = 560;
+  let runnerX = 580;
   let diveProgress = 0.0; // 0.0 (upright sprint) to 1.0 (horizontal dive)
+  let isAirborne = false;
+  let isGrounded = true;
 
-  if (p < 0.40) {
+  // Stride animation cycle during sprint
+  const stridePhase = p * Math.PI * 14;
+
+  if (p < 0.35) {
     // Phase 1: High speed sprint approach
-    const t = p / 0.40;
-    runnerX = lerp(560, 420, easeInQuad(t));
+    const t = p / 0.35;
+    runnerX = lerp(580, 430, t);
     diveProgress = 0.0;
-  } else if (p >= 0.40 && p < 0.62) {
-    // Phase 2: Launch into dive & reach for crease
-    const t = (p - 0.40) / 0.22;
-    runnerX = lerp(420, targetBatTipX + (isUpright ? 45 : 70), easeOutCubic(t));
+    isAirborne = false;
+    isGrounded = true;
+  } else if (p >= 0.35 && p < 0.54) {
+    // Phase 2: Launch into dive
+    const t = (p - 0.35) / 0.19;
     diveProgress = isUpright ? 0.0 : easeInOutQuad(t);
-  } else {
-    // Phase 3: Post-impact momentum carries through
-    const t = (p - 0.62) / 0.38;
-    runnerX = targetBatTipX + (isUpright ? 45 : 70) - t * 30;
+    runnerX = lerp(430, targetBatTipX + (isUpright ? 40 : 70), easeOutCubic(t));
+    isAirborne = diveProgress > 0.3 && diveProgress < 0.85;
+    isGrounded = !isAirborne;
+  } else if (p >= 0.54 && p < 0.65) {
+    // Phase 3: Airborne extension & crease reach (bat reaches target at p=0.62)
+    const t = (p - 0.54) / 0.11;
     diveProgress = isUpright ? 0.0 : 1.0;
+    runnerX = lerp(targetBatTipX + (isUpright ? 40 : 70), targetBatTipX + (isUpright ? 30 : 60), t);
+    isAirborne = t < 0.6;
+    isGrounded = t >= 0.6;
+  } else {
+    // Phase 4: Post-reach turf slide momentum
+    const t = (p - 0.65) / 0.35;
+    diveProgress = isUpright ? 0.0 : 1.0;
+    runnerX = (targetBatTipX + (isUpright ? 30 : 60)) - t * 35;
+    isAirborne = false;
+    isGrounded = true;
   }
 
-  const torsoAngleRad = lerp(0.35, Math.PI * 0.45, diveProgress);
-  const headX = lerp(12, 32, diveProgress);
-  const headY = lerp(-28, -6, diveProgress);
-  const headTiltRad = lerp(0.2, 0.05, diveProgress);
+  // --- Forward Kinematic Angles derived strictly from diveProgress ---
+  // Torso / Spine: upright sprint (0.24 rad) -> full horizontal dive (1.48 rad)
+  const torsoAngleRad = lerp(0.24 + Math.sin(stridePhase) * 0.04, 1.48, diveProgress);
+  const torsoLength = 28;
 
-  const frontLegX = lerp(4, -18, diveProgress);
-  const frontLegY = lerp(-20, 2, diveProgress);
-  const backLegX = lerp(-14, -34, diveProgress);
-  const backLegY = lerp(-14, -2, diveProgress);
+  // Pelvis vertical height offset: running bounce (0 to 3) -> drop down to slide (10px)
+  const sprintBounce = Math.abs(Math.sin(stridePhase)) * 3;
+  const pelvisOffsetY = lerp(sprintBounce, 10, diveProgress);
 
-  const batPivotX = lerp(-20, -32, diveProgress);
-  const batPivotY = lerp(2, 4, diveProgress);
-  const batRotRad = lerp(0.2, -Math.PI * 0.48, diveProgress);
+  // Head tilt: during dive, runner lifts neck/chin up to look down the pitch towards crease
+  const headTiltRad = lerp(0.06, -0.42, diveProgress);
+
+  // Lead Arm (reaches forward with bat towards crease)
+  const sprintLeadArm = -Math.sin(stridePhase) * 0.6 + 0.35;
+  const leadShoulderAngleRad = lerp(sprintLeadArm, 1.54, diveProgress);
+  const leadElbowAngleRad = lerp(0.5, 0.05, diveProgress);
+  const batGripAngleRad = lerp(-0.4, 0.06, diveProgress);
+
+  // Rear Arm (counter-balance pump in sprint -> streamlined back in dive)
+  const sprintRearArm = Math.sin(stridePhase) * 0.6;
+  const rearShoulderAngleRad = lerp(sprintRearArm, -0.65, diveProgress);
+  const rearElbowAngleRad = lerp(0.8, 0.2, diveProgress);
+
+  // Lead Leg (hip -> knee)
+  const sprintLeadHip = Math.sin(stridePhase) * 0.75;
+  const sprintLeadKnee = Math.max(0, -Math.sin(stridePhase) * 1.1);
+  const leadHipAngleRad = lerp(sprintLeadHip, -0.12, diveProgress);
+  const leadKneeAngleRad = lerp(sprintLeadKnee, 0.15, diveProgress);
+
+  // Trail Leg (hip -> knee)
+  const sprintTrailHip = -Math.sin(stridePhase) * 0.75;
+  const sprintTrailKnee = Math.max(0, Math.sin(stridePhase) * 1.1);
+  const trailHipAngleRad = lerp(sprintTrailHip, -0.32, diveProgress);
+  const trailKneeAngleRad = lerp(sprintTrailKnee, 0.25, diveProgress);
 
   return {
     runnerX,
     runnerY: 200,
-    batterK: {
+    runnerK: {
+      diveProgress,
+      isAirborne,
+      isGrounded,
+      pelvisOffsetY,
       torsoAngleRad,
-      headX,
-      headY,
+      torsoLength,
       headTiltRad,
-      frontLegX,
-      frontLegY,
-      backLegX,
-      backLegY,
-      batPivotX,
-      batPivotY,
-      batRotRad,
-      padRecoilX: 0,
-      padRecoilY: 0,
-      isDiving: diveProgress > 0.4,
+      leadShoulderAngleRad,
+      leadElbowAngleRad,
+      batGripAngleRad,
+      rearShoulderAngleRad,
+      rearElbowAngleRad,
+      leadHipAngleRad,
+      leadKneeAngleRad,
+      trailHipAngleRad,
+      trailKneeAngleRad,
     },
   };
 }
@@ -795,6 +868,289 @@ export function drawArticulatedBatter(
 
   ctx.fillStyle = "#b45309";
   ctx.fillRect(-1.5, 4, 3, 38);
+  ctx.fillStyle = "#dc2626";
+  ctx.fillRect(-3, 2, 6, 6);
+
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// ================================================================
+// 1B. ARTICULATED RUNNER RIG RENDERER (FORWARD KINEMATIC TREE)
+// ================================================================
+export function drawArticulatedRunner(
+  ctx: CanvasRenderingContext2D,
+  t: ActorTransform,
+  k: RunnerKinematics
+) {
+  const scale = t.scale ?? 1.0;
+  const facingDir = t.facing === "LEFT" ? -1 : 1;
+
+  ctx.save();
+  ctx.translate(t.x, t.y);
+  ctx.scale(scale * facingDir, scale);
+  if (t.rotationDeg) {
+    ctx.rotate((t.rotationDeg * Math.PI) / 180);
+  }
+  if (t.opacity !== undefined) {
+    ctx.globalAlpha = t.opacity;
+  }
+
+  // --- 1. Unified Ground Contact / Slide Shadow ---
+  ctx.fillStyle = k.isAirborne ? "rgba(0, 0, 0, 0.15)" : "rgba(0, 0, 0, 0.28)";
+  ctx.beginPath();
+  if (k.diveProgress < 0.25) {
+    ctx.ellipse(0, 0, 18, 5, 0, 0, Math.PI * 2);
+  } else {
+    // Elongated slide shadow spanning runner's body and reaching bat
+    const shadowCenter = 28 * k.diveProgress;
+    const shadowWidth = 18 + 42 * k.diveProgress;
+    ctx.ellipse(shadowCenter, 0, shadowWidth, 5, 0, 0, Math.PI * 2);
+  }
+  ctx.fill();
+
+  // --- 2. Pelvis Root ---
+  const pelvisX = 0;
+  const pelvisY = -22 + k.pelvisOffsetY;
+
+  // --- 3. Spine / Torso Vector ---
+  const torsoL = k.torsoLength;
+  const shoulderX = pelvisX + Math.sin(k.torsoAngleRad) * torsoL;
+  const shoulderY = pelvisY - Math.cos(k.torsoAngleRad) * torsoL;
+
+  // --- 4. Rear Arm (Drawn behind body) ---
+  const rearArmL = 14;
+  const rearElbowX = shoulderX - Math.sin(k.rearShoulderAngleRad) * rearArmL;
+  const rearElbowY = shoulderY + Math.cos(k.rearShoulderAngleRad) * rearArmL;
+  const rearHandX = rearElbowX - Math.sin(k.rearShoulderAngleRad + k.rearElbowAngleRad) * rearArmL;
+  const rearHandY = rearElbowY + Math.cos(k.rearShoulderAngleRad + k.rearElbowAngleRad) * rearArmL;
+
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(shoulderX, shoulderY);
+  ctx.lineTo(rearElbowX, rearElbowY);
+  ctx.lineTo(rearHandX, rearHandY);
+  ctx.stroke();
+
+  // Rear Glove
+  ctx.fillStyle = "#0284c7";
+  ctx.beginPath();
+  ctx.arc(rearHandX, rearHandY, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- 5. Trail / Rear Leg (Drawn behind body) ---
+  const thighL = 16;
+  const shinL = 16;
+  const trailHipX = pelvisX - 4;
+  const trailHipY = pelvisY;
+  const trailKneeX = trailHipX - Math.sin(k.trailHipAngleRad) * thighL;
+  const trailKneeY = trailHipY + Math.cos(k.trailHipAngleRad) * thighL;
+  const trailFootX = trailKneeX - Math.sin(k.trailHipAngleRad + k.trailKneeAngleRad) * shinL;
+  const trailFootY = trailKneeY + Math.cos(k.trailHipAngleRad + k.trailKneeAngleRad) * shinL;
+
+  // Trail Leg bone / flannels
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 4.5;
+  ctx.beginPath();
+  ctx.moveTo(trailHipX, trailHipY);
+  ctx.lineTo(trailKneeX, trailKneeY);
+  ctx.stroke();
+
+  // Trail Batting Pad
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 1.0;
+  ctx.fillStyle = "#e2e8f0";
+  ctx.beginPath();
+  const padAngle = Math.atan2(trailFootY - trailKneeY, trailFootX - trailKneeX);
+  ctx.save();
+  ctx.translate((trailKneeX + trailFootX) / 2, (trailKneeY + trailFootY) / 2);
+  ctx.rotate(padAngle - Math.PI / 2);
+  ctx.roundRect(-4.5, -8, 9, 16, 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Trail Shoe / Spikes
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.ellipse(trailFootX, trailFootY, 5, 2.5, padAngle, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- 6. Pelvis / Shorts ---
+  ctx.fillStyle = "#f1f5f9";
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(pelvisX - 6, pelvisY - 4, 12, 8, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // --- 7. Torso / Jersey ---
+  ctx.save();
+  ctx.translate((pelvisX + shoulderX) / 2, (pelvisY + shoulderY) / 2);
+  ctx.rotate(k.torsoAngleRad);
+  ctx.fillStyle = "#f8fafc";
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(-8, -torsoL / 2, 16, torsoL, [4, 4, 2, 2]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Jersey collar V
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.moveTo(-3, -torsoL / 2);
+  ctx.lineTo(0, -torsoL / 2 + 6);
+  ctx.lineTo(3, -torsoL / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // --- 8. Head & Helmet (Derived strictly from Shoulders / Neck) ---
+  const neckL = 10;
+  const headAngle = k.torsoAngleRad + k.headTiltRad;
+  const headX = shoulderX + Math.sin(headAngle) * neckL;
+  const headY = shoulderY - Math.cos(headAngle) * neckL;
+
+  ctx.save();
+  ctx.translate(headX, headY);
+  ctx.rotate(headAngle);
+
+  // Helmet Shell
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(0, 0, 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Helmet Peak / Visor
+  ctx.fillStyle = "#1e293b";
+  ctx.beginPath();
+  ctx.roundRect(1, -3, 9, 4, 1);
+  ctx.fill();
+
+  // Face / Chin
+  ctx.fillStyle = "#d4a373";
+  ctx.beginPath();
+  ctx.arc(2, 2, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Steel Visor Grille
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(3, -1);
+  ctx.lineTo(8, 3);
+  ctx.lineTo(3, 7);
+  ctx.moveTo(5, 1);
+  ctx.lineTo(9, 6);
+  ctx.stroke();
+  ctx.restore();
+
+  // --- 9. Lead / Front Leg ---
+  const leadHipX = pelvisX + 4;
+  const leadHipY = pelvisY;
+  const leadKneeX = leadHipX + Math.sin(k.leadHipAngleRad) * thighL;
+  const leadKneeY = leadHipY + Math.cos(k.leadHipAngleRad) * thighL;
+  const leadFootX = leadKneeX + Math.sin(k.leadHipAngleRad + k.leadKneeAngleRad) * shinL;
+  const leadFootY = leadKneeY + Math.cos(k.leadHipAngleRad + k.leadKneeAngleRad) * shinL;
+
+  // Lead Thigh
+  ctx.strokeStyle = "#f8fafc";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(leadHipX, leadHipY);
+  ctx.lineTo(leadKneeX, leadKneeY);
+  ctx.stroke();
+
+  // Lead Batting Pad
+  const leadPadAngle = Math.atan2(leadFootY - leadKneeY, leadFootX - leadKneeX);
+  ctx.save();
+  ctx.translate((leadKneeX + leadFootX) / 2, (leadKneeY + leadFootY) / 2);
+  ctx.rotate(leadPadAngle - Math.PI / 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.roundRect(-5.5, -9, 11, 18, 2.5);
+  ctx.fill();
+  ctx.stroke();
+
+  // Pad straps
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.moveTo(-4.5, -3);
+  ctx.lineTo(4.5, -3);
+  ctx.moveTo(-4.5, 3);
+  ctx.lineTo(4.5, 3);
+  ctx.stroke();
+  ctx.restore();
+
+  // Lead Shoe / Spikes
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.ellipse(leadFootX, leadFootY, 6, 3, leadPadAngle, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- 10. Lead Arm, Gloves & Bat ---
+  const leadArmL = 15;
+  const leadElbowX = shoulderX + Math.sin(k.leadShoulderAngleRad) * leadArmL;
+  const leadElbowY = shoulderY - Math.cos(k.leadShoulderAngleRad) * leadArmL;
+  const leadHandX = leadElbowX + Math.sin(k.leadShoulderAngleRad + k.leadElbowAngleRad) * leadArmL;
+  const leadHandY = leadElbowY - Math.cos(k.leadShoulderAngleRad + k.leadElbowAngleRad) * leadArmL;
+
+  // Arm
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(shoulderX, shoulderY);
+  ctx.lineTo(leadElbowX, leadElbowY);
+  ctx.lineTo(leadHandX, leadHandY);
+  ctx.stroke();
+
+  // Batting Gloves (Lead & Secondary)
+  ctx.fillStyle = "#0284c7";
+  ctx.beginPath();
+  ctx.roundRect(leadHandX - 4, leadHandY - 4, 8, 7, 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(leadHandX - 3, leadHandY - 2, 6, 2);
+
+  // Bat Grip & Blade (Derives strictly from Lead Hand)
+  const batAngle = k.leadShoulderAngleRad + k.batGripAngleRad;
+  ctx.save();
+  ctx.translate(leadHandX, leadHandY);
+  ctx.rotate(batAngle - Math.PI / 2);
+
+  // Handle & Rubber Grip
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 0.6;
+  ctx.fillRect(-2, -14, 4, 14);
+  ctx.strokeRect(-2, -14, 4, 14);
+
+  // Grip texture
+  ctx.fillStyle = "#0284c7";
+  ctx.fillRect(-3, -10, 6, 3);
+  ctx.fillRect(-3, -5, 6, 3);
+
+  // Willow Blade
+  ctx.fillStyle = "#d97706";
+  ctx.strokeStyle = "#78350f";
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.roundRect(-3.5, 0, 7, 44, [1, 1, 3, 3]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Blade Spine & Red Sponsor Sticker
+  ctx.fillStyle = "#b45309";
+  ctx.fillRect(-1.5, 4, 3, 36);
   ctx.fillStyle = "#dc2626";
   ctx.fillRect(-3, 2, 6, 6);
 

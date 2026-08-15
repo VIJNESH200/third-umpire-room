@@ -13,6 +13,7 @@ import {
   solveStumpingKeeperKinematics,
   solveBoundaryFielderKinematics,
   drawArticulatedBatter,
+  drawArticulatedRunner,
   drawArticulatedBowler,
   drawArticulatedWicketkeeper,
   drawArticulatedFielder,
@@ -520,10 +521,10 @@ function renderRunOutBroadcast(
     ev?.runnerDiveTechnique
   );
 
-  drawArticulatedBatter(
+  drawArticulatedRunner(
     ctx,
     { x: runnerResult.runnerX, y: stumpsBaseY + 12, scale: 1.1, facing: "LEFT" },
-    runnerResult.batterK
+    runnerResult.runnerK
   );
 }
 

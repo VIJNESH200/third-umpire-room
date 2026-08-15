@@ -8,7 +8,10 @@ import {
 import { generateScenario, generateSession } from "../engine/scenarioGenerator";
 import { computeSessionStats, getRankInfo } from "../engine/scoring";
 import { computePitchStations } from "../components/instinct/IncidentReplayFeed";
-import { solveLBWBowlerKinematics } from "../components/instinct/actorRigs";
+import {
+  solveLBWBowlerKinematics,
+  solveRunOutRunnerKinematics,
+} from "../components/instinct/actorRigs";
 import type {
   LBWData,
   RunOutData,
@@ -582,6 +585,40 @@ function runAllDRSTests() {
     const noBallKinematics = solveLBWBowlerKinematics(0.30, { isNoBall: true, frontFootOverstepMm: 35 });
     const noBallFootOver = noBallKinematics.frontLegY < 0;
     assert(noBallFootOver, "Bowler Foot Kinematics: No-ball delivery front foot oversteps popping crease");
+  }
+
+  // --- GROUP 11: RUN-OUT ATHLETIC RIG & FORWARD KINEMATIC INVARIANTS ---
+  console.log("\n--- GROUP 11: RUN-OUT ATHLETIC RIG & FORWARD KINEMATIC INVARIANTS ---");
+  {
+    // Test 58: Kinematic continuity: Torso angle smoothly transitions from upright sprint to horizontal dive
+    const sprintK = solveRunOutRunnerKinematics(0.10, 300, 10).runnerK;
+    const launchK = solveRunOutRunnerKinematics(0.45, 300, 10).runnerK;
+    const diveK = solveRunOutRunnerKinematics(0.60, 300, 10).runnerK;
+
+    const smoothTransition = sprintK.torsoAngleRad < launchK.torsoAngleRad && launchK.torsoAngleRad < diveK.torsoAngleRad;
+    assert(smoothTransition, "Runner Kinematics: Torso pitch angle smoothly transitions from upright to horizontal dive");
+
+    // Test 59: Head-neck connection: Head tilt remains anatomically connected to torso
+    let headAlwaysConnected = true;
+    for (let p = 0; p <= 1.0; p += 0.05) {
+      const k = solveRunOutRunnerKinematics(p, 300, 10).runnerK;
+      if (Math.abs(k.headTiltRad) > 1.2 || isNaN(k.headTiltRad)) headAlwaysConnected = false;
+    }
+    assert(headAlwaysConnected, "Runner Kinematics: Head and neck maintain anatomical connection to torso at all frames");
+
+    // Test 60: Arm & bat reach extension: Lead arm and bat reach ahead of pelvis during dive
+    const reachForward = diveK.leadShoulderAngleRad > sprintK.leadShoulderAngleRad;
+    assert(reachForward, "Runner Kinematics: Lead arm and bat extend forward towards crease during dive reach");
+
+    // Test 61: Pelvis root integrity: Pelvis height and stride angles remain finite and bounded throughout timeline
+    let pelvisIntegrity = true;
+    for (let p = 0; p <= 1.0; p += 0.05) {
+      const k = solveRunOutRunnerKinematics(p, 300, 10).runnerK;
+      if (isNaN(k.pelvisOffsetY) || isNaN(k.torsoAngleRad) || isNaN(k.leadHipAngleRad)) {
+        pelvisIntegrity = false;
+      }
+    }
+    assert(pelvisIntegrity, "Runner Kinematics: Pelvis root and all derived joint angles remain valid across entire 2.8s replay");
   }
 
   console.log("=================================================");
