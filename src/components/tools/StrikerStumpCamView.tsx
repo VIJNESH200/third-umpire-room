@@ -116,14 +116,68 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
     0
   );
 
-  // Project Zing bails from canonical state
+  // --- TWO INDIVIDUAL ZING BAILS WITH LOCAL BALLISTIC FLIGHT ---
   const bailsDislodged = state.stumps.bailsSeparating;
-  const bailZ = state.stumps.bailDisplacementMm.z;
-  const bailX = state.stumps.bailDisplacementMm.x;
-  const bailY = state.stumps.bailDisplacementMm.y;
+  const dtDislodgeMs = Math.max(0, currentTimeMs - state.timeline.bailsDislodgedMs);
 
-  const bailCenter = projectPitchToCAM10(bailX, bailY, 711 + bailZ);
-  const bailRotation = state.stumps.bailRotationDeg;
+  // Bail 1: Off-Middle Bail (spans -114mm to 0mm at resting height 716mm)
+  let b1WorldX = 0;
+  let b1WorldY = -57;
+  let b1WorldZ = 716;
+  let b1RotRad = 0;
+
+  // Bail 2: Middle-Leg Bail (spans 0mm to +114mm at resting height 716mm)
+  let b2WorldX = 0;
+  let b2WorldY = 57;
+  let b2WorldZ = 716;
+  let b2RotRad = 0;
+
+  if (bailsDislodged && dtDislodgeMs > 0) {
+    // Flight duration ~340ms, then settles on turf
+    const tFlight1 = Math.min(1, dtDislodgeMs / 320);
+    const tFlight2 = Math.min(1, dtDislodgeMs / 360);
+
+    // Bail 1 (Off-Side): pops up, drifts outward to off side, settles on turf near stumps
+    const arcZ1 = Math.sin(tFlight1 * Math.PI) * 75 - tFlight1 * tFlight1 * 40;
+    b1WorldX = -tFlight1 * 35; // slightly behind stumps in throw direction
+    b1WorldY = -57 - tFlight1 * 105; // outward to off-side
+    b1WorldZ = Math.max(12, 716 + arcZ1 - tFlight1 * 710); // lands on turf Z ≈ 12mm
+    b1RotRad = tFlight1 * 1.35; // ~77 degrees tumble
+
+    // Bail 2 (Leg-Side): pops up higher, drifts outward to leg side, settles on turf
+    const arcZ2 = Math.sin(tFlight2 * Math.PI) * 90 - tFlight2 * tFlight2 * 50;
+    b2WorldX = -tFlight2 * 45; // slightly behind stumps
+    b2WorldY = 57 + tFlight2 * 120; // outward to leg-side
+    b2WorldZ = Math.max(12, 716 + arcZ2 - tFlight2 * 710); // lands on turf Z ≈ 12mm
+    b2RotRad = -tFlight2 * 1.55; // ~89 degrees tumble
+  }
+
+  // Compute 3D endpoints for Bail 1 (Off-Middle)
+  const halfW = 52;
+  const b1Left = projectPitchToCAM10(
+    b1WorldX,
+    b1WorldY - halfW * Math.cos(b1RotRad),
+    b1WorldZ - halfW * Math.sin(b1RotRad)
+  );
+  const b1Right = projectPitchToCAM10(
+    b1WorldX,
+    b1WorldY + halfW * Math.cos(b1RotRad),
+    b1WorldZ + halfW * Math.sin(b1RotRad)
+  );
+  const b1Center = projectPitchToCAM10(b1WorldX, b1WorldY, b1WorldZ);
+
+  // Compute 3D endpoints for Bail 2 (Middle-Leg)
+  const b2Left = projectPitchToCAM10(
+    b2WorldX,
+    b2WorldY - halfW * Math.cos(b2RotRad),
+    b2WorldZ - halfW * Math.sin(b2RotRad)
+  );
+  const b2Right = projectPitchToCAM10(
+    b2WorldX,
+    b2WorldY + halfW * Math.cos(b2RotRad),
+    b2WorldZ + halfW * Math.sin(b2RotRad)
+  );
+  const b2Center = projectPitchToCAM10(b2WorldX, b2WorldY, b2WorldZ);
 
   // Virtual 500 FPS frame counter
   const currentFrame = Math.round((currentTimeMs / 1000) * 500);
@@ -262,8 +316,6 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
 
           {/* Cricket Bat Blade & Handle projected in 3D Space */}
           <g>
-            {/* Bat Blade Line / Polygon from Tip to Shoulder */}
-            {/* Blade thickness offset perpendicular to blade axis */}
             {(() => {
               const bladeLength = Math.hypot(pHandle.x - pTip.x, pHandle.y - pTip.y);
               const nx = (-(pHandle.y - pTip.y) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
@@ -370,45 +422,78 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
               strokeLinecap="round"
             />
 
-            {/* Zing Bails with LED Glow & Separation */}
-            <g
-              transform={`translate(${bailCenter.x - midStumpTop.x}, ${bailCenter.y - midStumpTop.y}) rotate(${bailRotation} ${midStumpTop.x} ${midStumpTop.y})`}
-            >
-              {/* Wooden Bail Crossbar */}
+            {/* Bail 1 (Off-Middle Bail) with Zing LED & Separation */}
+            <g>
               <line
-                x1={offStumpTop.x - 5}
-                y1={offStumpTop.y - 4}
-                x2={legStumpTop.x + 5}
-                y2={legStumpTop.y - 4}
+                x1={b1Left.x}
+                y1={b1Left.y}
+                x2={b1Right.x}
+                y2={b1Right.y}
                 stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
-                strokeWidth={5 * midStumpTop.scale}
+                strokeWidth={4.5 * b1Center.scale}
                 strokeLinecap="round"
               />
-
-              {/* Zing Internal LED Core */}
               {bailsDislodged ? (
                 <>
                   <circle
-                    cx={midStumpTop.x}
-                    cy={midStumpTop.y - 4}
-                    r={6.5 * midStumpTop.scale}
+                    cx={b1Center.x}
+                    cy={b1Center.y}
+                    r={5.5 * b1Center.scale}
                     fill="#EF4444"
-                    opacity="0.85"
+                    opacity={0.85}
                   />
                   <circle
-                    cx={midStumpTop.x}
-                    cy={midStumpTop.y - 4}
-                    r={3 * midStumpTop.scale}
+                    cx={b1Center.x}
+                    cy={b1Center.y}
+                    r={2.5 * b1Center.scale}
                     fill="#FFFFFF"
                   />
                 </>
               ) : (
                 <circle
-                  cx={midStumpTop.x}
-                  cy={midStumpTop.y - 4}
-                  r={2.5 * midStumpTop.scale}
+                  cx={b1Center.x}
+                  cy={b1Center.y}
+                  r={2.0 * b1Center.scale}
                   fill="#FDE68A"
-                  opacity="0.7"
+                  opacity={0.7}
+                />
+              )}
+            </g>
+
+            {/* Bail 2 (Middle-Leg Bail) with Zing LED & Separation */}
+            <g>
+              <line
+                x1={b2Left.x}
+                y1={b2Left.y}
+                x2={b2Right.x}
+                y2={b2Right.y}
+                stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
+                strokeWidth={4.5 * b2Center.scale}
+                strokeLinecap="round"
+              />
+              {bailsDislodged ? (
+                <>
+                  <circle
+                    cx={b2Center.x}
+                    cy={b2Center.y}
+                    r={5.5 * b2Center.scale}
+                    fill="#EF4444"
+                    opacity={0.85}
+                  />
+                  <circle
+                    cx={b2Center.x}
+                    cy={b2Center.y}
+                    r={2.5 * b2Center.scale}
+                    fill="#FFFFFF"
+                  />
+                </>
+              ) : (
+                <circle
+                  cx={b2Center.x}
+                  cy={b2Center.y}
+                  r={2.0 * b2Center.scale}
+                  fill="#FDE68A"
+                  opacity={0.7}
                 />
               )}
             </g>

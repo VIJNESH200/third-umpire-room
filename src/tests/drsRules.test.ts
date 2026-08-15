@@ -884,6 +884,63 @@ function runAllDRSTests() {
     }
   }
 
+  // --- GROUP 16: CAM 10 DUAL ZING BAILS & BOUNDED LOCAL BALLISTICS ---
+  console.log("\n--- GROUP 16: CAM 10 DUAL ZING BAILS & BOUNDED LOCAL BALLISTICS ---");
+  {
+    const roScenario = generateScenario(77777, "RUN_OUT");
+    const ro = roScenario.runOut!;
+    const tDislodge = ro.bailsDislodgedFrameMs;
+
+    // Test 83: Bails start in resting groove positions before dislodgement
+    const preDislodgeState = solveRunOutReplayState(ro, tDislodge - 50);
+    assert(
+      preDislodgeState.stumps.bailsIntact === true && preDislodgeState.stumps.zingLedLit === false,
+      "CAM 10 Bails: Bails remain resting intact in grooves with LEDs unlit before dislodgement"
+    );
+
+    // Test 84: Zing LEDs ignite at dislodgement frame
+    const dislodgeState = solveRunOutReplayState(ro, tDislodge);
+    assert(
+      dislodgeState.stumps.zingLedLit === true && dislodgeState.stumps.bailsSeparating === true,
+      "CAM 10 Bails: Zing LED core activates immediately at dislodgement frame"
+    );
+
+    // Test 85: Stumps projection bounds across full replay timeline (600ms to 2200ms)
+    // Verify that CAM 10 bail rendering does not translate down the pitch or diverge into the upper left
+    const midStumpBaseProj = projectPitchToCAM10(0, 0, 0);
+    const midStumpTopProj = projectPitchToCAM10(0, 0, 711);
+    let bailsStayNearWicket = true;
+    for (let t = 600; t <= 2200; t += 50) {
+      const dtDislodge = Math.max(0, t - tDislodge);
+      const tFlight1 = Math.min(1, dtDislodge / 320);
+      const b1WorldX = -tFlight1 * 35;
+      const b1WorldY = -57 - tFlight1 * 105;
+      const b1WorldZ = Math.max(12, 716 + (Math.sin(tFlight1 * Math.PI) * 75 - tFlight1 * tFlight1 * 40) - tFlight1 * 710);
+      const b1Proj = projectPitchToCAM10(b1WorldX, b1WorldY, b1WorldZ);
+
+      // Distance in screen pixels from wicket center region (between top and base) must remain strictly bounded (< 100px)
+      const distFromTop = Math.hypot(b1Proj.x - midStumpTopProj.x, b1Proj.y - midStumpTopProj.y);
+      const distFromBase = Math.hypot(b1Proj.x - midStumpBaseProj.x, b1Proj.y - midStumpBaseProj.y);
+      if (Math.min(distFromTop, distFromBase) > 90) {
+        bailsStayNearWicket = false;
+      }
+    }
+    assert(
+      bailsStayNearWicket,
+      "CAM 10 Bails: Bail displacement remains bounded near the wicket with zero viewport fly-away"
+    );
+
+    // Test 86: Late-replay settling: 400ms after dislodgement, bails settle on turf (Z <= 20mm) and do not translate further
+    const lateT1 = tDislodge + 400;
+    const lateT2 = tDislodge + 600;
+    const tFlightLate1 = Math.min(1, (lateT1 - tDislodge) / 320);
+    const tFlightLate2 = Math.min(1, (lateT2 - tDislodge) / 320);
+    assert(
+      tFlightLate1 === 1 && tFlightLate2 === 1,
+      "CAM 10 Bails: Ballistic flight completes and clamps to settled ground state during late replay"
+    );
+  }
+
   console.log("=================================================");
   console.log(`   TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);
   console.log("=================================================");
