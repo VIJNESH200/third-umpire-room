@@ -153,7 +153,9 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
 };
 
 /* ================================================================
-   1. LBW BROADCAST REPLAY RENDERER
+   1. LBW BROADCAST REPLAY RENDERER (Bug 1 Composition Fix)
+   Stumps stand cleanly behind the popping crease. Batter stands forward
+   on the popping crease without occluding the 3 wickets.
    ================================================================ */
 function renderLBWBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -179,8 +181,8 @@ function renderLBWBroadcast(
   ctx.beginPath();
   ctx.moveTo(w * 0.32, h * 0.16);
   ctx.lineTo(w * 0.58, h * 0.16);
-  ctx.lineTo(w * 0.72, h * 0.92);
-  ctx.lineTo(w * 0.22, h * 0.92);
+  ctx.lineTo(w * 0.72, h * 0.94);
+  ctx.lineTo(w * 0.22, h * 0.94);
   ctx.closePath();
   ctx.fill();
 
@@ -189,12 +191,12 @@ function renderLBWBroadcast(
   ctx.beginPath();
   ctx.moveTo(w * 0.37, h * 0.16);
   ctx.lineTo(w * 0.53, h * 0.16);
-  ctx.lineTo(w * 0.64, h * 0.92);
-  ctx.lineTo(w * 0.30, h * 0.92);
+  ctx.lineTo(w * 0.64, h * 0.94);
+  ctx.lineTo(w * 0.30, h * 0.94);
   ctx.closePath();
   ctx.fill();
 
-  // Creases
+  // Bowling crease (top)
   ctx.strokeStyle = "rgba(255,255,255,0.65)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
@@ -202,46 +204,50 @@ function renderLBWBroadcast(
   ctx.lineTo(w * 0.57, h * 0.20);
   ctx.stroke();
 
+  // Popping crease (striker end) - positioned in front of stumps
   ctx.lineWidth = 2.5;
   ctx.beginPath();
-  ctx.moveTo(w * 0.24, h * 0.84);
-  ctx.lineTo(w * 0.70, h * 0.84);
+  ctx.moveTo(w * 0.24, h * 0.82);
+  ctx.lineTo(w * 0.70, h * 0.82);
   ctx.stroke();
 
-  // Stumps
-  const stumpsX = w * 0.54;
-  const stumpsBaseY = h * 0.86;
-  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.15 });
+  // Striker Stumps (X = w * 0.52, Base Y = h * 0.88)
+  const stumpsX = w * 0.52;
+  const stumpsBaseY = h * 0.88;
+  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.05 });
 
   // Kinematics targets
   const pitchCenter = w * 0.45;
   let pitchBounceX = pitchCenter;
   if (ev) {
-    if (ev.apparentPitchLine === "OUTSIDE_LEG") pitchBounceX = stumpsX - 38;
-    else if (ev.apparentPitchLine === "OUTSIDE_OFF") pitchBounceX = stumpsX + 35;
+    if (ev.apparentPitchLine === "OUTSIDE_LEG") pitchBounceX = stumpsX - 36;
+    else if (ev.apparentPitchLine === "OUTSIDE_OFF") pitchBounceX = stumpsX + 34;
     else pitchBounceX = stumpsX - 6 + (lbw ? lbw.pitchX * 22 : 0);
   } else if (lbw) {
-    pitchBounceX = stumpsX - 6 + lbw.pitchX * 30;
+    pitchBounceX = stumpsX - 6 + lbw.pitchX * 28;
   }
 
-  let padImpactX = stumpsX - 6;
+  let padImpactX = stumpsX - 8;
   if (ev) {
-    if (ev.apparentImpactLine === "OUTSIDE_OFF") padImpactX = stumpsX + 30;
-    else if (ev.apparentImpactLine === "OUTSIDE_LEG") padImpactX = stumpsX - 32;
-    else padImpactX = stumpsX - 6 + (lbw ? lbw.impactX * 18 : 0);
+    if (ev.apparentImpactLine === "OUTSIDE_OFF") padImpactX = stumpsX + 28;
+    else if (ev.apparentImpactLine === "OUTSIDE_LEG") padImpactX = stumpsX - 30;
+    else padImpactX = stumpsX - 8 + (lbw ? lbw.impactX * 18 : 0);
   } else if (lbw) {
-    padImpactX = stumpsX - 6 + lbw.impactX * 24;
+    padImpactX = stumpsX - 8 + lbw.impactX * 22;
   }
 
-  let impactY = h * 0.74;
-  if (ev?.apparentHeight === "LOW_SHIN") impactY = h * 0.79;
-  else if (ev?.apparentHeight === "HIGH_THIGH") impactY = h * 0.67;
+  let impactY = h * 0.72;
+  if (ev?.apparentHeight === "LOW_SHIN") impactY = h * 0.76;
+  else if (ev?.apparentHeight === "HIGH_THIGH") impactY = h * 0.65;
 
   const shotType = ev?.shotOfferedType || (lbw?.shotOffered ? "DEFENSIVE_FORWARD" : "PADDED_AWAY_NO_SHOT");
   const isNoShot = shotType === "PADDED_AWAY_NO_SHOT" || shotType === "LEAVE_WITHDRAWN";
-  const batterX = stumpsX - 22 + (ev?.batterStanceShiftX || 0);
 
-  // Bowler
+  // Batter is positioned forward on the popping crease at w * 0.44
+  const batterX = w * 0.44 + (ev?.batterStanceShiftX || 0) * 0.4;
+  const batterY = h * 0.80;
+
+  // Bowler at top of pitch
   const bowlerX = w * 0.45;
   const bowlerY = h * 0.16;
   const bowlerK = solveLBWBowlerKinematics(p);
@@ -251,8 +257,7 @@ function renderLBWBroadcast(
     bowlerK
   );
 
-  // Batter
-  const batterY = h * 0.84;
+  // Batter continuous kinematic rig
   const batterK = solveLBWBatterKinematics(
     p,
     isNoShot,
@@ -261,11 +266,11 @@ function renderLBWBroadcast(
   );
   drawArticulatedBatter(
     ctx,
-    { x: batterX, y: batterY, scale: 1.18, facing: "RIGHT" },
+    { x: batterX, y: batterY, scale: 1.15, facing: "RIGHT" },
     batterK
   );
 
-  // Ball
+  // Ball Delivery Physics & Trajectory
   let ballX = bowlerX;
   let ballY = bowlerY;
   let ballRadius = 2.5;

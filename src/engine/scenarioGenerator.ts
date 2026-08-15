@@ -67,7 +67,6 @@ export function generateScenario(
   const rng = new SeededRandom(seed);
 
   // 1. Determine Difficulty Tier
-  // Target distribution: ~35% CLEAR, ~50% MARGINAL, ~15% HOWLER
   let difficultyTier: DifficultyTier = forcedTier || "MARGINAL";
   if (!forcedTier) {
     const roll = rng.next();
@@ -150,12 +149,12 @@ export function generateScenario(
       } else if (outcome === "NO_BALL") {
         isNoBall = true;
         frontFootOverstepMm = rng.rangeInt(15, 38);
-        onFieldSignal = "OUT"; // On field missed the front foot overstep
+        onFieldSignal = "OUT";
       } else if (outcome === "BAT_FIRST") {
         batContactBeforePad = true;
         firstContactType = "BAT_FIRST";
         ultraEdgeSpikeAtBatFrame = true;
-        onFieldSignal = "OUT"; // On field gave Out thinking it was pad first
+        onFieldSignal = "OUT";
       } else if (outcome === "PITCH_OUTSIDE_LEG") {
         pitchingZone = "OUTSIDE_LEG";
         impactZone = "IN_LINE";
@@ -190,7 +189,6 @@ export function generateScenario(
       const isHowlerOut = rng.boolean(0.5);
       if (isHowlerOut) {
         onFieldSignal = "OUT";
-        // Egregious error: either massive overstep or missing stumps
         if (rng.boolean(0.4)) {
           isNoBall = true;
           frontFootOverstepMm = 28;
@@ -291,7 +289,7 @@ export function generateScenario(
     };
 
     incidentTitle = `LBW Review — ${bowlerObj.name} to ${batterObj.name}`;
-    description = `${bowlerObj.name} (${ballSpeedKph} km/h) delivers a sharp ball that strikes ${batterObj.name} on the front pad. Review initiated for LBW dismissal.`;
+    description = `Appeal for LBW against ${batterObj.name} off the bowling of ${bowlerObj.name} (${ballSpeedKph} km/h). Review initiated.`;
   } else if (incidentType === "RUN_OUT" || incidentType === "STUMPING") {
     let marginMs = 0;
     let batBounced = false;
@@ -345,7 +343,7 @@ export function generateScenario(
     };
 
     incidentTitle = `${incidentType === "STUMPING" ? "Stumping" : "Run-Out"} Referral — ${batterObj.name}`;
-    description = `${batterObj.name} stretches for the crease as the bails ignite. On-field umpire refers to third umpire for line & bail dislodgement check.`;
+    description = `${incidentType === "STUMPING" ? "Stumping appeal against" : "Close run-out appeal involving"} ${batterObj.name} at the striker's end. Referred to TV umpire.`;
   } else if (incidentType === "CAUGHT_BEHIND") {
     let hasEdge = false;
     let distractorNoise = false;
@@ -409,7 +407,7 @@ export function generateScenario(
     };
 
     incidentTitle = `Caught Behind (UltraEdge) — ${batterObj.name}`;
-    description = `Huge appeal for caught behind off the bowling of ${bowlerObj.name}. Batter standing their ground. Review initiated for bat-ball contact.`;
+    description = `Caught behind appeal against ${batterObj.name} off the bowling of ${bowlerObj.name}. Review initiated.`;
   } else {
     // BOUNDARY
     let isBoundary = false;
@@ -449,7 +447,7 @@ export function generateScenario(
     };
 
     incidentTitle = `Boundary Line Review — Deep Boundary Catch/Save`;
-    description = `Spectacular athletic dive at the boundary rope. Third umpire checking whether the fielder made contact with the rope while touching the ball.`;
+    description = `Boundary check following an athletic dive near the boundary cushion.`;
   }
 
   matchContext.onFieldSignal = onFieldSignal;
@@ -487,20 +485,21 @@ export function generateScenario(
     drsEvaluation = evaluateBoundary(boundaryData!, onFieldSignal);
   }
 
+  // Phase 1 neutral comms dialogue: NO leaks of on-field decision or forensic findings
   const commsDialogue = [
-    { speaker: "ON_FIELD_UMPIRE" as const, text: `Review requested for ${incidentType}. Soft signal on field is ${onFieldSignal}.` },
+    { speaker: "ON_FIELD_UMPIRE" as const, text: `Review requested for ${incidentType}. Referral initiated.` },
     { speaker: "TV_UMPIRE" as const, text: "Understood. Rolling the vision through now. Rock and roll that frame for me please." },
-    { speaker: "OPERATOR" as const, text: "We have clean broadcast telemetry synced and ready." },
+    { speaker: "OPERATOR" as const, text: "Broadcast replay feed is live on your main monitor." },
   ];
 
   if (incidentType === "LBW") {
-    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Checking front foot for fair delivery... fair delivery confirmed." });
-    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Checking UltraEdge for bat contact... no bat involved." });
-    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Now checking pitching zone and point of impact... stand by for ball tracking." });
+    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Checking front-on broadcast view. Looking at the delivery stride and line of the ball." });
   } else if (incidentType === "CAUGHT_BEHIND") {
-    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Give me UltraEdge synchronized with the side-on super slow-mo." });
+    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Rolling the slip camera replay through the corridor of uncertainty." });
   } else if (incidentType === "RUN_OUT" || incidentType === "STUMPING") {
-    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Zoom in on the popping crease and the stumps. Show me the bails lighting up." });
+    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Bring up the side-on broadcast angle looking across the popping crease." });
+  } else if (incidentType === "BOUNDARY") {
+    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Let's see the tracking camera around the boundary cushion area." });
   }
 
   const initialEvidence: ScenarioInitialEvidence = {

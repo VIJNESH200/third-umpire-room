@@ -73,6 +73,17 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(0.5);
   const [scanlinesEnabled, setScanlinesEnabled] = useState<boolean>(true);
 
+  // Derive logical frame rate from active camera feed
+  const getActiveCameraFps = (tool: string): number => {
+    if (tool === "CREASE_ZOOM") return 500; // 500 FPS High Speed Camera (1 frame = 2ms)
+    if (tool === "SUPER_SLOW_MO") return 1000; // 1000 FPS Ultra Motion (1 frame = 1ms)
+    if (tool === "BOUNDARY_ZOOM") return 120; // 120 FPS High Speed (1 frame = 8.33ms)
+    return 50; // Standard 50 FPS broadcast (1 frame = 20ms)
+  };
+
+  const currentFps = getActiveCameraFps(activeTool);
+  const frameStepMs = 1000 / currentFps;
+
   // Rock & Roll Direction: 1 = forward, -1 = reverse
   const rnrDirectionRef = useRef<number>(1);
   const animFrameRef = useRef<number | null>(null);
@@ -148,11 +159,11 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     };
   }, [isPlaying, isRockAndRoll, playbackSpeed, maxTimeMs, minTimeMs, scenario]);
 
-  // Frame Stepping (1 frame = 20ms @ 50fps)
+  // Frame Stepping (scaled to active feed's FPS: 500fps -> 2ms/frame, 50fps -> 20ms/frame)
   const handleStep = (frames: number) => {
     setIsPlaying(false);
     setIsRockAndRoll(false);
-    const stepDeltaMs = frames * 20;
+    const stepDeltaMs = frames * frameStepMs;
     setCurrentTimeMs((prev) => Math.max(minTimeMs, Math.min(maxTimeMs, prev + stepDeltaMs)));
     sounds.playClick(850 + frames * 30);
   };
@@ -333,6 +344,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 onSpeedChange={setPlaybackSpeed}
                 onStep={handleStep}
                 keyFrameMarkers={getKeyframeMarkers()}
+                fps={currentFps}
+                frameStepMs={frameStepMs}
               />
             </div>
           ) : (
