@@ -9,6 +9,7 @@ import {
   Flame,
   Sliders,
   Tv,
+  Video,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
@@ -45,6 +46,7 @@ export const ToolPalette: React.FC<ToolPaletteProps> = ({
           { id: "CREASE_ZOOM", camCode: "CAM 02", label: "Crease 500fps", icon: <ZoomIn size={14} />, badge: "ZING BAIL" },
           { id: "SIDE_ON_POP", camCode: "CAM 01", label: "Side-On Wide", icon: <Camera size={14} /> },
           { id: "OVERHEAD", camCode: "CAM 07", label: "Overhead Crease", icon: <Layers size={14} /> },
+          { id: "STUMP_CAM", camCode: "CAM 10", label: "Stump Cam", icon: <Video size={14} />, badge: "LOW ANGLE" },
         ];
       case "CAUGHT_BEHIND":
         return [

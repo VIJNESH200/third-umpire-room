@@ -457,7 +457,7 @@ function renderLBWBroadcast(
 }
 
 /* ================================================================
-   2. RUN OUT BROADCAST REPLAY RENDERER
+   2. RUN OUT BROADCAST REPLAY RENDERER (SQUARE LEG BROADCAST)
    ================================================================ */
 function renderRunOutBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -469,50 +469,117 @@ function renderRunOutBroadcast(
   const ev = scenario.initialEvidence?.runOut;
   const ro = scenario.runOut;
 
-  // Pitch & turf
-  ctx.fillStyle = "#153020";
+  // --- 1. Outfield Grass with Mowing Bands & Ambience ---
+  const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
+  gradGrass.addColorStop(0, "#132b1c");
+  gradGrass.addColorStop(0.5, "#183824");
+  gradGrass.addColorStop(1, "#0d1e13");
+  ctx.fillStyle = gradGrass;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#a88e72";
-  ctx.fillRect(0, h * 0.52, w, h * 0.48);
 
-  const creaseX = w * 0.44;
+  // Stadium lighting ambient glow
+  const gradLight = ctx.createRadialGradient(w * 0.45, h * 0.50, 30, w * 0.45, h * 0.50, w * 0.65);
+  gradLight.addColorStop(0, "rgba(255, 255, 230, 0.07)");
+  gradLight.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = gradLight;
+  ctx.fillRect(0, 0, w, h);
+
+  // --- 2. 22-Yard Pitch Strip (Side-On Perspective) ---
+  const pitchTopY = h * 0.50;
+  const pitchHeight = h * 0.50;
+
+  // Pitch base
+  const gradPitch = ctx.createLinearGradient(0, pitchTopY, 0, h);
+  gradPitch.addColorStop(0, "#b89a74");
+  gradPitch.addColorStop(0.4, "#a88a64");
+  gradPitch.addColorStop(1, "#8e724e");
+  ctx.fillStyle = gradPitch;
+  ctx.fillRect(0, pitchTopY, w, pitchHeight);
+
+  // Pitch top edge bevel / grass fringe
+  ctx.strokeStyle = "#4d3d29";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, pitchTopY);
+  ctx.lineTo(w, pitchTopY);
+  ctx.stroke();
+
+  // Pitch worn turf corridor
+  ctx.fillStyle = "rgba(140, 110, 75, 0.25)";
+  ctx.fillRect(0, pitchTopY + 12, w, pitchHeight - 24);
+
+  // --- 3. Painted White Crease Markings ---
+  const creaseX = w * 0.42;
+  const stumpsX = w * 0.24;
+  const stumpsBaseY = pitchTopY + 8;
+
+  // A. Bowling Crease Line (passes through stumps)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(stumpsX, pitchTopY);
+  ctx.lineTo(stumpsX, h);
+  ctx.stroke();
+
+  // B. Popping Crease White Line (where runner must ground bat/body)
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(creaseX - 2, h * 0.52, 4, h * 0.48);
+  ctx.fillRect(creaseX - 2.5, pitchTopY, 5, pitchHeight);
 
-  // Stumps
-  const stumpsX = w * 0.28;
-  const stumpsBaseY = h * 0.52;
+  // Popping crease painted text
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+  ctx.font = "bold 8px monospace";
+  ctx.fillText("POPPING CREASE", creaseX + 6, pitchTopY + 18);
+  ctx.restore();
+
+  // --- 4. Striker Stumps & Zing Bails ---
   const bailsBroke = p >= 0.62;
   const dislodgeT = bailsBroke ? (p - 0.62) / 0.38 : 0.0;
 
   drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
-    scale: 1.1,
+    scale: 1.12,
     bailsDislodged: bailsBroke,
     dislodgeProgress: dislodgeT,
     isZing: true,
   });
 
-  // Wicketkeeper at Stumps
-  const keeperK = solveCaughtBehindKeeperKinematics(p * 0.5, false);
+  // --- 5. Wicketkeeper at Stumps Gathering the Throw ---
+  const keeperK = solveCaughtBehindKeeperKinematics(p * 0.6, false);
   drawArticulatedWicketkeeper(
     ctx,
-    { x: stumpsX - 24, y: stumpsBaseY + 6, scale: 1.0, facing: "RIGHT" },
+    { x: stumpsX - 26, y: stumpsBaseY + 6, scale: 1.05, facing: "RIGHT" },
     keeperK
   );
 
-  // Incoming Ball Throw
+  // --- 6. Incoming Throw Trajectory from Deep ---
   if (p < 0.62) {
     const tThrow = p / 0.62;
-    const throwX = w * 0.95 + (stumpsX - w * 0.95) * tThrow;
-    const throwY = h * 0.25 + (stumpsBaseY - 14 - h * 0.25) * tThrow;
+    const originX = w * 0.98;
+    const originY = h * 0.18;
+    const targetX = stumpsX + 4;
+    const targetY = stumpsBaseY - 16;
+
+    // Parabolic arc for throw
+    const throwX = originX + (targetX - originX) * tThrow;
+    const arcHeight = Math.sin(tThrow * Math.PI) * 22;
+    const throwY = originY + (targetY - originY) * tThrow - arcHeight;
+
+    const prevT = Math.max(0, tThrow - 0.04);
+    const prevArc = Math.sin(prevT * Math.PI) * 22;
+    const prevThrowX = originX + (targetX - originX) * prevT;
+    const prevThrowY = originY + (targetY - originY) * prevT - prevArc;
 
     drawCricketBall(ctx, throwX, throwY, {
-      radius: 4.5,
-      seamAngleRad: p * Math.PI * 8,
+      radius: 4.8,
+      seamAngleRad: p * Math.PI * 10,
+      shadowY: Math.min(pitchTopY + 40, throwY + 24),
+      motionTrail: p > 0.10,
+      prevX: prevThrowX,
+      prevY: prevThrowY,
     });
   }
 
-  // Articulated Runner Kinematics
+  // --- 7. Single Coherent Athlete Runner Kinematics & Sliding Reach ---
   const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
   const runnerResult = solveRunOutRunnerKinematics(
     p,
@@ -521,15 +588,30 @@ function renderRunOutBroadcast(
     ev?.runnerDiveTechnique
   );
 
+  // Sliding turf dust spray during high-speed ground reach
+  if (p >= 0.56 && p < 0.88) {
+    const dustT = (p - 0.56) / 0.32;
+    ctx.save();
+    ctx.fillStyle = "rgba(180, 150, 110, 0.35)";
+    for (let i = 0; i < 4; i++) {
+      const offsetX = runnerResult.runnerX + (i * 12) - dustT * 20;
+      const offsetY = stumpsBaseY + 12 + Math.sin(i * 1.5) * 3;
+      ctx.beginPath();
+      ctx.ellipse(offsetX, offsetY, 8 * (1 - dustT * 0.5), 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   drawArticulatedRunner(
     ctx,
-    { x: runnerResult.runnerX, y: stumpsBaseY + 12, scale: 1.1, facing: "LEFT" },
+    { x: runnerResult.runnerX, y: stumpsBaseY + 12, scale: 1.12, facing: "LEFT" },
     runnerResult.runnerK
   );
 }
 
 /* ================================================================
-   3. STUMPING BROADCAST REPLAY RENDERER
+   3. STUMPING BROADCAST REPLAY RENDERER (SIDE-ON STUMPING CAM)
    ================================================================ */
 function renderStumpingBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -541,18 +623,56 @@ function renderStumpingBroadcast(
   const ev = scenario.initialEvidence?.runOut;
   const ro = scenario.runOut;
 
-  // Turf & clay
-  ctx.fillStyle = "#153020";
+  // --- 1. Outfield Grass ---
+  const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
+  gradGrass.addColorStop(0, "#132b1c");
+  gradGrass.addColorStop(0.5, "#183824");
+  gradGrass.addColorStop(1, "#0d1e13");
+  ctx.fillStyle = gradGrass;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#ad9275";
-  ctx.fillRect(0, h * 0.54, w, h * 0.46);
 
-  const creaseX = w * 0.48;
+  // --- 2. 22-Yard Pitch Strip ---
+  const pitchTopY = h * 0.52;
+  const pitchHeight = h * 0.48;
+
+  const gradPitch = ctx.createLinearGradient(0, pitchTopY, 0, h);
+  gradPitch.addColorStop(0, "#ba9c77");
+  gradPitch.addColorStop(0.5, "#a68862");
+  gradPitch.addColorStop(1, "#8a6d49");
+  ctx.fillStyle = gradPitch;
+  ctx.fillRect(0, pitchTopY, w, pitchHeight);
+
+  ctx.strokeStyle = "#4d3d29";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, pitchTopY);
+  ctx.lineTo(w, pitchTopY);
+  ctx.stroke();
+
+  // --- 3. Painted White Creases ---
+  const creaseX = w * 0.46;
+  const stumpsX = w * 0.28;
+  const stumpsBaseY = pitchTopY + 6;
+
+  // Bowling crease line
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(stumpsX, pitchTopY);
+  ctx.lineTo(stumpsX, h);
+  ctx.stroke();
+
+  // Popping crease line
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(creaseX - 2, h * 0.54, 4, h * 0.46);
+  ctx.fillRect(creaseX - 2.5, pitchTopY, 5, pitchHeight);
 
-  const stumpsX = w * 0.32;
-  const stumpsBaseY = h * 0.54;
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+  ctx.font = "bold 8px monospace";
+  ctx.fillText("POPPING CREASE", creaseX + 6, pitchTopY + 18);
+  ctx.restore();
+
+  // --- 4. Striker Stumps & Zing Bails ---
   const bailsBroke = p >= 0.65;
   const dislodgeT = bailsBroke ? (p - 0.65) / 0.35 : 0.0;
 
@@ -563,15 +683,15 @@ function renderStumpingBroadcast(
     isZing: true,
   });
 
-  // Wicketkeeper rapid stumping whip
+  // --- 5. Wicketkeeper Rapid Stumping Whip ---
   const keeperK = solveStumpingKeeperKinematics(p);
   drawArticulatedWicketkeeper(
     ctx,
-    { x: stumpsX - 20, y: stumpsBaseY + 4, scale: 1.15, facing: "RIGHT" },
+    { x: stumpsX - 22, y: stumpsBaseY + 4, scale: 1.15, facing: "RIGHT" },
     keeperK
   );
 
-  // Batter advance & back-foot drag
+  // --- 6. Batter Advance & Back-Foot Drag ---
   const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
   const stumpingResult = solveStumpingBatterKinematics(p, creaseX, marginPx);
 
@@ -581,12 +701,26 @@ function renderStumpingBroadcast(
     stumpingResult.batterK
   );
 
-  // Ball flight past bat to keeper
-  if (p < 0.50) {
-    const t = p / 0.50;
-    const bX = w * 0.85 + (stumpsX + 18 - w * 0.85) * t;
-    const bY = h * 0.38 + (stumpsBaseY - 20 - h * 0.38) * t;
-    drawCricketBall(ctx, bX, bY, { radius: 5.0, seamAngleRad: p * Math.PI * 6 });
+  // --- 7. Ball Flight Past Bat to Wicketkeeper ---
+  if (p < 0.52) {
+    const t = p / 0.52;
+    const originX = w * 0.88;
+    const originY = h * 0.32;
+    const targetX = stumpsX + 16;
+    const targetY = stumpsBaseY - 20;
+
+    const bX = originX + (targetX - originX) * t;
+    const bY = originY + (targetY - originY) * t;
+    const prevBX = originX + (targetX - originX) * Math.max(0, t - 0.05);
+    const prevBY = originY + (targetY - originY) * Math.max(0, t - 0.05);
+
+    drawCricketBall(ctx, bX, bY, {
+      radius: 5.0,
+      seamAngleRad: p * Math.PI * 6,
+      motionTrail: p > 0.15,
+      prevX: prevBX,
+      prevY: prevBY,
+    });
   }
 }
 

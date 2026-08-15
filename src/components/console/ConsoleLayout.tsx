@@ -85,7 +85,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
   // Derive logical frame rate from active camera feed
   const getActiveCameraFps = (tool: string): number => {
-    if (tool === "CREASE_ZOOM") return 500; // 500 FPS High Speed Camera (1 frame = 2ms)
+    if (tool === "CREASE_ZOOM" || tool === "STUMP_CAM") return 500; // 500 FPS High Speed Camera (1 frame = 2ms)
     if (tool === "SUPER_SLOW_MO") return 1000; // 1000 FPS Ultra Motion (1 frame = 1ms)
     if (tool === "BOUNDARY_ZOOM") return 120; // 120 FPS High Speed (1 frame = 8.33ms)
     return 50; // Standard 50 FPS broadcast (1 frame = 20ms)

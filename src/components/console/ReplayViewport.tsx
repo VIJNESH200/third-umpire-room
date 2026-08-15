@@ -6,6 +6,7 @@ import { StumpProjectionView } from "../tools/StumpProjectionView";
 import { CreaseZoom } from "../tools/CreaseZoom";
 import { SideOnWideCreaseView } from "../tools/SideOnWideCreaseView";
 import { OverheadCreaseView } from "../tools/OverheadCreaseView";
+import { StrikerStumpCamView } from "../tools/StrikerStumpCamView";
 import { UltraEdgeWaveform } from "../tools/UltraEdgeWaveform";
 import { HotSpotIRView } from "../tools/HotSpotIRView";
 import { SuperSlowEdgeView } from "../tools/SuperSlowEdgeView";
@@ -87,6 +88,14 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
       if (activeTool === "OVERHEAD") {
         return (
           <OverheadCreaseView
+            runOut={scenario.runOut}
+            currentTimeMs={currentTimeMs}
+          />
+        );
+      }
+      if (activeTool === "STUMP_CAM") {
+        return (
+          <StrikerStumpCamView
             runOut={scenario.runOut}
             currentTimeMs={currentTimeMs}
           />
