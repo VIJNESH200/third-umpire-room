@@ -19,7 +19,7 @@ export function projectPitchToCAM10(
   worldX: number,
   worldY: number,
   worldZ: number = 0
-): { x: number; y: number; scale: number } {
+): { x: number; y: number; scale: number; depth: number; isBehindCamera: boolean } {
   // Camera world coordinates: placed 1.1m behind stumps, 1.8m on off-side, 380mm height
   const camX = -1100;
   const camY = -1800;
@@ -46,15 +46,19 @@ export function projectPitchToCAM10(
   const u = dx * rx + dy * ry + dz * rz;
   const v = dx * ux + dy * uy + dz * uz;
 
+  const nearPlane = 200;
+  const isBehindCamera = depth < nearPlane;
+  const safeDepth = Math.max(nearPlane, depth);
+
   const focal = 380;
   const centerX = 235;
   const centerY = 160;
 
-  const screenX = centerX + (u / depth) * focal;
-  const screenY = centerY - (v / depth) * focal;
-  const scale = focal / depth;
+  const screenX = centerX + (u / safeDepth) * focal;
+  const screenY = centerY - (v / safeDepth) * focal;
+  const scale = focal / safeDepth;
 
-  return { x: screenX, y: screenY, scale };
+  return { x: screenX, y: screenY, scale, depth, isBehindCamera };
 }
 
 export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
@@ -303,74 +307,78 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
           )}
 
           {/* Dynamic Ground Shadow of Bat on Turf (Z = 0) */}
-          <line
-            x1={pShadowTip.x}
-            y1={pShadowTip.y}
-            x2={pShadowHandle.x}
-            y2={pShadowHandle.y}
-            stroke="#000000"
-            strokeWidth={10 * pShadowTip.scale}
-            strokeLinecap="round"
-            opacity={isAirborne ? 0.20 : 0.60}
-          />
+          {(!pShadowTip.isBehindCamera || !pShadowHandle.isBehindCamera) && (
+            <line
+              x1={pShadowTip.x}
+              y1={pShadowTip.y}
+              x2={pShadowHandle.x}
+              y2={pShadowHandle.y}
+              stroke="#000000"
+              strokeWidth={10 * pShadowTip.scale}
+              strokeLinecap="round"
+              opacity={isAirborne ? 0.20 : 0.60}
+            />
+          )}
 
           {/* Cricket Bat Blade & Handle projected in 3D Space */}
-          <g>
-            {(() => {
-              const bladeLength = Math.hypot(pHandle.x - pTip.x, pHandle.y - pTip.y);
-              const nx = (-(pHandle.y - pTip.y) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
-              const ny = ((pHandle.x - pTip.x) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
+          {(!pTip.isBehindCamera || !pHandle.isBehindCamera) && (
+            <g>
+              {(() => {
+                const bladeLength = Math.hypot(pHandle.x - pTip.x, pHandle.y - pTip.y);
+                const nx = (-(pHandle.y - pTip.y) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
+                const ny = ((pHandle.x - pTip.x) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
 
-              // Bat shoulder is ~75% along handle path
-              const pShoulder = {
-                x: pTip.x + (pHandle.x - pTip.x) * 0.72,
-                y: pTip.y + (pHandle.y - pTip.y) * 0.72,
-              };
+                // Bat shoulder is ~75% along handle path
+                const pShoulder = {
+                  x: pTip.x + (pHandle.x - pTip.x) * 0.72,
+                  y: pTip.y + (pHandle.y - pTip.y) * 0.72,
+                };
 
-              return (
-                <>
-                  {/* Willow Blade Body */}
-                  <polygon
-                    points={`${pTip.x},${pTip.y} ${pShoulder.x + nx},${pShoulder.y + ny} ${pShoulder.x - nx},${pShoulder.y - ny}`}
-                    fill="url(#stumpWillow)"
-                    stroke="#78350f"
-                    strokeWidth="0.8"
-                  />
+                return (
+                  <>
+                    {/* Willow Blade Body */}
+                    <polygon
+                      points={`${pTip.x},${pTip.y} ${pShoulder.x + nx},${pShoulder.y + ny} ${pShoulder.x - nx},${pShoulder.y - ny}`}
+                      fill="url(#stumpWillow)"
+                      stroke="#78350f"
+                      strokeWidth="0.8"
+                    />
 
-                  {/* Protective White Toe Cap at Bat Tip */}
-                  <circle
-                    cx={pTip.x}
-                    cy={pTip.y}
-                    r={3.2 * pTip.scale}
-                    fill="#FFFFFF"
-                    stroke="#334155"
-                    strokeWidth="0.5"
-                  />
+                    {/* Protective White Toe Cap at Bat Tip */}
+                    <circle
+                      cx={pTip.x}
+                      cy={pTip.y}
+                      r={3.2 * pTip.scale}
+                      fill="#FFFFFF"
+                      stroke="#334155"
+                      strokeWidth="0.5"
+                    />
 
-                  {/* Cane Handle & Rubber Grip */}
-                  <line
-                    x1={pShoulder.x}
-                    y1={pShoulder.y}
-                    x2={pHandle.x}
-                    y2={pHandle.y}
-                    stroke="#0284C7"
-                    strokeWidth={4.5 * pTip.scale}
-                    strokeLinecap="round"
-                  />
+                    {/* Cane Handle & Rubber Grip */}
+                    <line
+                      x1={pShoulder.x}
+                      y1={pShoulder.y}
+                      x2={pHandle.x}
+                      y2={pHandle.y}
+                      stroke="#0284C7"
+                      strokeWidth={4.5 * pTip.scale}
+                      strokeLinecap="round"
+                    />
 
-                  {/* Runner Glove at Handle End */}
-                  <circle
-                    cx={pHandle.x}
-                    cy={pHandle.y}
-                    r={5.5 * pTip.scale}
-                    fill="#f8fafc"
-                    stroke="#64748b"
-                    strokeWidth="0.8"
-                  />
-                </>
-              );
-            })()}
-          </g>
+                    {/* Runner Glove at Handle End */}
+                    <circle
+                      cx={pHandle.x}
+                      cy={pHandle.y}
+                      r={5.5 * pTip.scale}
+                      fill="#f8fafc"
+                      stroke="#64748b"
+                      strokeWidth="0.8"
+                    />
+                  </>
+                );
+              })()}
+            </g>
+          )}
 
           {/* Striker Stumps Assembly in 3D (Left-side Foreground) */}
           <g>

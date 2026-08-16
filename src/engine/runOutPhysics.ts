@@ -195,7 +195,18 @@ export function solveRunOutReplayState(
 
   // Exact margin from popping crease in mm (positive = inside/safe, negative = short/out)
   // At clampedTime === timeline.bailsDislodgedMs, marginFromCreaseMm is guaranteed to equal runOut.creaseMarginMm exactly.
-  const marginFromCreaseMm = Math.round(runOut.creaseMarginMm + dtFromDislodge * slideSpeedMmPerMs);
+  let effectiveSlideDt = dtFromDislodge;
+  if (dtFromDislodge > 0) {
+    // Decelerate slide with turf friction over 400ms to a realistic settled stop
+    const slideDuration = 400;
+    if (dtFromDislodge < slideDuration) {
+      const tNorm = dtFromDislodge / slideDuration;
+      effectiveSlideDt = (tNorm - 0.5 * tNorm * tNorm) * slideDuration;
+    } else {
+      effectiveSlideDt = 0.5 * slideDuration;
+    }
+  }
+  const marginFromCreaseMm = Math.round(runOut.creaseMarginMm + effectiveSlideDt * slideSpeedMmPerMs);
   const isPastCrease = marginFromCreaseMm >= 0;
 
   // Normalized reach progress [0, 1]
