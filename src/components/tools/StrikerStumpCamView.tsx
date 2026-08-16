@@ -15,11 +15,37 @@ interface StrikerStumpCamViewProps {
  * - worldY: lateral offset across pitch (-1500mm off-side to +1500mm leg-side).
  * - worldZ: height above pitch turf (0 = turf, >0 = airborne).
  */
+export interface CAM10Projection {
+  x: number;
+  y: number;
+  scale: number;
+  depth: number;
+  isBehindCamera: boolean;
+  isValid: boolean;
+}
+
+export function getPointDepth(worldX: number, worldY: number, worldZ: number = 0): number {
+  const camX = -1100;
+  const camY = -1800;
+  const camZ = 380;
+
+  const fx = 0.797;
+  const fy = 0.592;
+  const fz = -0.115;
+
+  const dx = worldX - camX;
+  const dy = worldY - camY;
+  const dz = worldZ - camZ;
+
+  return dx * fx + dy * fy + dz * fz;
+}
+
 export function projectPitchToCAM10(
   worldX: number,
   worldY: number,
-  worldZ: number = 0
-): { x: number; y: number; scale: number; depth: number; isBehindCamera: boolean } {
+  worldZ: number = 0,
+  nearPlane: number = 200
+): CAM10Projection {
   // Camera world coordinates: placed 1.1m behind stumps, 1.8m on off-side, 380mm height
   const camX = -1100;
   const camY = -1800;
@@ -46,8 +72,8 @@ export function projectPitchToCAM10(
   const u = dx * rx + dy * ry + dz * rz;
   const v = dx * ux + dy * uy + dz * uz;
 
-  const nearPlane = 200;
   const isBehindCamera = depth < nearPlane;
+  // If behind near plane, clamp to safe near plane to prevent negative depth inversion
   const safeDepth = Math.max(nearPlane, depth);
 
   const focal = 380;
@@ -58,7 +84,69 @@ export function projectPitchToCAM10(
   const screenY = centerY - (v / safeDepth) * focal;
   const scale = focal / safeDepth;
 
-  return { x: screenX, y: screenY, scale, depth, isBehindCamera };
+  // Safe viewport bounds
+  const isWithinBounds = screenX >= -300 && screenX <= 800 && screenY >= -300 && screenY <= 600;
+  const isValid = !isBehindCamera && isWithinBounds;
+
+  return { x: screenX, y: screenY, scale, depth, isBehindCamera, isValid };
+}
+
+/**
+ * 3D Line Segment Clipper against the camera near-plane.
+ * If one endpoint is behind the camera near plane, it is clipped along the 3D ray to depth = nearPlane.
+ */
+export function clipAndProjectSegment(
+  p1: { x: number; y: number; z: number },
+  p2: { x: number; y: number; z: number },
+  nearPlane: number = 200
+): {
+  visible: boolean;
+  p1: CAM10Projection;
+  p2: CAM10Projection;
+} {
+  const d1 = getPointDepth(p1.x, p1.y, p1.z);
+  const d2 = getPointDepth(p2.x, p2.y, p2.z);
+
+  // If both behind near plane, completely invisible
+  if (d1 < nearPlane && d2 < nearPlane) {
+    return {
+      visible: false,
+      p1: projectPitchToCAM10(p1.x, p1.y, p1.z, nearPlane),
+      p2: projectPitchToCAM10(p2.x, p2.y, p2.z, nearPlane),
+    };
+  }
+
+  let clippedP1 = { ...p1 };
+  let clippedP2 = { ...p2 };
+
+  // If p1 is behind near plane, clip along segment to nearPlane
+  if (d1 < nearPlane) {
+    const t = (nearPlane - d1) / (d2 - d1);
+    clippedP1 = {
+      x: p1.x + t * (p2.x - p1.x),
+      y: p1.y + t * (p2.y - p1.y),
+      z: p1.z + t * (p2.z - p1.z),
+    };
+  }
+
+  // If p2 is behind near plane, clip along segment to nearPlane
+  if (d2 < nearPlane) {
+    const t = (nearPlane - d2) / (d1 - d2);
+    clippedP2 = {
+      x: p2.x + t * (p1.x - p2.x),
+      y: p2.y + t * (p1.y - p2.y),
+      z: p2.z + t * (p1.z - p2.z),
+    };
+  }
+
+  const proj1 = projectPitchToCAM10(clippedP1.x, clippedP1.y, clippedP1.z, nearPlane);
+  const proj2 = projectPitchToCAM10(clippedP2.x, clippedP2.y, clippedP2.z, nearPlane);
+
+  return {
+    visible: true,
+    p1: proj1,
+    p2: proj2,
+  };
 }
 
 export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
@@ -97,26 +185,43 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
   const legStumpBase = projectPitchToCAM10(0, 114, 0);
   const legStumpTop = projectPitchToCAM10(0, 114, 711);
 
-  // Project Bat Tip, Handle, and Ground Shadow
-  const pTip = projectPitchToCAM10(
-    state.bat.tipWorldX,
-    state.bat.tipWorldY,
-    state.bat.tipWorldZ
-  );
-  const pHandle = projectPitchToCAM10(
-    state.bat.handleWorldX,
-    state.bat.handleWorldY,
-    state.bat.handleWorldZ
+  // Project Bat Tip & Handle with 3D Near-Plane Frustum Clipping
+  const batSegment = clipAndProjectSegment(
+    {
+      x: state.bat.tipWorldX,
+      y: state.bat.tipWorldY,
+      z: state.bat.tipWorldZ,
+    },
+    {
+      x: state.bat.handleWorldX,
+      y: state.bat.handleWorldY,
+      z: state.bat.handleWorldZ,
+    }
   );
 
-  const pShadowTip = projectPitchToCAM10(
-    state.bat.tipWorldX,
-    state.bat.tipWorldY,
-    0
+  // Project Bat Shadow with 3D Near-Plane Frustum Clipping
+  const shadowSegment = clipAndProjectSegment(
+    {
+      x: state.bat.tipWorldX,
+      y: state.bat.tipWorldY,
+      z: 0,
+    },
+    {
+      x: state.bat.handleWorldX,
+      y: state.bat.handleWorldY,
+      z: 0,
+    }
   );
-  const pShadowHandle = projectPitchToCAM10(
-    state.bat.handleWorldX,
-    state.bat.handleWorldY,
+
+  // Project Ball and Ball Shadow in 3D
+  const ballProj = projectPitchToCAM10(
+    state.ball.worldX,
+    state.ball.worldY,
+    state.ball.worldZ
+  );
+  const ballShadowProj = projectPitchToCAM10(
+    state.ball.worldX,
+    state.ball.worldY,
     0
   );
 
@@ -156,30 +261,34 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
     b2RotRad = -tFlight2 * 1.55; // ~89 degrees tumble
   }
 
-  // Compute 3D endpoints for Bail 1 (Off-Middle)
+  // Compute 3D endpoints & clipping for Bail 1 (Off-Middle)
   const halfW = 52;
-  const b1Left = projectPitchToCAM10(
-    b1WorldX,
-    b1WorldY - halfW * Math.cos(b1RotRad),
-    b1WorldZ - halfW * Math.sin(b1RotRad)
-  );
-  const b1Right = projectPitchToCAM10(
-    b1WorldX,
-    b1WorldY + halfW * Math.cos(b1RotRad),
-    b1WorldZ + halfW * Math.sin(b1RotRad)
+  const b1Segment = clipAndProjectSegment(
+    {
+      x: b1WorldX,
+      y: b1WorldY - halfW * Math.cos(b1RotRad),
+      z: b1WorldZ - halfW * Math.sin(b1RotRad),
+    },
+    {
+      x: b1WorldX,
+      y: b1WorldY + halfW * Math.cos(b1RotRad),
+      z: b1WorldZ + halfW * Math.sin(b1RotRad),
+    }
   );
   const b1Center = projectPitchToCAM10(b1WorldX, b1WorldY, b1WorldZ);
 
-  // Compute 3D endpoints for Bail 2 (Middle-Leg)
-  const b2Left = projectPitchToCAM10(
-    b2WorldX,
-    b2WorldY - halfW * Math.cos(b2RotRad),
-    b2WorldZ - halfW * Math.sin(b2RotRad)
-  );
-  const b2Right = projectPitchToCAM10(
-    b2WorldX,
-    b2WorldY + halfW * Math.cos(b2RotRad),
-    b2WorldZ + halfW * Math.sin(b2RotRad)
+  // Compute 3D endpoints & clipping for Bail 2 (Middle-Leg)
+  const b2Segment = clipAndProjectSegment(
+    {
+      x: b2WorldX,
+      y: b2WorldY - halfW * Math.cos(b2RotRad),
+      z: b2WorldZ - halfW * Math.sin(b2RotRad),
+    },
+    {
+      x: b2WorldX,
+      y: b2WorldY + halfW * Math.cos(b2RotRad),
+      z: b2WorldZ + halfW * Math.sin(b2RotRad),
+    }
   );
   const b2Center = projectPitchToCAM10(b2WorldX, b2WorldY, b2WorldZ);
 
@@ -306,24 +415,26 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
             />
           )}
 
-          {/* Dynamic Ground Shadow of Bat on Turf (Z = 0) */}
-          {(!pShadowTip.isBehindCamera || !pShadowHandle.isBehindCamera) && (
+          {/* Dynamic Ground Shadow of Bat on Turf (Z = 0) with Frustum Protection */}
+          {shadowSegment.visible && (
             <line
-              x1={pShadowTip.x}
-              y1={pShadowTip.y}
-              x2={pShadowHandle.x}
-              y2={pShadowHandle.y}
+              x1={shadowSegment.p1.x}
+              y1={shadowSegment.p1.y}
+              x2={shadowSegment.p2.x}
+              y2={shadowSegment.p2.y}
               stroke="#000000"
-              strokeWidth={10 * pShadowTip.scale}
+              strokeWidth={10 * shadowSegment.p1.scale}
               strokeLinecap="round"
               opacity={isAirborne ? 0.20 : 0.60}
             />
           )}
 
-          {/* Cricket Bat Blade & Handle projected in 3D Space */}
-          {(!pTip.isBehindCamera || !pHandle.isBehindCamera) && (
+          {/* Cricket Bat Blade & Handle projected in 3D Space with Frustum Protection */}
+          {batSegment.visible && (
             <g>
               {(() => {
+                const pTip = batSegment.p1;
+                const pHandle = batSegment.p2;
                 const bladeLength = Math.hypot(pHandle.x - pTip.x, pHandle.y - pTip.y);
                 const nx = (-(pHandle.y - pTip.y) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
                 const ny = ((pHandle.x - pTip.x) / Math.max(1, bladeLength)) * (6.5 * pTip.scale);
@@ -380,6 +491,49 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
             </g>
           )}
 
+          {/* Incoming Ball & Ball Shadow in 3D */}
+          {ballShadowProj.isValid && (
+            <ellipse
+              cx={ballShadowProj.x}
+              cy={ballShadowProj.y}
+              rx={6 * ballShadowProj.scale}
+              ry={2.5 * ballShadowProj.scale}
+              fill="rgba(0,0,0,0.5)"
+            />
+          )}
+          {ballProj.isValid && (
+            <g>
+              {/* Ball Core */}
+              <circle
+                cx={ballProj.x}
+                cy={ballProj.y}
+                r={6.5 * ballProj.scale}
+                fill="#DC2626"
+                stroke="#991B1B"
+                strokeWidth="0.8"
+              />
+              {/* Ball Specular Highlight */}
+              <circle
+                cx={ballProj.x - 2 * ballProj.scale}
+                cy={ballProj.y - 2 * ballProj.scale}
+                r={2 * ballProj.scale}
+                fill="#FFFFFF"
+                opacity={0.6}
+              />
+              {/* Ball Seam Line */}
+              <line
+                x1={ballProj.x - 5 * ballProj.scale}
+                y1={ballProj.y + 1 * ballProj.scale}
+                x2={ballProj.x + 5 * ballProj.scale}
+                y2={ballProj.y - 1 * ballProj.scale}
+                stroke="#FFFFFF"
+                strokeWidth="0.8"
+                strokeDasharray="1.5 1"
+                opacity={0.7}
+              />
+            </g>
+          )}
+
           {/* Striker Stumps Assembly in 3D (Left-side Foreground) */}
           <g>
             {/* Stump Base Shadow */}
@@ -398,113 +552,127 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
             />
 
             {/* Off Stump */}
-            <line
-              x1={offStumpBase.x}
-              y1={offStumpBase.y}
-              x2={offStumpTop.x}
-              y2={offStumpTop.y}
-              stroke="#cbd5e1"
-              strokeWidth={7 * offStumpBase.scale}
-              strokeLinecap="round"
-            />
+            {offStumpBase.isValid && offStumpTop.isValid && (
+              <line
+                x1={offStumpBase.x}
+                y1={offStumpBase.y}
+                x2={offStumpTop.x}
+                y2={offStumpTop.y}
+                stroke="#cbd5e1"
+                strokeWidth={7 * offStumpBase.scale}
+                strokeLinecap="round"
+              />
+            )}
 
             {/* Middle Stump */}
-            <line
-              x1={midStumpBase.x}
-              y1={midStumpBase.y}
-              x2={midStumpTop.x}
-              y2={midStumpTop.y}
-              stroke="#e2e8f0"
-              strokeWidth={7.5 * midStumpBase.scale}
-              strokeLinecap="round"
-            />
+            {midStumpBase.isValid && midStumpTop.isValid && (
+              <line
+                x1={midStumpBase.x}
+                y1={midStumpBase.y}
+                x2={midStumpTop.x}
+                y2={midStumpTop.y}
+                stroke="#e2e8f0"
+                strokeWidth={7.5 * midStumpBase.scale}
+                strokeLinecap="round"
+              />
+            )}
 
             {/* Leg Stump */}
-            <line
-              x1={legStumpBase.x}
-              y1={legStumpBase.y}
-              x2={legStumpTop.x}
-              y2={legStumpTop.y}
-              stroke="#cbd5e1"
-              strokeWidth={7 * legStumpBase.scale}
-              strokeLinecap="round"
-            />
+            {legStumpBase.isValid && legStumpTop.isValid && (
+              <line
+                x1={legStumpBase.x}
+                y1={legStumpBase.y}
+                x2={legStumpTop.x}
+                y2={legStumpTop.y}
+                stroke="#cbd5e1"
+                strokeWidth={7 * legStumpBase.scale}
+                strokeLinecap="round"
+              />
+            )}
 
             {/* Bail 1 (Off-Middle Bail) with Zing LED & Separation */}
-            <g>
-              <line
-                x1={b1Left.x}
-                y1={b1Left.y}
-                x2={b1Right.x}
-                y2={b1Right.y}
-                stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
-                strokeWidth={4.5 * b1Center.scale}
-                strokeLinecap="round"
-              />
-              {bailsDislodged ? (
-                <>
-                  <circle
-                    cx={b1Center.x}
-                    cy={b1Center.y}
-                    r={5.5 * b1Center.scale}
-                    fill="#EF4444"
-                    opacity={0.85}
-                  />
-                  <circle
-                    cx={b1Center.x}
-                    cy={b1Center.y}
-                    r={2.5 * b1Center.scale}
-                    fill="#FFFFFF"
-                  />
-                </>
-              ) : (
-                <circle
-                  cx={b1Center.x}
-                  cy={b1Center.y}
-                  r={2.0 * b1Center.scale}
-                  fill="#FDE68A"
-                  opacity={0.7}
+            {b1Segment.visible && (
+              <g>
+                <line
+                  x1={b1Segment.p1.x}
+                  y1={b1Segment.p1.y}
+                  x2={b1Segment.p2.x}
+                  y2={b1Segment.p2.y}
+                  stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
+                  strokeWidth={4.5 * b1Center.scale}
+                  strokeLinecap="round"
                 />
-              )}
-            </g>
+                {b1Center.isValid && (
+                  bailsDislodged ? (
+                    <>
+                      <circle
+                        cx={b1Center.x}
+                        cy={b1Center.y}
+                        r={5.5 * b1Center.scale}
+                        fill="#EF4444"
+                        opacity={0.85}
+                      />
+                      <circle
+                        cx={b1Center.x}
+                        cy={b1Center.y}
+                        r={2.5 * b1Center.scale}
+                        fill="#FFFFFF"
+                      />
+                    </>
+                  ) : (
+                    <circle
+                      cx={b1Center.x}
+                      cy={b1Center.y}
+                      r={2.0 * b1Center.scale}
+                      fill="#FDE68A"
+                      opacity={0.7}
+                    />
+                  )
+                )}
+              </g>
+            )}
 
             {/* Bail 2 (Middle-Leg Bail) with Zing LED & Separation */}
-            <g>
-              <line
-                x1={b2Left.x}
-                y1={b2Left.y}
-                x2={b2Right.x}
-                y2={b2Right.y}
-                stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
-                strokeWidth={4.5 * b2Center.scale}
-                strokeLinecap="round"
-              />
-              {bailsDislodged ? (
-                <>
-                  <circle
-                    cx={b2Center.x}
-                    cy={b2Center.y}
-                    r={5.5 * b2Center.scale}
-                    fill="#EF4444"
-                    opacity={0.85}
-                  />
-                  <circle
-                    cx={b2Center.x}
-                    cy={b2Center.y}
-                    r={2.5 * b2Center.scale}
-                    fill="#FFFFFF"
-                  />
-                </>
-              ) : (
-                <circle
-                  cx={b2Center.x}
-                  cy={b2Center.y}
-                  r={2.0 * b2Center.scale}
-                  fill="#FDE68A"
-                  opacity={0.7}
+            {b2Segment.visible && (
+              <g>
+                <line
+                  x1={b2Segment.p1.x}
+                  y1={b2Segment.p1.y}
+                  x2={b2Segment.p2.x}
+                  y2={b2Segment.p2.y}
+                  stroke={bailsDislodged ? "#EF4444" : "#F59E0B"}
+                  strokeWidth={4.5 * b2Center.scale}
+                  strokeLinecap="round"
                 />
-              )}
-            </g>
+                {b2Center.isValid && (
+                  bailsDislodged ? (
+                    <>
+                      <circle
+                        cx={b2Center.x}
+                        cy={b2Center.y}
+                        r={5.5 * b2Center.scale}
+                        fill="#EF4444"
+                        opacity={0.85}
+                      />
+                      <circle
+                        cx={b2Center.x}
+                        cy={b2Center.y}
+                        r={2.5 * b2Center.scale}
+                        fill="#FFFFFF"
+                      />
+                    </>
+                  ) : (
+                    <circle
+                      cx={b2Center.x}
+                      cy={b2Center.y}
+                      r={2.0 * b2Center.scale}
+                      fill="#FDE68A"
+                      opacity={0.7}
+                    />
+                  )
+                )}
+              </g>
+            )}
           </g>
         </svg>
 

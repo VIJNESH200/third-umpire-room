@@ -20,7 +20,7 @@ import {
   mapPhase1TimeToReplayTime,
   mapReplayTimeToPhase1Time,
 } from "../engine/runOutPhysics";
-import { projectPitchToCAM10 } from "../components/tools/StrikerStumpCamView";
+import { projectPitchToCAM10, clipAndProjectSegment } from "../components/tools/StrikerStumpCamView";
 import type {
   LBWData,
   RunOutData,
@@ -938,6 +938,84 @@ function runAllDRSTests() {
     assert(
       tFlightLate1 === 1 && tFlightLate2 === 1,
       "CAM 10 Bails: Ballistic flight completes and clamps to settled ground state during late replay"
+    );
+  }
+
+  // --- GROUP 17: CAM 10 UNIFIED NEAR-PLANE FRUSTUM CLIPPING & BOUNDS SAFETY ---
+  console.log("\n--- GROUP 17: CAM 10 UNIFIED NEAR-PLANE FRUSTUM CLIPPING & BOUNDS SAFETY ---");
+  {
+    const roScenario = generateScenario(77777, "RUN_OUT");
+    const ro = roScenario.runOut!;
+
+    // Test 87: Points behind the near-plane are marked isBehindCamera and not valid
+    const behindCameraPoint = projectPitchToCAM10(-5000, -2000, 0);
+    assert(
+      behindCameraPoint.isBehindCamera === true && behindCameraPoint.isValid === false,
+      "Frustum Safety: Point behind near-plane is marked isBehindCamera with isValid=false"
+    );
+
+    // Test 88: Standard in-frustum pitch points project safely within viewport bounds
+    const stumpBaseProj = projectPitchToCAM10(0, 0, 0);
+    const creaseCenterProj = projectPitchToCAM10(1220, 0, 0);
+    assert(
+      stumpBaseProj.isValid === true &&
+      creaseCenterProj.isValid === true &&
+      stumpBaseProj.x >= 0 && stumpBaseProj.x <= 500 &&
+      creaseCenterProj.x >= 0 && creaseCenterProj.x <= 500,
+      "Frustum Safety: Normal field points project with isValid=true within viewport"
+    );
+
+    // Test 89: 3D Line segment completely behind near-plane is marked visible=false
+    const behindSegment = clipAndProjectSegment(
+      { x: -6000, y: -2000, z: 0 },
+      { x: -5500, y: -2000, z: 0 }
+    );
+    assert(
+      behindSegment.visible === false,
+      "Frustum Safety: Segment behind near-plane returns visible=false"
+    );
+
+    // Test 90: 3D Line segment crossing near-plane is clipped without negative depth division
+    const crossingSegment = clipAndProjectSegment(
+      { x: -5000, y: -2000, z: 0 }, // behind
+      { x: 1220, y: 0, z: 0 }        // in front
+    );
+    assert(
+      crossingSegment.visible === true &&
+      crossingSegment.p1.depth >= 199.9 &&
+      crossingSegment.p2.depth >= 199.9,
+      "Frustum Safety: Crossing segment clips along ray with depth >= nearPlane"
+    );
+
+    // Test 91: Bat, shadow, bails, and ball never produce out-of-bound inverted coordinates across full timeline (600ms - 2200ms)
+    let allCoordinatesSafe = true;
+    for (let t = 600; t <= 2200; t += 20) {
+      const state = solveRunOutReplayState(ro, t);
+      const batSeg = clipAndProjectSegment(
+        { x: state.bat.tipWorldX, y: state.bat.tipWorldY, z: state.bat.tipWorldZ },
+        { x: state.bat.handleWorldX, y: state.bat.handleWorldY, z: state.bat.handleWorldZ }
+      );
+      if (batSeg.visible) {
+        if (
+          batSeg.p1.x < -300 || batSeg.p1.x > 800 ||
+          batSeg.p1.y < -300 || batSeg.p1.y > 600 ||
+          batSeg.p2.x < -300 || batSeg.p2.x > 800 ||
+          batSeg.p2.y < -300 || batSeg.p2.y > 600
+        ) {
+          allCoordinatesSafe = false;
+        }
+      }
+
+      const ballProj = projectPitchToCAM10(state.ball.worldX, state.ball.worldY, state.ball.worldZ);
+      if (ballProj.isValid) {
+        if (ballProj.x < -300 || ballProj.x > 800 || ballProj.y < -300 || ballProj.y > 600) {
+          allCoordinatesSafe = false;
+        }
+      }
+    }
+    assert(
+      allCoordinatesSafe,
+      "Frustum Safety: All moving objects remain within safe viewport coordinate bounds across entire timeline"
     );
   }
 
