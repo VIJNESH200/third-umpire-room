@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type { RunOutData } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
+import { projectToCAM07 } from "../../engine/cameraProjections";
 import { Crosshair } from "lucide-react";
 
 interface OverheadCreaseViewProps {
@@ -23,9 +24,9 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
   // Crease is at X = 250
   const creaseX = 250;
 
-  // Bat tip position projected from canonical margin in mm (positive = inside crease / left of crease line)
-  const pxPerMm = 0.52;
-  const batTipX = creaseX - state.bat.marginFromCreaseMm * pxPerMm;
+  // Project bat tip from canonical world-space through CAM 07 overhead camera
+  const batTipProj = projectToCAM07(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+  const batTipX = batTipProj.screenX;
   const isPastCrease = state.bat.isPastCrease;
 
   // Stumps at X = 130 (Top-down circles)

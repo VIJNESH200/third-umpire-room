@@ -12,10 +12,12 @@
 import type { RunOutData } from "../types/scenario";
 import {
   RunnerKinematics,
+  KeeperKinematics,
   easeInOutQuad,
   easeOutCubic,
   lerp,
   clamp,
+  solveRunOutKeeperKinematics,
 } from "../components/instinct/actorRigs";
 
 export interface RunOutEventTimeline {
@@ -89,6 +91,10 @@ export interface StumpsPhysicsState {
 export interface KeeperPhysicsState {
   gatherProgress: number; // 0.0 (anticipating) to 1.0 (whips bails off)
   isGlovesAtStumps: boolean;
+  worldX: number; // mm along pitch (negative = behind stumps)
+  worldY: number; // mm lateral (negative = off-side)
+  worldZ: number; // mm height above turf
+  kinematics: KeeperKinematics;
 }
 
 export interface RunOutReplayState {
@@ -350,6 +356,15 @@ export function solveRunOutReplayState(
   const gatherDuration = timeline.bailsDislodgedMs - timeline.throwReleaseMs + 100;
   const gatherProgress = clamp((clampedTime - timeline.throwReleaseMs) / Math.max(1, gatherDuration), 0, 1);
 
+  // Keeper world-space position (behind stumps, off-side)
+  // Starts crouched at (-400, -300, 0), shifts towards stumps as gather progresses
+  const keeperWorldX = lerp(-400, -150, easeInOutQuad(gatherProgress));
+  const keeperWorldY = lerp(-300, -200, easeInOutQuad(gatherProgress));
+  const keeperWorldZ = 0; // keeper stays on turf
+
+  // Canonical keeper kinematics driven by gatherProgress
+  const keeperKinematics = solveRunOutKeeperKinematics(gatherProgress, bailsContact);
+
   return {
     currentTimeMs: clampedTime,
     timeline,
@@ -398,6 +413,10 @@ export function solveRunOutReplayState(
     keeper: {
       gatherProgress,
       isGlovesAtStumps: bailsContact,
+      worldX: keeperWorldX,
+      worldY: keeperWorldY,
+      worldZ: keeperWorldZ,
+      kinematics: keeperKinematics,
     },
   };
 }

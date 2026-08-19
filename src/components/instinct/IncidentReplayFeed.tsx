@@ -5,6 +5,7 @@ import {
   mapPhase1TimeToReplayTime,
   solveRunOutReplayState,
 } from "../../engine/runOutPhysics";
+import { projectToPhase1 } from "../../engine/cameraProjections";
 import {
   lerp,
   clamp,
@@ -553,33 +554,56 @@ function renderRunOutBroadcast(
     isZing: true,
   });
 
-  // --- 5. Wicketkeeper at Stumps Gathering the Throw ---
-  const keeperK = solveCaughtBehindKeeperKinematics(p * 0.6, false);
-  drawArticulatedWicketkeeper(
-    ctx,
-    { x: stumpsX - 26, y: stumpsBaseY + 6, scale: 1.05, facing: "RIGHT" },
-    keeperK
-  );
+  // --- 5. Wicketkeeper at Stumps (Driven by canonical state.keeper) ---
+  if (state) {
+    const keeperProj = projectToPhase1(state.keeper.worldX, state.keeper.worldY, state.keeper.worldZ, w, h);
+    drawArticulatedWicketkeeper(
+      ctx,
+      { x: keeperProj.screenX, y: keeperProj.screenY, scale: 1.05, facing: "RIGHT" },
+      state.keeper.kinematics
+    );
+  } else {
+    const keeperK = solveCaughtBehindKeeperKinematics(p * 0.6, false);
+    drawArticulatedWicketkeeper(
+      ctx,
+      { x: stumpsX - 26, y: stumpsBaseY + 6, scale: 1.05, facing: "RIGHT" },
+      keeperK
+    );
+  }
 
-  // --- 6. Incoming Throw Trajectory from Deep (Driven by canonical state.ball) ---
+  // --- 6. Incoming Throw Trajectory from Deep (Driven by canonical state.ball world coordinates) ---
   const ballInFlight = state ? state.ball.isInFlight : p < 0.62;
-  if (ballInFlight) {
-    const tThrow = state ? state.ball.throwProgress : p / 0.62;
+  if (ballInFlight && state) {
+    const ballProj = projectToPhase1(state.ball.worldX, state.ball.worldY, state.ball.worldZ, w, h);
+
+    // Previous frame for motion trail
+    const prevState = ro ? solveRunOutReplayState(ro, canonicalTimeMs - 20) : null;
+    const prevBallProj = prevState
+      ? projectToPhase1(prevState.ball.worldX, prevState.ball.worldY, prevState.ball.worldZ, w, h)
+      : { screenX: ballProj.screenX + 12, screenY: ballProj.screenY - 4, scale: 1 };
+
+    drawCricketBall(ctx, ballProj.screenX, ballProj.screenY, {
+      radius: 4.8,
+      seamAngleRad: p * Math.PI * 10,
+      shadowY: Math.min(pitchTopY + 40, ballProj.screenY + 24),
+      motionTrail: state.ball.throwProgress > 0.05,
+      prevX: prevBallProj.screenX,
+      prevY: prevBallProj.screenY,
+    });
+  } else if (ballInFlight) {
+    // Fallback when state is null
+    const tThrow = p / 0.62;
     const originX = w * 0.98;
     const originY = h * 0.18;
     const targetX = stumpsX + 4;
     const targetY = stumpsBaseY - 16;
-
-    // Parabolic arc for throw
     const throwX = originX + (targetX - originX) * tThrow;
     const arcHeight = Math.sin(tThrow * Math.PI) * 22;
     const throwY = originY + (targetY - originY) * tThrow - arcHeight;
-
     const prevT = Math.max(0, tThrow - 0.04);
     const prevArc = Math.sin(prevT * Math.PI) * 22;
     const prevThrowX = originX + (targetX - originX) * prevT;
     const prevThrowY = originY + (targetY - originY) * prevT - prevArc;
-
     drawCricketBall(ctx, throwX, throwY, {
       radius: 4.8,
       seamAngleRad: p * Math.PI * 10,
@@ -590,14 +614,14 @@ function renderRunOutBroadcast(
     });
   }
 
-  // --- 7. Single Coherent Athlete Runner Kinematics & Sliding Reach (Driven by canonical state.runner) ---
+  // --- 7. Single Coherent Athlete Runner (Driven by canonical state.runner world coordinates) ---
   let runnerX: number;
   let runnerK = state?.runner.kinematics;
 
   if (state && runnerK) {
-    const marginPx = Math.round(state.bat.marginFromCreaseMm * 0.45);
-    const reachOffset = runnerK.diveProgress > 0 ? 65 : 35;
-    runnerX = creaseX - marginPx + reachOffset;
+    // Project runner world-space position through Phase 1 camera
+    const runnerProj = projectToPhase1(state.runner.worldX, state.runner.worldY, state.runner.worldZ, w, h);
+    runnerX = runnerProj.screenX;
   } else {
     const ev = scenario.initialEvidence?.runOut;
     const marginPx = ev?.visualMarginPixels ?? (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);

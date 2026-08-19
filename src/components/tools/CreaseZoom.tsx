@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type { RunOutData } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
+import { projectToCAM02 } from "../../engine/cameraProjections";
 import { ZoomIn, Crosshair, Zap } from "lucide-react";
 
 interface CreaseZoomProps {
@@ -25,10 +26,9 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
   const creaseX = 250;
   const stumpsX = 160;
 
-  // Project bat tip from canonical margin in mm (positive = inside crease / left of crease line)
-  // 1 mm physical margin ≈ 0.52 pixels in this close-up zoom lens
-  const pxPerMm = 0.52;
-  const batTipX = creaseX - state.bat.marginFromCreaseMm * pxPerMm;
+  // Project bat tip and handle from canonical world-space through CAM 02 camera
+  const batTipProj = projectToCAM02(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+  const batTipX = batTipProj.screenX;
 
   // Project bat altitude from canonical state (0 = grounded)
   const batAltitude = state.bat.tipAltitudeMm * 0.85;

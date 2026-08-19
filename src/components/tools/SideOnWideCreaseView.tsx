@@ -1,6 +1,7 @@
 import React from "react";
 import type { RunOutData } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
+import { projectToCAM01 } from "../../engine/cameraProjections";
 
 interface SideOnWideCreaseViewProps {
   runOut: RunOutData;
@@ -17,12 +18,14 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
   // Timing events from canonical state
   const isBailsDislodged = state.stumps.bailsSeparating;
 
-  // Batsman sprinting/diving across pitch (from right towards crease X=180)
-  const batterX = 460 - state.runner.runProgress * 320;
+  // Project runner world-space position through CAM 01 camera
+  const runnerProj = projectToCAM01(state.runner.worldX, state.runner.worldY, state.runner.worldZ);
+  const batterX = runnerProj.screenX;
 
-  // Incoming throw ball from deep towards stumps at X=120, Y=210
-  const throwBallX = 30 + state.ball.throwProgress * 90;
-  const throwBallY = 60 + state.ball.throwProgress * 150;
+  // Project ball world-space position through CAM 01 camera
+  const ballProj = projectToCAM01(state.ball.worldX, state.ball.worldY, state.ball.worldZ);
+  const throwBallX = ballProj.screenX;
+  const throwBallY = ballProj.screenY;
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 

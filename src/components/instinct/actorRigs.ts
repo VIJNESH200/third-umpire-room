@@ -518,6 +518,68 @@ export function solveRunOutRunnerKinematics(
 }
 
 /**
+ * Solves canonical wicketkeeper kinematics for Run-Out / direct hit scenarios.
+ * Driven by gatherProgress from the canonical Run-Out physics timeline.
+ *
+ * The keeper crouches behind the stumps anticipating the throw,
+ * rises to collect the ball, and whips the bails off at the stumps.
+ *
+ * gatherProgress: 0.0 (anticipating) → 0.5 (gathering throw) → 1.0 (bails whipped off / appeal)
+ */
+export function solveRunOutKeeperKinematics(
+  gatherProgress: number,
+  isGlovesAtStumps: boolean
+): KeeperKinematics {
+  const gp = clamp(gatherProgress, 0, 1);
+
+  let crouchElevation = 0.0;
+  let gloveX = 10;
+  let gloveY = -14;
+  let isGlovesOpen = true;
+
+  if (gp < 0.3) {
+    // Phase 1: Deep crouch, anticipating throw — gloves low, open, ready
+    crouchElevation = 0.0;
+    gloveX = 10;
+    gloveY = -14;
+    isGlovesOpen = true;
+  } else if (gp < 0.6) {
+    // Phase 2: Rising to collect throw — gloves move towards stumps
+    const t = easeInOutQuad((gp - 0.3) / 0.3);
+    crouchElevation = lerp(0.0, 0.15, t);
+    gloveX = lerp(10, 20, t);
+    gloveY = lerp(-14, -20, t);
+    isGlovesOpen = true;
+  } else if (gp < 0.85) {
+    // Phase 3: Collecting and whipping bails — gloves close on ball, move to stumps
+    const t = easeOutCubic((gp - 0.6) / 0.25);
+    crouchElevation = lerp(0.15, 0.3, t);
+    gloveX = lerp(20, 16, t);
+    gloveY = lerp(-20, -18, t);
+    isGlovesOpen = false;
+  } else {
+    // Phase 4: Appeal — keeper rises with gloves up
+    const t = easeInOutQuad((gp - 0.85) / 0.15);
+    crouchElevation = lerp(0.3, 1.0, t);
+    gloveX = lerp(16, 0, t);
+    gloveY = lerp(-18, -48, t);
+    isGlovesOpen = false;
+  }
+
+  const torsoAngleRad = lerp(0.15, -0.1, crouchElevation);
+  const headTiltRad = lerp(0.1, -0.2, crouchElevation);
+
+  return {
+    crouchElevation,
+    torsoAngleRad,
+    headTiltRad,
+    gloveX,
+    gloveY,
+    isGlovesOpen,
+  };
+}
+
+/**
  * Solves continuous batter kinematics for Stumping.
  * Batter steps out -> Misses ball -> Desperate back-foot drag towards crease.
  */

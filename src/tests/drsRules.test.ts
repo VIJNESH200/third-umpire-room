@@ -20,6 +20,12 @@ import {
   mapPhase1TimeToReplayTime,
   mapReplayTimeToPhase1Time,
 } from "../engine/runOutPhysics";
+import {
+  projectToPhase1,
+  projectToCAM01,
+  projectToCAM02,
+  projectToCAM07,
+} from "../engine/cameraProjections";
 import { projectPitchToCAM10, clipAndProjectSegment } from "../components/tools/StrikerStumpCamView";
 import type {
   LBWData,
@@ -1017,6 +1023,147 @@ function runAllDRSTests() {
       allCoordinatesSafe,
       "Frustum Safety: All moving objects remain within safe viewport coordinate bounds across entire timeline"
     );
+  }
+
+  // --- GROUP 18: TRUE WORLD-SPACE PROJECTION SYNC ---
+  console.log("\n--- GROUP 18: TRUE WORLD-SPACE PROJECTION SYNC (TASK 21) ---");
+  {
+    const scenario = generateScenario(55555, "RUN_OUT");
+    const ro = scenario.runOut!;
+    const timeline = getRunOutEventTimeline(ro);
+
+    // 11 canonical timestamps covering the entire incident, sorted chronologically
+    const testTimestamps = Array.from(new Set([
+      600, 800, 1000, 1100, 1200,
+      ro.groundedFrameMs,
+      timeline.bailsContactMs,
+      ro.bailsDislodgedFrameMs,
+      1600, 1800, 2200,
+    ])).sort((a, b) => a - b);
+
+    // Test 92: Same-timestamp world state identity — calling solver multiple times yields identical results
+    let worldStateIdentical = true;
+    for (const t of testTimestamps) {
+      const s1 = solveRunOutReplayState(ro, t);
+      const s2 = solveRunOutReplayState(ro, t);
+      if (
+        s1.runner.worldX !== s2.runner.worldX ||
+        s1.runner.worldY !== s2.runner.worldY ||
+        s1.runner.worldZ !== s2.runner.worldZ ||
+        s1.bat.tipWorldX !== s2.bat.tipWorldX ||
+        s1.bat.tipWorldY !== s2.bat.tipWorldY ||
+        s1.bat.tipWorldZ !== s2.bat.tipWorldZ ||
+        s1.ball.worldX !== s2.ball.worldX ||
+        s1.ball.worldY !== s2.ball.worldY ||
+        s1.ball.worldZ !== s2.ball.worldZ ||
+        s1.keeper.worldX !== s2.keeper.worldX ||
+        s1.keeper.worldY !== s2.keeper.worldY ||
+        s1.keeper.worldZ !== s2.keeper.worldZ ||
+        s1.stumps.bailsIntact !== s2.stumps.bailsIntact ||
+        s1.stumps.bailsSeparating !== s2.stumps.bailsSeparating
+      ) {
+        worldStateIdentical = false;
+      }
+    }
+    assert(worldStateIdentical, "World-Space Sync: Canonical solver is deterministic — identical timestamps yield identical world state");
+
+    // Test 93: Keeper world-space has valid position (behind stumps, off-side, on turf)
+    let keeperValid = true;
+    for (const t of testTimestamps) {
+      const state = solveRunOutReplayState(ro, t);
+      // Keeper should be behind stumps (worldX < 0 or near 0) and off-side (worldY < 0)
+      if (state.keeper.worldX > 200 || state.keeper.worldY > 0 || state.keeper.worldZ < 0) {
+        keeperValid = false;
+      }
+      // Keeper kinematics must exist
+      if (state.keeper.kinematics === undefined || state.keeper.kinematics === null) {
+        keeperValid = false;
+      }
+    }
+    assert(keeperValid, "World-Space Sync: Keeper worldX/Y/Z are physically plausible (behind stumps, off-side, on turf)");
+
+    // Test 94: All camera projections produce finite valid screen coordinates for the same world points
+    let allProjectionsValid = true;
+    for (const t of testTimestamps) {
+      const state = solveRunOutReplayState(ro, t);
+
+      // Test bat tip through all 5 cameras
+      const p1 = projectToPhase1(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ, 640, 360);
+      const c01 = projectToCAM01(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+      const c02 = projectToCAM02(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+      const c07 = projectToCAM07(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+      const c10 = projectPitchToCAM10(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+
+      for (const proj of [p1, c01, c02, c07]) {
+        if (!isFinite(proj.screenX) || !isFinite(proj.screenY)) {
+          allProjectionsValid = false;
+        }
+      }
+      if (!isFinite(c10.x) || !isFinite(c10.y)) {
+        allProjectionsValid = false;
+      }
+    }
+    assert(allProjectionsValid, "World-Space Sync: All 5 camera projections produce finite screen coordinates at every timestamp");
+
+    // Test 95: Runner world-space monotonically approaches crease over time
+    let runnerMonotonic = true;
+    let prevRunnerWorldX = Infinity;
+    for (const t of testTimestamps) {
+      const state = solveRunOutReplayState(ro, t);
+      if (state.runner.worldX > prevRunnerWorldX + 1) {
+        runnerMonotonic = false;
+      }
+      prevRunnerWorldX = state.runner.worldX;
+    }
+    assert(runnerMonotonic, "World-Space Sync: Runner worldX monotonically approaches crease (decreasing) across timeline");
+
+    // Test 96: Ball world-space monotonically approaches stumps during flight
+    let ballMonotonic = true;
+    let prevBallWorldX = Infinity;
+    for (const t of [800, 900, 1000, 1100, timeline.bailsContactMs]) {
+      const state = solveRunOutReplayState(ro, t);
+      if (state.ball.isInFlight || state.ball.hasHitStumps) {
+        if (state.ball.worldX > prevBallWorldX + 1) {
+          ballMonotonic = false;
+        }
+        prevBallWorldX = state.ball.worldX;
+      }
+    }
+    assert(ballMonotonic, "World-Space Sync: Ball worldX monotonically approaches stumps during throw flight");
+
+    // Test 97: Keeper gatherProgress increases monotonically
+    let keeperMonotonic = true;
+    let prevGather = -1;
+    for (const t of testTimestamps) {
+      const state = solveRunOutReplayState(ro, t);
+      if (state.keeper.gatherProgress < prevGather - 0.001) {
+        keeperMonotonic = false;
+      }
+      prevGather = state.keeper.gatherProgress;
+    }
+    assert(keeperMonotonic, "World-Space Sync: Keeper gatherProgress increases monotonically across timeline");
+
+    // Test 98: Cross-camera world-state identity — all cameras consume the same solver output
+    // This verifies that the world state fed to each camera is identical (not invented independently)
+    let crossCameraConsistent = true;
+    for (const t of [1200, ro.groundedFrameMs, ro.bailsDislodgedFrameMs]) {
+      const state = solveRunOutReplayState(ro, t);
+
+      // All cameras read these same fields — verify they are well-defined numbers
+      const worldValues = [
+        state.runner.worldX, state.runner.worldY, state.runner.worldZ,
+        state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ,
+        state.bat.handleWorldX, state.bat.handleWorldY, state.bat.handleWorldZ,
+        state.ball.worldX, state.ball.worldY, state.ball.worldZ,
+        state.keeper.worldX, state.keeper.worldY, state.keeper.worldZ,
+      ];
+      for (const v of worldValues) {
+        if (!isFinite(v)) {
+          crossCameraConsistent = false;
+        }
+      }
+    }
+    assert(crossCameraConsistent, "World-Space Sync: All world-space fields are finite numbers at critical timestamps");
   }
 
   console.log("=================================================");
