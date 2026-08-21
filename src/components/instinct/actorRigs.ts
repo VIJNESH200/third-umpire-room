@@ -772,7 +772,7 @@ export function solveBoundaryFielderKinematics(
 }
 
 // ================================================================
-// 1. ARTICULATED BATTER RIG RENDERER (CONTROLLED CLEAN STYLIZATION)
+// 1. ARTICULATED BATTER RIG RENDERER
 // ================================================================
 export function drawArticulatedBatter(
   ctx: CanvasRenderingContext2D,
@@ -795,69 +795,38 @@ export function drawArticulatedBatter(
   // --- Ground Contact Shadow ---
   ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
   ctx.beginPath();
-  ctx.ellipse(k.frontLegX * 0.5, 0, 22, 5.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(k.frontLegX * 0.5, 0, 24, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- 1. Rear Leg & Rear Pad (Drawn behind torso) ---
+  // --- 1. Rear Leg & Rear Pad ---
   ctx.save();
   ctx.translate(k.backLegX, k.backLegY);
-
-  // Thigh flannels
-  ctx.fillStyle = "#f1f5f9";
-  ctx.beginPath();
-  ctx.roundRect(-4, 0, 8, 13, 2);
-  ctx.fill();
-
-  // Rear Pad Knee Roll
   ctx.fillStyle = "#e2e8f0";
-  ctx.beginPath();
-  ctx.roundRect(-4.5, 8, 9, 4.5, 1.5);
-  ctx.fill();
-
-  // Rear Pad Shin Section
+  ctx.fillRect(-4, 0, 8, 14);
   ctx.fillStyle = "#cbd5e1";
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.roundRect(-4.5, 12.5, 9, 23, 2);
+  ctx.roundRect(-5, 12, 10, 24, 2);
   ctx.fill();
   ctx.stroke();
-
-  // Rear Pad Straps
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.8;
+  ctx.fillStyle = "#1e293b";
   ctx.beginPath();
-  ctx.moveTo(-4, 19);
-  ctx.lineTo(4, 19);
-  ctx.moveTo(-4, 27);
-  ctx.lineTo(4, 27);
-  ctx.stroke();
-
-  // Rear Boot
-  ctx.fillStyle = "#0f172a";
-  ctx.beginPath();
-  ctx.roundRect(-3, 34, 8, 4, 1.5);
+  ctx.ellipse(-2, 36, 7, 3, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(-1, 34, 5, 1.5);
-
   ctx.restore();
 
   // --- 2. Torso & Flannels ---
   ctx.save();
   ctx.translate(0, -32);
   ctx.rotate(k.torsoAngleRad);
-
-  // Jersey Base (Clean rounded athletic silhouette)
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 1.1;
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(-9, -18, 18, 26, [4, 4, 2, 2]);
+  ctx.roundRect(-10, -18, 20, 26, [4, 4, 2, 2]);
   ctx.fill();
   ctx.stroke();
-
-  // V-Neck Collar
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.moveTo(-4, -18);
@@ -865,108 +834,70 @@ export function drawArticulatedBatter(
   ctx.lineTo(4, -18);
   ctx.closePath();
   ctx.fill();
-
   ctx.restore();
 
-  // --- 3. Head & Protective Cricket Helmet ---
+  // --- 3. Head & Protective Helmet ---
   ctx.save();
   ctx.translate(k.headX, k.headY);
   ctx.rotate(k.headTiltRad);
-
-  // Helmet Shell
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.arc(0, 0, 9.5, 0, Math.PI * 2);
+  ctx.arc(0, 0, 9, 0, Math.PI * 2);
   ctx.fill();
-
-  // Helmet Peak / Visor
   ctx.fillStyle = "#1e293b";
   ctx.beginPath();
-  ctx.roundRect(1, -3.5, 9, 4, 1);
+  ctx.roundRect(1, -3, 9, 4, 1);
   ctx.fill();
-
-  // Face Profile
   ctx.fillStyle = "#d4a373";
   ctx.beginPath();
-  ctx.arc(2.5, 2, 4.5, 0, Math.PI * 2);
+  ctx.arc(2, 2, 5, 0, Math.PI * 2);
   ctx.fill();
-
-  // Eye dot
-  ctx.fillStyle = "#0f172a";
-  ctx.beginPath();
-  ctx.arc(4, 1, 0.9, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Steel Visor Grille (Clean 2-line silhouette)
   ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.9;
+  ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.moveTo(2.5, 0);
-  ctx.lineTo(7.5, 2.5);
-  ctx.lineTo(3.5, 6);
-  ctx.moveTo(3.5, 6);
-  ctx.lineTo(1.5, 6);
+  ctx.moveTo(3, -1);
+  ctx.lineTo(8, 3);
+  ctx.lineTo(3, 7);
+  ctx.moveTo(5, 1);
+  ctx.lineTo(9, 6);
   ctx.stroke();
-
   ctx.restore();
 
   // --- 4. Front Leg & Front Batting Pad ---
   ctx.save();
   ctx.translate(k.frontLegX + k.padRecoilX, k.frontLegY + k.padRecoilY);
-
-  // Thigh Flannels
-  ctx.fillStyle = "#f8fafc";
-  ctx.fillRect(-5, 0, 10, 11);
-
-  // Pad Knee Roll (Top 2-piece structure)
+  ctx.fillStyle = "#f1f5f9";
+  ctx.fillRect(-5, 0, 10, 14);
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.9;
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(-5.5, 7.5, 11, 5.5, 1.8);
+  ctx.roundRect(-6, 10, 13, 26, 3);
   ctx.fill();
   ctx.stroke();
 
-  // Main Pad Shin Section
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 1.0;
-  ctx.beginPath();
-  ctx.roundRect(-5.5, 13, 11, 23, [1, 1, 2.5, 2.5]);
-  ctx.fill();
-  ctx.stroke();
-
-  // Vertical Cane Rib Channels
-  ctx.strokeStyle = "#e2e8f0";
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(-2.5, 14);
-  ctx.lineTo(-2.5, 34);
-  ctx.moveTo(0, 14);
-  ctx.lineTo(0, 34);
-  ctx.moveTo(2.5, 14);
-  ctx.lineTo(2.5, 34);
-  ctx.stroke();
-
-  // Horizontal Pad Straps
   ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 1.1;
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.moveTo(-5, 20);
-  ctx.lineTo(5, 20);
-  ctx.moveTo(-5, 27);
-  ctx.lineTo(5, 27);
+  ctx.moveTo(-5, 18);
+  ctx.lineTo(6, 18);
+  ctx.moveTo(-5, 23);
+  ctx.lineTo(6, 23);
+  ctx.moveTo(-5, 28);
+  ctx.lineTo(6, 28);
   ctx.stroke();
 
-  // Front Cricket Boot
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.roundRect(-5, 8, 11, 4, 1);
+  ctx.fill();
+
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.roundRect(-2, 34, 10, 4.5, 1.5);
+  ctx.ellipse(3, 36, 8, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
-  // White leather toe cap
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(2, 34, 5, 2.5);
-
+  ctx.fillRect(0, 34, 5, 2);
   ctx.restore();
 
   // --- 5. Arms, Gloves & Contoured Willow Bat ---
@@ -974,50 +905,33 @@ export function drawArticulatedBatter(
   ctx.translate(k.batPivotX, k.batPivotY);
   ctx.rotate(k.batRotRad);
 
-  // Cane Handle
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 0.6;
-  ctx.fillRect(-2, -16, 4, 16);
-  ctx.strokeRect(-2, -16, 4, 16);
+  ctx.fillRect(-2, -18, 4, 18);
+  ctx.strokeRect(-2, -18, 4, 18);
 
-  // Rubber Grip Accent Band
-  ctx.fillStyle = "#0284c7";
-  ctx.fillRect(-2, -11, 4, 2.5);
-
-  // Batting Gloves (Top Hand & Bottom Hand)
   ctx.fillStyle = "#0284c7";
   ctx.beginPath();
-  ctx.roundRect(-4.5, -13, 9, 7.5, 2);
-  ctx.roundRect(-4.5, -5.5, 9, 7.5, 2);
+  ctx.roundRect(-4, -14, 8, 7, 2);
+  ctx.roundRect(-4, -6, 8, 7, 2);
   ctx.fill();
-
-  // White Protective Glove Foam
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(-3.5, -11.5, 7, 2.2);
-  ctx.fillRect(-3.5, -4, 7, 2.2);
+  ctx.fillRect(-3, -12, 6, 2.5);
+  ctx.fillRect(-3, -4, 6, 2.5);
 
-  // English Willow Blade (Clean Warm Amber)
   ctx.fillStyle = "#d97706";
   ctx.strokeStyle = "#78350f";
-  ctx.lineWidth = 1.0;
+  ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.roundRect(-3.5, 0, 7, 46, [1, 1, 3, 3]);
   ctx.fill();
   ctx.stroke();
 
-  // Subtle Raised Blade Spine
   ctx.fillStyle = "#b45309";
-  ctx.fillRect(-1.2, 4, 2.4, 38);
-
-  // Protective White Toe Cap
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.roundRect(-3.5, 42, 7, 4, [0, 0, 3, 3]);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fillRect(-1.5, 4, 3, 38);
+  ctx.fillStyle = "#dc2626";
+  ctx.fillRect(-3, 2, 6, 6);
 
   ctx.restore();
 
@@ -1045,7 +959,7 @@ export function drawArticulatedRunner(
     ctx.globalAlpha = t.opacity;
   }
 
-  // --- 1. Dynamic Contact / Slide Shadow ---
+  // --- 1. Unified Ground Contact / Slide Shadow ---
   ctx.fillStyle = k.isAirborne ? "rgba(0, 0, 0, 0.15)" : "rgba(0, 0, 0, 0.28)";
   ctx.beginPath();
   if (k.diveProgress < 0.25) {
@@ -1075,7 +989,7 @@ export function drawArticulatedRunner(
   const rearHandY = rearElbowY + Math.cos(k.rearShoulderAngleRad + k.rearElbowAngleRad) * rearArmL;
 
   ctx.strokeStyle = "#0f172a";
-  ctx.lineWidth = 3.2;
+  ctx.lineWidth = 3;
   ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(shoulderX, shoulderY);
@@ -1086,7 +1000,7 @@ export function drawArticulatedRunner(
   // Rear Glove
   ctx.fillStyle = "#0284c7";
   ctx.beginPath();
-  ctx.arc(rearHandX, rearHandY, 3.4, 0, Math.PI * 2);
+  ctx.arc(rearHandX, rearHandY, 3.2, 0, Math.PI * 2);
   ctx.fill();
 
   // --- 5. Trail / Rear Leg (Drawn behind body) ---
@@ -1108,34 +1022,26 @@ export function drawArticulatedRunner(
   ctx.stroke();
 
   // Trail Batting Pad
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 1.0;
+  ctx.fillStyle = "#e2e8f0";
+  ctx.beginPath();
   const padAngle = Math.atan2(trailFootY - trailKneeY, trailFootX - trailKneeX);
   ctx.save();
   ctx.translate((trailKneeX + trailFootX) / 2, (trailKneeY + trailFootY) / 2);
   ctx.rotate(padAngle - Math.PI / 2);
-
-  // Trail pad knee roll
-  ctx.fillStyle = "#cbd5e1";
-  ctx.beginPath();
-  ctx.roundRect(-4.5, -8.5, 9, 4, 1.5);
-  ctx.fill();
-
-  // Trail pad main
-  ctx.fillStyle = "#e2e8f0";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.roundRect(-4.5, -4.5, 9, 14, 2);
+  ctx.roundRect(-4.5, -8, 9, 16, 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
 
-  // Trail Shoe
+  // Trail Shoe / Spikes
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.ellipse(trailFootX, trailFootY, 5, 2.6, padAngle, 0, Math.PI * 2);
+  ctx.ellipse(trailFootX, trailFootY, 5, 2.5, padAngle, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- 6. Pelvis / Trousers ---
+  // --- 6. Pelvis / Shorts ---
   ctx.fillStyle = "#f1f5f9";
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1;
@@ -1150,7 +1056,7 @@ export function drawArticulatedRunner(
   ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 1.1;
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
   ctx.roundRect(-8, -torsoL / 2, 16, torsoL, [4, 4, 2, 2]);
   ctx.fill();
@@ -1179,30 +1085,30 @@ export function drawArticulatedRunner(
   // Helmet Shell
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.arc(0, 0, 9.5, 0, Math.PI * 2);
+  ctx.arc(0, 0, 9, 0, Math.PI * 2);
   ctx.fill();
 
   // Helmet Peak / Visor
   ctx.fillStyle = "#1e293b";
   ctx.beginPath();
-  ctx.roundRect(1, -3.5, 9, 4, 1);
+  ctx.roundRect(1, -3, 9, 4, 1);
   ctx.fill();
 
   // Face / Chin
   ctx.fillStyle = "#d4a373";
   ctx.beginPath();
-  ctx.arc(2.5, 2, 4.5, 0, Math.PI * 2);
+  ctx.arc(2, 2, 5, 0, Math.PI * 2);
   ctx.fill();
 
   // Steel Visor Grille
   ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.9;
+  ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.moveTo(2.5, 0);
-  ctx.lineTo(7.5, 2.5);
-  ctx.lineTo(3.5, 6);
-  ctx.moveTo(3.5, 6);
-  ctx.lineTo(1.5, 6);
+  ctx.moveTo(3, -1);
+  ctx.lineTo(8, 3);
+  ctx.lineTo(3, 7);
+  ctx.moveTo(5, 1);
+  ctx.lineTo(9, 6);
   ctx.stroke();
   ctx.restore();
 
@@ -1227,22 +1133,11 @@ export function drawArticulatedRunner(
   ctx.save();
   ctx.translate((leadKneeX + leadFootX) / 2, (leadKneeY + leadFootY) / 2);
   ctx.rotate(leadPadAngle - Math.PI / 2);
-
-  // Lead Pad Knee Roll
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.roundRect(-5.5, -9.5, 11, 4.5, 1.5);
-  ctx.fill();
-  ctx.stroke();
-
-  // Lead Pad Main Shin
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 1.0;
   ctx.beginPath();
-  ctx.roundRect(-5.5, -5, 11, 15, [1, 1, 2, 2]);
+  ctx.roundRect(-5.5, -9, 11, 18, 2.5);
   ctx.fill();
   ctx.stroke();
 
@@ -1250,10 +1145,10 @@ export function drawArticulatedRunner(
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1.0;
   ctx.beginPath();
-  ctx.moveTo(-4.5, -1);
-  ctx.lineTo(4.5, -1);
-  ctx.moveTo(-4.5, 5);
-  ctx.lineTo(4.5, 5);
+  ctx.moveTo(-4.5, -3);
+  ctx.lineTo(4.5, -3);
+  ctx.moveTo(-4.5, 3);
+  ctx.lineTo(4.5, 3);
   ctx.stroke();
   ctx.restore();
 
@@ -1262,8 +1157,6 @@ export function drawArticulatedRunner(
   ctx.beginPath();
   ctx.ellipse(leadFootX, leadFootY, 6, 3, leadPadAngle, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(leadFootX - 1, leadFootY - 1, 4, 1.5);
 
   // --- 10. Lead Arm, Gloves & Bat ---
   const leadArmL = 15;
@@ -1282,13 +1175,13 @@ export function drawArticulatedRunner(
   ctx.lineTo(leadHandX, leadHandY);
   ctx.stroke();
 
-  // Batting Glove (Lead Hand)
+  // Batting Gloves (Lead & Secondary)
   ctx.fillStyle = "#0284c7";
   ctx.beginPath();
   ctx.roundRect(leadHandX - 4, leadHandY - 4, 8, 7, 2);
   ctx.fill();
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(leadHandX - 3, leadHandY - 2.5, 6, 2.2);
+  ctx.fillRect(leadHandX - 3, leadHandY - 2, 6, 2);
 
   // Bat Grip & Blade (Derives strictly from Lead Hand)
   const batAngle = k.leadShoulderAngleRad + k.batGripAngleRad;
@@ -1303,9 +1196,10 @@ export function drawArticulatedRunner(
   ctx.fillRect(-2, -14, 4, 14);
   ctx.strokeRect(-2, -14, 4, 14);
 
-  // Grip accent
+  // Grip texture
   ctx.fillStyle = "#0284c7";
-  ctx.fillRect(-2, -9, 4, 2.5);
+  ctx.fillRect(-3, -10, 6, 3);
+  ctx.fillRect(-3, -5, 6, 3);
 
   // Willow Blade
   ctx.fillStyle = "#d97706";
@@ -1316,18 +1210,11 @@ export function drawArticulatedRunner(
   ctx.fill();
   ctx.stroke();
 
-  // Subtle Blade Spine
+  // Blade Spine & Red Sponsor Sticker
   ctx.fillStyle = "#b45309";
-  ctx.fillRect(-1.2, 4, 2.4, 36);
-
-  // Protective White Toe Cap
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.roundRect(-3.5, 40, 7, 4, [0, 0, 3, 3]);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fillRect(-1.5, 4, 3, 36);
+  ctx.fillStyle = "#dc2626";
+  ctx.fillRect(-3, 2, 6, 6);
 
   ctx.restore();
 
