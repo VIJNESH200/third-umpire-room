@@ -1,49 +1,446 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import type { LBWData } from "../../types/scenario";
+import { drawStumpsAndBails, drawCricketBall } from "../instinct/actorRigs";
 
 interface FrontOnPitchViewProps {
   lbw: LBWData;
   currentTimeMs: number;
 }
 
+/* ================================================================
+   CAM 01 • KEEPER-END REVERSE BROADCAST REPLAY (LBW)
+   Answers: "What actually happened at the batter?"
+
+   The camera sits behind the striker's wicket (slip level) looking
+   back up the pitch at the bowler, so the play reads top-to-bottom:
+     BOWLER (far)  ↓  BALL FLIGHT  ↓  BATTER (hero)  ↓  STUMPS (near)
+
+   Timeline is the shared canonical LBW transport:
+     600ms = release • 1200ms = pitch bounce • 1500ms = pad impact
+     (dead ball) • 1800ms+ = aftermath / appeal.
+   Every value drawn is raw scenario physics (pitchX, impactX,
+   impactHeight, shotOffered, batterHand) — never the DRS outcome.
+   ================================================================ */
+
+// Canonical replay anchors (ms) — identical to the shared transport markers.
+const T_RELEASE = 800;
+const T_BOUNCE = 1200;
+const T_IMPACT = 1500;
+const T_SETTLED = 1800;
+
+// Keeper-end station geometry (canvas 500x340).
+const W = 500;
+const H = 340;
+const STUMPS_BASE_Y = 328; // nearest station: striker wicket in foreground
+const STUMPS_SCALE = 1.5;
+const CREASE_Y = 308; // striker popping crease (batter guards just behind it)
+const BATTER_FEET_Y = 312;
+const PITCH_TOP_Y = 72; // far bowling crease
+const CORRIDOR_CX = 250;
+
+// Pitch strip edges (half-width in px at a given y, linear perspective).
+const pitchHalfWidthAt = (y: number) =>
+  16 + ((y - PITCH_TOP_Y) / (H - PITCH_TOP_Y)) * (215 - 16);
+
+interface BackViewPose {
+  stride: number; // 0 set → 1 planted forward in the crease
+  recoil: number; // pad-impact jolt (0..1)
+  shotPhase: number; // bat swing progress through contact (0..1)
+}
+
+/** Stylized back-view batter (custom to this reverse angle — side rigs
+ *  stay untouched in the shared asset system). */
+function drawBatterBackView(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  feetY: number,
+  scale: number,
+  pose: BackViewPose,
+  isRightHand: boolean,
+  shotOffered: boolean
+) {
+  const s = scale;
+  const lean = pose.stride * 0.05 + pose.recoil * 0.03;
+
+  ctx.save();
+  ctx.translate(x, feetY);
+
+  // Ground shadow
+  ctx.fillStyle = "rgba(0,0,0,0.30)";
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 26 * s, 6 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.rotate(lean);
+
+  // Bat — held on the batter's handed side (RH = viewer's right from behind).
+  const batSide = isRightHand ? 1 : -1;
+  const gloveY = -46 * s;
+  const gloveX = batSide * 17 * s;
+  {
+    // Pivot at the gloved hands; angle follows shot / no-shot.
+    let batAngle: number;
+    if (shotOffered) {
+      // Swing through the contact window: lifted back → swept down across.
+      const swing = pose.shotPhase;
+      batAngle =
+        batSide * (0.95 - swing * 2.0) - (batSide * 0.25 * (1 - swing));
+    } else {
+      // No shot: blade tucked low behind the lead pad.
+      batAngle = batSide * 0.38;
+    }
+    ctx.save();
+    ctx.translate(gloveX, gloveY);
+    ctx.rotate(batAngle);
+    ctx.fillStyle = "#0284c7";
+    ctx.strokeStyle = "#075985";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(-1.6 * s, -12 * s, 3.2 * s, 12 * s, 1.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#d97706";
+    ctx.strokeStyle = "#78350f";
+    ctx.beginPath();
+    ctx.roundRect(-2.6 * s, 0, 5.2 * s, 30 * s, [1.5, 1.5, 3, 3]);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Legs with rear-facing front pads (cream, knee rolls)
+  const padW = 13 * s;
+  const padH = 46 * s;
+  for (const side of [-1, 1]) {
+    const px = side * 9 * s;
+    ctx.fillStyle = "#f8fafc";
+    ctx.strokeStyle = "#94a3b8";
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.roundRect(px - padW / 2, -padH - 8 * s, padW, padH, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(px - padW / 2 + 1, -padH * 0.55 - 8 * s);
+    ctx.lineTo(px + padW / 2 - 1, -padH * 0.55 - 8 * s);
+    ctx.moveTo(px - padW / 2 + 1, -padH * 0.28 - 8 * s);
+    ctx.lineTo(px + padW / 2 - 1, -padH * 0.28 - 8 * s);
+    ctx.stroke();
+    // Shoe
+    ctx.fillStyle = "#0f172a";
+    ctx.beginPath();
+    ctx.ellipse(px, -4 * s, 8 * s, 3.6 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Torso (back of the shirt) with squad number
+  const torsoW = 34 * s;
+  const torsoH = 46 * s;
+  ctx.fillStyle = "#334155";
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.roundRect(-torsoW / 2, -padH - 6 * s - torsoH, torsoW, torsoH, 6);
+  ctx.fill();
+  ctx.stroke();
+  // Shoulder line
+  ctx.strokeStyle = "#475569";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(-torsoW / 2 + 5 * s, -padH - 2 * s - torsoH);
+  ctx.lineTo(torsoW / 2 - 5 * s, -padH - 2 * s - torsoH);
+  ctx.stroke();
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = `bold ${Math.round(11 * s)}px monospace`;
+  ctx.textAlign = "center";
+  ctx.fillText("07", 0, -padH - 16 * s - torsoH + 8 * s);
+
+  // Gloves at the hips (batting gloves, white)
+  ctx.fillStyle = "#f8fafc";
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 0.8;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * 17 * s, gloveY, 4.2 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Helmet (rear shell + neck guard + ear flap on the handed side)
+  const headY = -padH - 8 * s - torsoH - 6 * s;
+  ctx.fillStyle = "#0f172a";
+  ctx.strokeStyle = "#334155";
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.arc(0, headY, 9 * s, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#1e293b";
+  ctx.beginPath();
+  ctx.roundRect(-7 * s, headY + 5 * s, 14 * s, 6 * s, 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(batSide * 6 * s - 1.5 * s, headY - 2 * s, 3 * s, 8 * s, 1);
+  ctx.fill();
+
+  ctx.restore(); // lean
+  ctx.restore(); // station
+}
+
+/** Distant bowler in follow-through at the far end (silhouette scale). */
+function drawDistantBowler(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = "#1e293b";
+
+  // Striding legs (front leg planted over the crease)
+  ctx.beginPath();
+  ctx.roundRect(-6, -10, 4.5, 10, 2);
+  ctx.roundRect(1.5, -9, 4.5, 9, 2);
+  ctx.fill();
+
+  // Torso leaning forward through the crease
+  ctx.save();
+  ctx.rotate(0.22);
+  ctx.beginPath();
+  ctx.roundRect(-5, -24, 10, 15, 3);
+  ctx.fill();
+  // Bowling arm swept over after release
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 3.4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, -22);
+  ctx.lineTo(-7, -30);
+  ctx.stroke();
+  ctx.lineWidth = 2.8;
+  ctx.beginPath();
+  ctx.moveTo(0, -20);
+  ctx.lineTo(6, -26);
+  ctx.stroke();
+  ctx.restore();
+
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -27.5, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 export const FrontOnPitchView: React.FC<FrontOnPitchViewProps> = ({
   lbw,
   currentTimeMs,
 }) => {
-  // Timeline: 600ms = bowler release, 1200ms = pitch bounce, 1500ms = pad impact
-  const minTime = 600;
-  const maxTime = 2000;
-  const clampedTime = Math.max(minTime, Math.min(maxTime, currentTimeMs));
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Trajectory progress: 0 to 1
-  const t = (clampedTime - minTime) / (maxTime - minTime);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-  // Ball flight physics from bowler's end (top center) down to batter (bottom)
-  // Y goes from 50 (bowler release) to 270 (pad impact)
-  const ballY = 50 + t * 240;
+    const t = Math.max(T_RELEASE, Math.min(2200, currentTimeMs));
+    const isRightHand = lbw.batterHand === "RIGHT";
 
-  // Ball X travels from release center (250) towards impact X
-  const impactX = 250 + lbw.impactX * 130;
-  const pitchX = 250 + lbw.pitchX * 110;
+    // --- Batter pose from the canonical timeline ---
+    const stride = Math.min(1, Math.max(0, (t - 900) / 550));
+    const recoil =
+      t >= T_IMPACT && t < 1650
+        ? Math.sin(((t - T_IMPACT) / 150) * Math.PI)
+        : 0;
+    const shotPhase = Math.min(1, Math.max(0, (t - 1380) / 320));
+    const pose: BackViewPose = { stride, recoil, shotPhase };
 
-  let ballX = 250;
-  if (t < 0.45) {
-    // Flight to pitch
-    const subT = t / 0.45;
-    ballX = 250 + (pitchX - 250) * subT;
-  } else {
-    // Off the pitch to pad impact
-    const subT = (t - 0.45) / 0.55;
-    ballX = pitchX + (impactX - pitchX) * subT;
-  }
+    // --- Ball corridor (raw physical data only) ---
+    const releaseX = 238; // over-the-wicket release line (stylized)
+    const releaseY = 78;
+    const bounceX = CORRIDOR_CX + lbw.pitchX * 130;
+    const bounceY = 175;
+    const impactX = CORRIDOR_CX + lbw.impactX * 120;
+    const impactY = BATTER_FEET_Y - (lbw.impactHeight / 71.1) * 95;
 
-  // Ball radius perspective: starts small (3px) at bowler, grows to 10px at batter
-  const ballRadius = 3 + t * 8;
+    let ballX = releaseX;
+    let ballY = releaseY;
+    let ballR = 2.5;
+    let prevX = releaseX;
+    let prevY = releaseY;
 
-  // Has pad impact occurred?
-  const isImpacted = clampedTime >= 1500;
+    if (t < T_BOUNCE) {
+      const f = (t - T_RELEASE) / (T_BOUNCE - T_RELEASE);
+      ballX = releaseX + (bounceX - releaseX) * f;
+      ballY = releaseY + (bounceY - releaseY) * f;
+      ballR = 2.5 + f * 2.0;
+      prevX = releaseX + (bounceX - releaseX) * Math.max(0, f - 0.08);
+      prevY = releaseY + (bounceY - releaseY) * Math.max(0, f - 0.08);
+    } else if (t < T_IMPACT) {
+      const f = (t - T_BOUNCE) / (T_IMPACT - T_BOUNCE);
+      ballX = bounceX + (impactX - bounceX) * f;
+      // Bounce lifts it slightly off the surface as it approaches the pad
+      ballY = bounceY + (impactY - bounceY) * f - Math.sin(f * Math.PI) * 10;
+      ballR = 4.5 + f * 2.5;
+      prevX = bounceX + (impactX - bounceX) * Math.max(0, f - 0.06);
+      prevY = bounceY + (impactY - bounceY) * Math.max(0, f - 0.06);
+    } else {
+      // Dead ball: drops from the pad and settles beside the crease.
+      ballX = impactX;
+      ballY = impactY;
+      ballR = 7;
+      const f = Math.min(1, (t - T_IMPACT) / 280);
+      const groundY = 318;
+      const drop = groundY - impactY;
+      ballY = impactY + drop * (f * f);
+      // Two damped bounces as it dies
+      if (f >= 1) {
+        const b = Math.min(1, (t - T_IMPACT - 280) / 240);
+        ballY = groundY - Math.abs(Math.sin(b * Math.PI * 2)) * 6 * (1 - b);
+        ballX = impactX + 8 * b;
+      }
+      prevX = ballX - 3;
+      prevY = ballY - 4;
+    }
 
-  // Frame calculation for broadcast HUD
+    // =================  RENDER  =================
+    ctx.clearRect(0, 0, W, H);
+
+    // --- Turf + stadium ambience ---
+    const gradGrass = ctx.createLinearGradient(0, 0, 0, H);
+    gradGrass.addColorStop(0, "#102315");
+    gradGrass.addColorStop(0.55, "#16321f");
+    gradGrass.addColorStop(1, "#0e2416");
+    ctx.fillStyle = gradGrass;
+    ctx.fillRect(0, 0, W, H);
+    const gradLight = ctx.createRadialGradient(
+      W * 0.5,
+      H * 0.38,
+      20,
+      W * 0.5,
+      H * 0.38,
+      W * 0.7
+    );
+    gradLight.addColorStop(0, "rgba(255, 255, 220, 0.07)");
+    gradLight.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gradLight;
+    ctx.fillRect(0, 0, W, H);
+
+    // --- 22-yard clay strip (far bowler end → near striker end) ---
+    const gradPitch = ctx.createLinearGradient(0, PITCH_TOP_Y, 0, H);
+    gradPitch.addColorStop(0, "#9a8161");
+    gradPitch.addColorStop(0.5, "#b49b78");
+    gradPitch.addColorStop(1, "#ad9275");
+    ctx.fillStyle = gradPitch;
+    ctx.beginPath();
+    ctx.moveTo(CORRIDOR_CX - pitchHalfWidthAt(PITCH_TOP_Y), PITCH_TOP_Y);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(PITCH_TOP_Y), PITCH_TOP_Y);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(H), H);
+    ctx.lineTo(CORRIDOR_CX - pitchHalfWidthAt(H), H);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#4d3d29";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // Worn corridor
+    ctx.fillStyle = "rgba(140, 110, 75, 0.22)";
+    ctx.beginPath();
+    ctx.moveTo(CORRIDOR_CX - pitchHalfWidthAt(PITCH_TOP_Y) * 0.45, PITCH_TOP_Y);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(PITCH_TOP_Y) * 0.45, PITCH_TOP_Y);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(H) * 0.45, H);
+    ctx.lineTo(CORRIDOR_CX - pitchHalfWidthAt(H) * 0.45, H);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Far end: non-striker stumps, creases, bowler ---
+    drawStumpsAndBails(ctx, CORRIDOR_CX, PITCH_TOP_Y + 4, { scale: 0.42 });
+    ctx.strokeStyle = "rgba(255,255,255,0.45)";
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.moveTo(
+      CORRIDOR_CX - pitchHalfWidthAt(PITCH_TOP_Y) * 0.8,
+      PITCH_TOP_Y + 4
+    );
+    ctx.lineTo(
+      CORRIDOR_CX + pitchHalfWidthAt(PITCH_TOP_Y) * 0.8,
+      PITCH_TOP_Y + 4
+    );
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.30)";
+    ctx.beginPath();
+    ctx.moveTo(CORRIDOR_CX - pitchHalfWidthAt(96) * 0.8, 96);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(96) * 0.8, 96);
+    ctx.stroke();
+    drawDistantBowler(ctx, 238, 86);
+
+    // --- Striker popping crease (the batter guards just behind it) ---
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(CORRIDOR_CX - pitchHalfWidthAt(CREASE_Y) * 0.92, CREASE_Y);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(CREASE_Y) * 0.92, CREASE_Y);
+    ctx.stroke();
+
+    // --- Pitch bounce scuff ---
+    if (t >= T_BOUNCE) {
+      ctx.fillStyle = "rgba(80,58,40,0.55)";
+      ctx.beginPath();
+      ctx.ellipse(bounceX, bounceY + 4, 7, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // --- Batter (hero station, drawn before the near stumps) ---
+    drawBatterBackView(
+      ctx,
+      CORRIDOR_CX + lbw.impactX * 40,
+      BATTER_FEET_Y,
+      1.6,
+      pose,
+      isRightHand,
+      lbw.shotOffered
+    );
+
+    // --- Striker stumps in the foreground (nearest the camera) ---
+    drawStumpsAndBails(ctx, CORRIDOR_CX, STUMPS_BASE_Y, {
+      scale: STUMPS_SCALE,
+    });
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(CORRIDOR_CX - pitchHalfWidthAt(STUMPS_BASE_Y) * 0.7, STUMPS_BASE_Y);
+    ctx.lineTo(CORRIDOR_CX + pitchHalfWidthAt(STUMPS_BASE_Y) * 0.7, STUMPS_BASE_Y);
+    ctx.stroke();
+
+    // --- Pad impact flash (factual contact cue, fades fast) ---
+    if (t >= T_IMPACT && t < 1680) {
+      const flash = 1 - (t - T_IMPACT) / 180;
+      ctx.strokeStyle = `rgba(250, 204, 21, ${0.75 * flash})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(impactX, impactY, 8 + (1 - flash) * 12, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // --- Ball with motion trail ---
+    drawCricketBall(ctx, ballX, ballY, {
+      radius: ballR,
+      seamAngleRad: (t / 1000) * Math.PI * 6,
+      motionTrail: t > T_RELEASE + 60 && t < T_SETTLED,
+      prevX,
+      prevY,
+    });
+  }, [lbw, currentTimeMs]);
+
+  const statusTime = Math.max(600, Math.min(2200, currentTimeMs));
+  const statusText =
+    statusTime < T_RELEASE
+      ? "BOWLER RUN-UP"
+      : statusTime < T_BOUNCE
+      ? "DELIVERY IN FLIGHT"
+      : statusTime < T_IMPACT
+      ? "OFF THE SURFACE"
+      : "PAD CONTACT • DEAD BALL";
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 
   return (
@@ -53,170 +450,60 @@ export const FrontOnPitchView: React.FC<FrontOnPitchViewProps> = ({
         <div className="flex items-center space-x-2.5">
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
           <span className="text-xs font-bold tracking-wider text-slate-100 font-display">
-            CAM 01 • BROADCAST FRONT-ON PITCH FEED
+            CAM 01 • KEEPER-END REVERSE REPLAY
           </span>
           <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-slate-300 font-semibold">
-            FRAME {currentFrame} • 1080P 60FPS
+            FRAME {currentFrame} • 50FPS
           </span>
         </div>
 
         <div className="flex items-center space-x-2 text-[11px] text-slate-400">
-          <span>SPEED: <b className="text-cyan-300">{lbw.ballSpeedKph} KM/H</b></span>
+          <span>
+            SPEED: <b className="text-cyan-300">{lbw.ballSpeedKph} KM/H</b>
+          </span>
           <span>•</span>
-          <span>TYPE: <b className="text-slate-200">{lbw.spinOrPace}</b></span>
+          <span>
+            TYPE: <b className="text-slate-200">{lbw.spinOrPace}</b>
+          </span>
         </div>
       </div>
 
       {/* Main Viewport */}
       <div className="relative flex-1 min-h-[230px] my-2 bg-gradient-to-b from-[#0c1624] via-[#08101a] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
+        <canvas ref={canvasRef} width={W} height={H} className="w-full h-full object-contain z-10" />
 
-        <svg viewBox="0 0 500 320" className="w-full h-full max-h-[340px] z-10">
-          <defs>
-            <linearGradient id="frontPitchGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#8a7353" />
-              <stop offset="60%" stopColor="#b49b78" />
-              <stop offset="100%" stopColor="#a88e6b" />
-            </linearGradient>
-            <linearGradient id="frontTurfGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#12251a" />
-              <stop offset="100%" stopColor="#0d1b13" />
-            </linearGradient>
-          </defs>
-
-          {/* Outfield Grass */}
-          <rect x="0" y="0" width="500" height="320" fill="url(#frontTurfGrad)" />
-
-          {/* 3D Perspective Pitch Trapezoid */}
-          <polygon
-            points="220,40 280,40 430,310 70,310"
-            fill="url(#frontPitchGrad)"
-            stroke="#6e5c43"
-            strokeWidth="1.5"
-          />
-
-          {/* Bowling Crease (Top) */}
-          <line x1="210" y1="55" x2="290" y2="55" stroke="#FFFFFF" strokeWidth="1" opacity="0.6" />
-
-          {/* Popping Crease (Bottom) */}
-          <line x1="90" y1="280" x2="410" y2="280" stroke="#FFFFFF" strokeWidth="2" opacity="0.9" />
-
-          {/* Non-Striker Bowler Silhouette (Top) */}
-          <g transform="translate(250, 42)">
-            <circle cx="0" cy="-6" r="6" fill="#1e293b" />
-            <rect x="-4" y="0" width="8" height="14" fill="#1e293b" rx="2" />
-          </g>
-
-          {/* Striker Stumps (Bottom, behind batter) */}
-          <g transform="translate(250, 280)">
-            <rect x="-18" y="0" width="36" height="3" fill="#334155" />
-            <rect x="-14" y="-30" width="4.5" height="30" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
-            <rect x="-2.25" y="-32" width="4.5" height="32" fill="#f59e0b" stroke="#78350f" strokeWidth="0.4" />
-            <rect x="9.5" y="-30" width="4.5" height="30" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
-            <rect x="-15" y="-34" width="14" height="2.5" fill="#f59e0b" rx="0.5" />
-            <rect x="1" y="-34" width="14" height="2.5" fill="#f59e0b" rx="0.5" />
-          </g>
-
-          {/* Batter Stance Silhouette in Front of Stumps */}
-          <g transform={`translate(${impactX}, 240)`}>
-            {/* Batter Head / Helmet */}
-            <circle cx="0" cy="-28" r="10" fill="#0f172a" />
-            <rect x="-7" y="-31" width="14" height="5" fill="#334155" rx="1" />
-            {/* Torso */}
-            <rect x="-12" y="-18" width="24" height="34" fill="#1e293b" rx="4" />
-            {/* White Batting Front Pad */}
-            <rect x="-7" y="10" width="14" height="42" rx="3" fill="#f8fafc" stroke="#94a3b8" strokeWidth="0.8" />
-            {/* Knee Roll Ribs */}
-            <line x1="-7" y1="22" x2="7" y2="22" stroke="#cbd5e1" strokeWidth="1.2" />
-            <line x1="-7" y1="32" x2="7" y2="32" stroke="#cbd5e1" strokeWidth="1.2" />
-            {/* Bat Blade Held at Angle */}
-            <rect x="-22" y="-5" width="6" height="48" rx="1.5" fill="#d97706" stroke="#78350f" strokeWidth="0.6" transform="rotate(-15 -19 19)" />
-            {/* Shoe */}
-            <ellipse cx="0" cy="53" rx="10" ry="4" fill="#0f172a" />
-          </g>
-
-          {/* Pitch Bounce Mark Scuff */}
-          {clampedTime >= 1100 && (
-            <ellipse
-              cx={pitchX}
-              cy={170}
-              rx="9"
-              ry="4"
-              fill="#523e2b"
-              opacity="0.7"
-            />
-          )}
-
-          {/* Delivery Flight Path Guide (Subtle) */}
-          <path
-            d={`M 250,50 Q ${(250 + pitchX) / 2},110 ${pitchX},170 Q ${(pitchX + impactX) / 2},220 ${impactX},275`}
-            fill="none"
-            stroke="rgba(56, 189, 248, 0.2)"
-            strokeWidth="1.5"
-            strokeDasharray="4 3"
-          />
-
-          {/* Moving Red Cricket Ball */}
-          <circle
-            cx={ballX}
-            cy={ballY}
-            r={ballRadius}
-            fill="#dc2626"
-            stroke="#991b1b"
-            strokeWidth="0.8"
-          />
-          {/* Ball Seam */}
-          <line
-            x1={ballX - ballRadius * 0.7}
-            y1={ballY}
-            x2={ballX + ballRadius * 0.7}
-            y2={ballY}
-            stroke="#FFFFFF"
-            strokeWidth="0.8"
-            strokeDasharray="1 1"
-          />
-
-          {/* Pad Impact Flash */}
-          {isImpacted && (
-            <g transform={`translate(${impactX}, 275)`}>
-              <circle cx="0" cy="0" r="14" fill="#FACC15" opacity="0.4" />
-              <circle cx="0" cy="0" r="6" fill="#FFFFFF" opacity="0.8" />
-            </g>
-          )}
-        </svg>
-
-        {/* Real-time Flight Phase Indicator */}
+        {/* Replay phase chip — factual transport state only */}
         <div className="absolute top-2.5 left-2.5 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded text-[11px] font-mono backdrop-blur-sm z-20">
           <span className="text-slate-400 font-bold">STATUS: </span>
-          <span className="text-cyan-300 font-black">
-            {clampedTime < 1100
-              ? "BALL IN FLIGHT"
-              : clampedTime < 1500
-              ? "PITCHED & BOUNCING"
-              : "PAD IMPACT OCCURRED"}
-          </span>
+          <span className="text-cyan-300 font-black">{statusText}</span>
         </div>
 
-        {/* Hint to switch to Hawk-Eye */}
+        {/* Camera purpose hint */}
         <div className="absolute bottom-2.5 right-2.5 bg-slate-950/90 border border-slate-700 px-3 py-1 rounded text-[10px] text-slate-300 backdrop-blur-sm z-20">
-          SWITCH TO <b className="text-cyan-300">CAM 03 (HAWK-EYE 3D)</b> FOR 5-GATE TELEMETRY
+          SWITCH TO <b className="text-cyan-300">CAM 03</b> FOR TRACKING /{" "}
+          <b className="text-cyan-300">CAM 06</b> FOR STUMP OVERLAP
         </div>
       </div>
 
       {/* Footer Info */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">OPTICAL PERSPECTIVE</div>
-          <div className="text-[11px] font-black text-slate-200">FRONT-ON BROADCAST</div>
+          <div className="text-[9px] text-slate-400 font-bold">PERSPECTIVE</div>
+          <div className="text-[11px] font-black text-slate-200">
+            KEEPER-END REVERSE
+          </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">BOWLER RELEASE</div>
-          <div className="text-[11px] font-black text-cyan-300">OVER THE WICKET</div>
+          <div className="text-[9px] text-slate-400 font-bold">BATTER</div>
+          <div className="text-[11px] font-black text-cyan-300">
+            {lbw.batterHand === "RIGHT" ? "RIGHT-HAND" : "LEFT-HAND"}
+          </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">IMPACT STATUS</div>
-          <div className="text-[11px] font-black text-amber-300">
-            {isImpacted ? "IMPACT CONFIRMED" : "APPROACHING PAD"}
+          <div className="text-[9px] text-slate-400 font-bold">SHOT OFFERED</div>
+          <div className="text-[11px] font-black text-slate-200">
+            {lbw.shotOffered ? "BAT IN PLAY" : "NO SHOT"}
           </div>
         </div>
       </div>
