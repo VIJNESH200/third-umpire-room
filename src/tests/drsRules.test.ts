@@ -1166,6 +1166,91 @@ function runAllDRSTests() {
     assert(crossCameraConsistent, "World-Space Sync: All world-space fields are finite numbers at critical timestamps");
   }
 
+  // --- GROUP 19: LBW TIER DISTRIBUTION (TASK 4B) ---
+  console.log("\n--- GROUP 19: LBW TIER DISTRIBUTION (TASK 4B) ---");
+  {
+    // Harvest every LBW incident from a large set of deterministic sessions
+    // (200 sessions x 8 incidents = 3 LBWs each → ~600 LBW scenarios).
+    const tiers: Record<"CLEAR" | "MARGINAL" | "HOWLER", number> = { CLEAR: 0, MARGINAL: 0, HOWLER: 0 };
+    const lbws: {
+      tier: "CLEAR" | "MARGINAL" | "HOWLER";
+      umpiresCall: boolean;
+      overturn: boolean;
+      projection: string;
+      stumpHitX: number;
+      stumpHitHeightCm: number;
+    }[] = [];
+
+    for (let s = 0; s < 200; s++) {
+      const session = generateSession(8, 31000 + s * 131);
+      for (const sc of session) {
+        if (sc.incidentType === "LBW" && sc.lbw) {
+          tiers[sc.difficultyTier]++;
+          lbws.push({
+            tier: sc.difficultyTier,
+            umpiresCall: sc.drsEvaluation.isUmpiresCall,
+            overturn: sc.drsEvaluation.overturnRequired,
+            projection: sc.lbw.projectedStumpHit,
+            stumpHitX: sc.lbw.stumpHitX,
+            stumpHitHeightCm: sc.lbw.stumpHitHeightCm,
+          });
+        }
+      }
+    }
+
+    const n = lbws.length;
+    const pct = (count: number) => (count / n) * 100;
+
+    assert(n >= 500, `LBW Distribution: large deterministic sample collected (${n} LBW scenarios)`);
+    assert(
+      tiers.CLEAR > 0 && tiers.MARGINAL > 0 && tiers.HOWLER > 0,
+      "LBW Distribution: CLEAR, MARGINAL and HOWLER LBWs all occur in normal sessions"
+    );
+    assert(
+      Math.abs(pct(tiers.CLEAR) - 40) <= 8,
+      `LBW Distribution: CLEAR ≈ 40% (observed ${pct(tiers.CLEAR).toFixed(1)}%)`
+    );
+    assert(
+      Math.abs(pct(tiers.MARGINAL) - 40) <= 8,
+      `LBW Distribution: MARGINAL ≈ 40% (observed ${pct(tiers.MARGINAL).toFixed(1)}%)`
+    );
+    assert(
+      Math.abs(pct(tiers.HOWLER) - 20) <= 8,
+      `LBW Distribution: HOWLER ≈ 20% (observed ${pct(tiers.HOWLER).toFixed(1)}%)`
+    );
+
+    const marginals = lbws.filter((v) => v.tier === "MARGINAL");
+    assert(
+      marginals.length > 0 && marginals.every((v) => v.projection === "UMPIRES_CALL"),
+      "Marginal LBW: every MARGINAL LBW projects an Umpire's Call"
+    );
+    assert(
+      marginals.every((v) => v.umpiresCall),
+      "Marginal LBW: DRS evaluation flags genuine Umpire's Call (on-field decision stands)"
+    );
+    assert(
+      marginals.every((v) => Math.abs(v.stumpHitX) <= 0.26 && v.stumpHitHeightCm <= 73.5),
+      "Marginal LBW: stump projections are genuinely borderline (clipping band only)"
+    );
+
+    const clears = lbws.filter((v) => v.tier === "CLEAR");
+    assert(clears.length > 0 && clears.every((v) => !v.umpiresCall), "Clear LBW: decisive — never an Umpire's Call");
+
+    const howlers = lbws.filter((v) => v.tier === "HOWLER");
+    assert(howlers.length > 0 && howlers.every((v) => !v.umpiresCall), "Howler LBW: distinct from marginal — never an Umpire's Call");
+    assert(howlers.every((v) => v.overturn), "Howler LBW: ground truth always overturns the on-field decision (shock value)");
+
+    const seqA = generateSession(8, 777).map((v) => `${v.incidentType}:${v.difficultyTier}`);
+    const seqB = generateSession(8, 777).map((v) => `${v.incidentType}:${v.difficultyTier}`);
+    assert(JSON.stringify(seqA) === JSON.stringify(seqB), "LBW Distribution: session generation is deterministic per seed");
+
+    console.log(
+      `   [DIST] ${n} LBWs → CLEAR ${tiers.CLEAR} (${pct(tiers.CLEAR).toFixed(1)}%) / ` +
+        `MARGINAL ${tiers.MARGINAL} (${pct(tiers.MARGINAL).toFixed(1)}%) / ` +
+        `HOWLER ${tiers.HOWLER} (${pct(tiers.HOWLER).toFixed(1)}%)`
+    );
+  }
+
   console.log("=================================================");
   console.log(`   TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);
   console.log("=================================================");

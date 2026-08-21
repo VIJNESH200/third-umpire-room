@@ -598,6 +598,15 @@ export function generateSession(count: number = 8, startingSeed?: number): Scena
     else if (i === 3 || i === 7) forcedTier = "HOWLER";
     else if (i % 2 === 1) forcedTier = "MARGINAL";
 
+    // Task 4B — LBW tier mix: LBW incidents draw their own difficulty tier,
+    // deterministically from the per-incident seed (target ≈ 40% CLEAR /
+    // 40% MARGINAL / 20% HOWLER), so genuine Umpire's-Call LBWs occur in
+    // normal sessions. All other incident types keep the composition above.
+    if (forcedType === "LBW") {
+      const tierRoll = new SeededRandom(baseSeed + i * 7919).next();
+      forcedTier = tierRoll < 0.4 ? "CLEAR" : tierRoll < 0.8 ? "MARGINAL" : "HOWLER";
+    }
+
     scenarios.push(generateScenario(baseSeed + i * 7919, forcedType, forcedTier));
   }
 
