@@ -1,31 +1,168 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import type { RunOutData } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { projectToCAM01 } from "../../engine/cameraProjections";
+import { clamp } from "../instinct/actorRigs";
+import {
+  drawArticulatedRunner,
+  drawArticulatedWicketkeeper,
+  drawStumpsAndBails,
+  drawCricketBall,
+} from "../instinct/actorRigs";
 
 interface SideOnWideCreaseViewProps {
   runOut: RunOutData;
   currentTimeMs: number;
 }
 
+// Rig constants: the articulated runner rig is drawn at this scale, facing the
+// crease (LEFT). Local rig +x is "forward" (toward the stumps on screen).
+const RUNNER_SCALE = 1.1;
+const RUNNER_FACING = -1;
+
+/**
+ * CAM 01 • BROADCAST SIDE-ON WIDE ANGLE
+ *
+ * Every actor is rendered from the SAME canonical RunOutReplayState as
+ * CAM 02 / CAM 07 / CAM 10 at the same canonical timestamp:
+ *   - runner body & pose  ← state.runner (world position + forward-kinematic tree)
+ *   - bat                 ← state.bat world tip anchored through the runner's hands
+ *   - keeper              ← state.keeper (world position + gather kinematics)
+ *   - ball                ← state.ball (world position, with motion trail)
+ *   - Zing bails          ← state.stumps + canonical timeline
+ * Only the projection/framing is CAM 01-specific (projectToCAM01).
+ */
 export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
   runOut,
   currentTimeMs,
 }) => {
-  // Canonical shared physical replay state
-  const state = solveRunOutReplayState(runOut, currentTimeMs);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Timing events from canonical state
-  const isBailsDislodged = state.stumps.bailsSeparating;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-  // Project runner world-space position through CAM 01 camera
-  const runnerProj = projectToCAM01(state.runner.worldX, state.runner.worldY, state.runner.worldZ);
-  const batterX = runnerProj.screenX;
+    const W = canvas.width;
+    const H = canvas.height;
 
-  // Project ball world-space position through CAM 01 camera
-  const ballProj = projectToCAM01(state.ball.worldX, state.ball.worldY, state.ball.worldZ);
-  const throwBallX = ballProj.screenX;
-  const throwBallY = ballProj.screenY;
+    // Canonical shared physical replay state
+    const state = solveRunOutReplayState(runOut, currentTimeMs);
+
+    ctx.clearRect(0, 0, W, H);
+
+    // --- 1. Outfield Turf ---
+    const gradTurf = ctx.createLinearGradient(0, 0, 0, H);
+    gradTurf.addColorStop(0, "#173322");
+    gradTurf.addColorStop(1, "#0e2015");
+    ctx.fillStyle = gradTurf;
+    ctx.fillRect(0, 0, W, H);
+
+    // --- 2. Pitch Strip (Side-On Band) ---
+    const gradPitch = ctx.createLinearGradient(0, 210, 0, H);
+    gradPitch.addColorStop(0, "#a88e6b");
+    gradPitch.addColorStop(1, "#8a7353");
+    ctx.fillStyle = gradPitch;
+    ctx.fillRect(0, 210, W, H - 210);
+    ctx.strokeStyle = "#6e5c43";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 210);
+    ctx.lineTo(W, 210);
+    ctx.stroke();
+
+    // --- 3. Painted Creases (worldX anchors via projectToCAM01) ---
+    const creaseProj = projectToCAM01(1220, 0, 0);
+    const bowlingCreaseProj = projectToCAM01(0, 0, 0);
+
+    // Popping crease white band
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.fillRect(creaseProj.screenX - 2, 210, 4, H - 210);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.font = "bold 8px monospace";
+    ctx.fillText("POPPING CREASE", creaseProj.screenX + 6, 225);
+
+    // Bowling crease line (through the stumps)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bowlingCreaseProj.screenX, 210);
+    ctx.lineTo(bowlingCreaseProj.screenX, H);
+    ctx.stroke();
+
+    // --- 4. Wicketkeeper (behind the stumps; canonical gather kinematics) ---
+    const keeperProj = projectToCAM01(
+      state.keeper.worldX,
+      state.keeper.worldY,
+      state.keeper.worldZ
+    );
+    drawArticulatedWicketkeeper(
+      ctx,
+      { x: keeperProj.screenX, y: keeperProj.screenY, scale: 1.0, facing: "RIGHT" },
+      state.keeper.kinematics
+    );
+
+    // --- 5. Striker Stumps & Zing Bails (canonical bail state) ---
+    const dislodgeProgress = clamp(
+      (state.currentTimeMs - state.timeline.bailsDislodgedMs) / 300,
+      0,
+      1
+    );
+    drawStumpsAndBails(ctx, bowlingCreaseProj.screenX, 210, {
+      scale: 1.15,
+      bailsDislodged: state.stumps.bailsSeparating,
+      dislodgeProgress,
+      isZing: true,
+    });
+
+    // --- 6. Incoming Throw (canonical ball world position + trail) ---
+    const ballProj = projectToCAM01(state.ball.worldX, state.ball.worldY, state.ball.worldZ);
+    const prevState = solveRunOutReplayState(runOut, Math.max(600, currentTimeMs - 20));
+    const prevBallProj = projectToCAM01(
+      prevState.ball.worldX,
+      prevState.ball.worldY,
+      prevState.ball.worldZ
+    );
+    drawCricketBall(ctx, ballProj.screenX, ballProj.screenY, {
+      radius: 4.5,
+      seamAngleRad: (currentTimeMs / 1000) * Math.PI * 10,
+      motionTrail: state.ball.throwProgress > 0.05,
+      prevX: prevBallProj.screenX,
+      prevY: prevBallProj.screenY,
+    });
+
+    // --- 7. Runner (canonical world position + forward-kinematic rig) ---
+    const runnerProj = projectToCAM01(
+      state.runner.worldX,
+      state.runner.worldY,
+      state.runner.worldZ
+    );
+
+    // Anchor the rig's bat to the canonical world-space bat tip once the reach
+    // phase begins, so the bat location matches CAM 02 / CAM 07 / CAM 10 exactly
+    // while remaining connected to the runner's hands.
+    let batTipLocal: { x: number; y: number } | undefined;
+    if (state.currentTimeMs >= state.timeline.batReachStartMs - 80) {
+      const tipProj = projectToCAM01(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
+      const local = {
+        x: (tipProj.screenX - runnerProj.screenX) / (RUNNER_FACING * RUNNER_SCALE),
+        y: (tipProj.screenY - runnerProj.screenY) / RUNNER_SCALE,
+      };
+      // Only anchor when the canonical tip is at/ahead of the hands — otherwise
+      // the runner still carries the bat in the natural grip pose.
+      if (local.x > -6) {
+        batTipLocal = local;
+      }
+    }
+
+    drawArticulatedRunner(
+      ctx,
+      { x: runnerProj.screenX, y: runnerProj.screenY, scale: RUNNER_SCALE, facing: "LEFT" },
+      state.runner.kinematics,
+      { batTipLocal }
+    );
+  }, [runOut, currentTimeMs]);
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 
@@ -52,122 +189,12 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
       <div className="relative flex-1 min-h-[230px] my-2 bg-gradient-to-b from-[#0e1824] via-[#09101a] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
 
-        <svg viewBox="0 0 500 320" className="w-full h-full max-h-[340px] z-10">
-          <defs>
-            <linearGradient id="wideTurfGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#173322" />
-              <stop offset="100%" stopColor="#0e2015" />
-            </linearGradient>
-            <linearGradient id="widePitchGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#a88e6b" />
-              <stop offset="100%" stopColor="#8a7353" />
-            </linearGradient>
-          </defs>
-
-          {/* Outfield Grass */}
-          <rect x="0" y="0" width="500" height="320" fill="url(#wideTurfGrad)" />
-
-          {/* Pitch Strip Side-on View */}
-          <rect x="0" y="210" width="500" height="90" fill="url(#widePitchGrad)" />
-          <line x1="0" y1="210" x2="500" y2="210" stroke="#6e5c43" strokeWidth="1.5" />
-
-          {/* Popping Crease White Line */}
-          <rect x="180" y="210" width="4" height="90" fill="#FFFFFF" opacity="0.95" />
-          <text x="186" y="225" fill="#FFFFFF" opacity="0.8" fontSize="8" fontFamily="monospace" fontWeight="bold">
-            POPPING CREASE
-          </text>
-
-          {/* Bowling Crease Line */}
-          <line x1="120" y1="210" x2="120" y2="300" stroke="#FFFFFF" strokeWidth="1" opacity="0.5" />
-
-          {/* Stumps at X=120 */}
-          <g transform="translate(120, 210)">
-            <rect x="-10" y="0" width="20" height="3" fill="#334155" />
-            <rect x="-6" y="-38" width="3.5" height="38" fill={isBailsDislodged ? "#ef4444" : "#cbd5e1"} stroke="#475569" strokeWidth="0.4" />
-            <rect x="-1" y="-38" width="3.5" height="38" fill={isBailsDislodged ? "#ef4444" : "#cbd5e1"} stroke="#475569" strokeWidth="0.4" />
-            <rect x="4" y="-38" width="3.5" height="38" fill={isBailsDislodged ? "#ef4444" : "#cbd5e1"} stroke="#475569" strokeWidth="0.4" />
-
-            {/* Bails / Zing Flash */}
-            {isBailsDislodged ? (
-              <g className="animate-pulse">
-                <circle cx="0" cy="-40" r="14" fill="#ef4444" opacity="0.6" />
-                <rect x="-12" y="-55" width="10" height="3" fill="#ff2e4c" transform="rotate(-30)" />
-                <rect x="4" y="-50" width="10" height="3" fill="#ff2e4c" transform="rotate(25)" />
-              </g>
-            ) : (
-              <>
-                <rect x="-7" y="-41" width="8" height="2.5" fill="#f59e0b" rx="0.5" />
-                <rect x="0" y="-41" width="8" height="2.5" fill="#f59e0b" rx="0.5" />
-              </>
-            )}
-          </g>
-
-          {/* Wicketkeeper / Bowler Collecting the Ball at Stumps */}
-          <g transform="translate(85, 210)">
-            <circle cx="0" cy="-48" r="8" fill="#1e293b" />
-            <rect x="-6" y="-40" width="12" height="24" fill="#1e293b" rx="2" />
-            {/* Crouching legs */}
-            <rect x="-8" y="-16" width="6" height="16" fill="#1e293b" />
-            <rect x="2" y="-16" width="6" height="16" fill="#1e293b" />
-            {/* Extended Arms collecting */}
-            <line x1="4" y1="-32" x2="30" y2="-20" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-            <circle cx="32" cy="-20" r="6" fill="#16a34a" />
-          </g>
-
-          {/* Fielder's Incoming Throw in Air */}
-          {state.ball.isInFlight && (
-            <g>
-              {/* Ball trajectory path */}
-              <line x1="30" y1="60" x2="120" y2="210" stroke="rgba(239, 68, 68, 0.25)" strokeWidth="1.5" strokeDasharray="3 3" />
-              {/* Moving ball */}
-              <circle cx={throwBallX} cy={throwBallY} r="5" fill="#dc2626" stroke="#FFFFFF" strokeWidth="0.8" />
-            </g>
-          )}
-
-          {/* Batsman Sprinting / Diving */}
-          <g transform={`translate(${batterX}, 210)`}>
-            {/* Ground shadow */}
-            <ellipse cx="0" cy="0" rx="35" ry="4" fill="rgba(0,0,0,0.35)" />
-
-            {runOut.diveType === "DIVE" ? (
-              // Full Horizontal Dive Pose
-              <g transform="translate(0, -12)">
-                <circle cx="40" cy="-5" r="9" fill="#0f172a" />
-                <ellipse cx="15" cy="0" rx="28" ry="9" fill="#1e293b" />
-                {/* Bat arm stretched forward */}
-                <line x1="-10" y1="0" x2="-45" y2="8" stroke="#1e293b" strokeWidth="5" strokeLinecap="round" />
-                {/* Bat */}
-                <rect x="-85" y="4" width="45" height="7" rx="2" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
-                {/* Legs behind */}
-                <line x1="35" y1="0" x2="65" y2="-12" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-                <line x1="30" y1="4" x2="60" y2="4" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-              </g>
-            ) : runOut.diveType === "SLIDE" ? (
-              // Sliding Slide Pose
-              <g transform="translate(0, -10)">
-                <circle cx="35" cy="-20" r="9" fill="#0f172a" />
-                <rect x="0" y="-12" width="40" height="15" fill="#1e293b" rx="4" />
-                {/* Front leg extended */}
-                <line x1="0" y1="0" x2="-25" y2="6" stroke="#1e293b" strokeWidth="5" strokeLinecap="round" />
-                {/* Bat arm reaching */}
-                <line x1="5" y1="-8" x2="-35" y2="4" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-                <rect x="-75" y="0" width="45" height="7" rx="2" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
-              </g>
-            ) : (
-              // Standing Runner Sprinting
-              <g transform="translate(0, -35)">
-                <circle cx="15" cy="-15" r="9" fill="#0f172a" />
-                <rect x="0" y="-6" width="22" height="28" fill="#1e293b" rx="3" />
-                {/* Legs running */}
-                <line x1="5" y1="22" x2="-15" y2="35" stroke="#1e293b" strokeWidth="5" strokeLinecap="round" />
-                <line x1="15" y1="22" x2="35" y2="35" stroke="#1e293b" strokeWidth="5" strokeLinecap="round" />
-                {/* Bat reaching */}
-                <line x1="0" y1="4" x2="-30" y2="24" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-                <rect x="-65" y="20" width="40" height="7" rx="2" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
-              </g>
-            )}
-          </g>
-        </svg>
+        <canvas
+          ref={canvasRef}
+          width={500}
+          height={320}
+          className="w-full h-full max-h-[340px] object-contain z-10"
+        />
 
         {/* Real-time Camera Feed Overlay */}
         <div className="absolute top-2.5 left-2.5 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded text-[11px] font-mono backdrop-blur-sm z-20">

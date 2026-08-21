@@ -127,6 +127,71 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
             />
           )}
 
+          {/* Neutral Optical Millimetre Reference Scale — anchored to the crease line.
+              Derived from the CAM 02 projection itself (stumps 0 → crease 1220mm spans
+              90 screen px), so ticks are physically accurate. Measurement reference
+              only: it never states where the bat is relative to the line. */}
+          {(() => {
+            const pxPerMm = (creaseX - stumpsX) / 1220;
+            const rulerY = 258;
+            const spanMm = 200;
+            const ticks: number[] = [];
+            for (let mm = -spanMm; mm <= spanMm; mm += 50) ticks.push(mm);
+            return (
+              <g>
+                <line
+                  x1={creaseX - spanMm * pxPerMm}
+                  y1={rulerY}
+                  x2={creaseX + spanMm * pxPerMm}
+                  y2={rulerY}
+                  stroke="#38BDF8"
+                  strokeWidth="0.8"
+                  opacity="0.7"
+                />
+                {ticks.map((mm) => {
+                  const major = mm % 100 === 0;
+                  const tx = creaseX + mm * pxPerMm;
+                  return (
+                    <g key={mm}>
+                      <line
+                        x1={tx}
+                        y1={rulerY - (major ? 7 : 4)}
+                        x2={tx}
+                        y2={rulerY}
+                        stroke="#38BDF8"
+                        strokeWidth={major ? 0.9 : 0.6}
+                        opacity={major ? 0.9 : 0.55}
+                      />
+                      {major && (
+                        <text
+                          x={tx}
+                          y={rulerY + 8}
+                          textAnchor="middle"
+                          fill="#7DD3FC"
+                          fontSize="6.5"
+                          fontFamily="monospace"
+                        >
+                          {mm === 0 ? "0" : mm > 0 ? `+${mm}` : `${mm}`}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+                <text
+                  x={creaseX - spanMm * pxPerMm}
+                  y={rulerY - 12}
+                  fill="#38BDF8"
+                  fontSize="7"
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                  opacity="0.85"
+                >
+                  OPTICAL MM SCALE • 0 = CREASE LINE
+                </text>
+              </g>
+            );
+          })()}
+
           {/* Zing Wicket Assembly at Bowler/Keeper End */}
           <g transform={`translate(${stumpsX}, 195)`}>
             {/* Grounding Socket Base */}
@@ -217,9 +282,9 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">OPTICAL FEED</div>
-          <div className="text-[11px] font-black text-amber-300">
-            CAM 02 • POPPING CREASE
+          <div className="text-[9px] text-slate-400 font-bold">TIMECODE</div>
+          <div className="text-[11px] font-black text-cyan-300">
+            T+{(currentTimeMs / 1000).toFixed(3)}s
           </div>
         </div>
       </div>

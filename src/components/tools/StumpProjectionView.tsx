@@ -1,6 +1,6 @@
 import React from "react";
 import type { LBWData } from "../../types/scenario";
-import { Crosshair, ShieldAlert } from "lucide-react";
+import { Crosshair } from "lucide-react";
 
 interface StumpProjectionViewProps {
   lbw: LBWData;
@@ -44,15 +44,8 @@ export const StumpProjectionView: React.FC<StumpProjectionViewProps> = ({
   const currentBallX = impactStartX + (targetX - impactStartX) * arrivalProgress;
   const currentBallY = impactStartY + (targetY - impactStartY) * arrivalProgress;
 
-  // Projection outcome styling
-  const isHitting = lbw.projectedStumpHit === "CLEARLY_HITTING";
-  const isUmpiresCall = lbw.projectedStumpHit === "UMPIRES_CALL";
-
-  const getOutcomeColor = () => {
-    if (isHitting) return "#10B981";
-    if (isUmpiresCall) return "#F59E0B";
-    return "#EF4444";
-  };
+  // Neutral evidence colour for the projection — the outcome stays internal to the DRS engine.
+  const EVIDENCE_COLOR = "#38BDF8";
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 
@@ -129,7 +122,7 @@ export const StumpProjectionView: React.FC<StumpProjectionViewProps> = ({
             fontFamily="monospace"
             fontWeight="bold"
           >
-            DRS UMPIRE'S CALL MARGIN (50% DIAMETER)
+            50% MARGIN REFERENCE ZONE
           </text>
 
           {/* The 3 Stumps */}
@@ -216,9 +209,9 @@ export const StumpProjectionView: React.FC<StumpProjectionViewProps> = ({
             cx={targetX}
             cy={targetY}
             r="16"
-            fill={getOutcomeColor()}
+            fill={EVIDENCE_COLOR}
             fillOpacity="0.25"
-            stroke={getOutcomeColor()}
+            stroke={EVIDENCE_COLOR}
             strokeWidth="2"
           />
 
@@ -247,25 +240,11 @@ export const StumpProjectionView: React.FC<StumpProjectionViewProps> = ({
           <line x1={currentBallX} y1={currentBallY - 25} x2={currentBallX} y2={currentBallY + 25} stroke="#38BDF8" strokeWidth="0.8" />
         </svg>
 
-        {/* Big Projection Outcome HUD Banner */}
+        {/* Projection Feed HUD Banner — neutral status, never the outcome */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
-          <div
-            className={`px-3 py-1.5 rounded-md text-xs font-black border backdrop-blur-md shadow-xl flex items-center gap-2 ${
-              isHitting
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
-                : isUmpiresCall
-                ? "bg-amber-950/90 border-amber-500 text-amber-200"
-                : "bg-rose-950/90 border-rose-500 text-rose-200"
-            }`}
-          >
-            <Crosshair size={14} className={isHitting ? "text-emerald-400" : isUmpiresCall ? "text-amber-400" : "text-rose-400"} />
-            <span>
-              {isHitting
-                ? "CLEARLY HITTING WICKETS"
-                : isUmpiresCall
-                ? "UMPIRE'S CALL (CLIPPING STUMPS / BAILS)"
-                : "MISSING WICKETS"}
-            </span>
+          <div className="px-3 py-1.5 rounded-md text-xs font-black border backdrop-blur-md shadow-xl flex items-center gap-2 bg-slate-950/90 border-cyan-500/50 text-cyan-200">
+            <Crosshair size={14} className="text-cyan-400" />
+            <span>PROJECTED PATH AT STUMP PLANE</span>
           </div>
         </div>
       </div>
@@ -285,9 +264,9 @@ export const StumpProjectionView: React.FC<StumpProjectionViewProps> = ({
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">GATE 3 STATUS</div>
-          <div className={`text-[11px] font-black ${isHitting ? "text-emerald-400" : isUmpiresCall ? "text-amber-400" : "text-rose-400"}`}>
-            {lbw.projectedStumpHit.replace("_", " ")}
+          <div className="text-[9px] text-slate-400 font-bold">PROJECTION</div>
+          <div className="text-[11px] font-black text-cyan-300">
+            AT STUMP PLANE
           </div>
         </div>
       </div>

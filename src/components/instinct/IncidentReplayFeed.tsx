@@ -771,7 +771,18 @@ function renderStumpingBroadcast(
 }
 
 /* ================================================================
-   4. CAUGHT BEHIND BROADCAST REPLAY RENDERER
+   4. CAUGHT BEHIND BROADCAST REPLAY RENDERER (SLIP CAM, DEPTH VIEW)
+   Camera relationship: CAMERA → BATTER → STRIKER STUMPS → WICKETKEEPER.
+   Every station is derived from the physical wicket (metres from the
+   striker stumps plane, +X toward the bowler) and pushed through one
+   perspective ground-plane projection — no free-floating screen fractions:
+     striker stumps      0 m
+     popping crease     +1.22 m (Laws of Cricket, in front of the stumps)
+     batter guard       +1.06 m (feet just behind the crease line)
+     wicketkeeper       −8.5 m (on the outfield behind the wicket)
+     camera             +6.0 m (low bowler-side broadcast position)
+   The ball corridor itself communicates the incident: clean miss =
+   daylight past the edge; edge = deflection into the gloves.
    ================================================================ */
 function renderCaughtBehindBroadcast(
   ctx: CanvasRenderingContext2D,
@@ -782,75 +793,179 @@ function renderCaughtBehindBroadcast(
 ) {
   const ev = scenario.initialEvidence?.caughtBehind;
   const cb = scenario.caughtBehind;
+  const hasEdge = cb?.hasEdge ?? false;
 
-  ctx.fillStyle = "#142d1e";
+  // --- 0. World stations & perspective ground-plane projection ---
+  const CAM_X = 6.0;
+  const HORIZON_H = 0.16;
+  const PERSP_K = 3.48;
+  const EYE_D0 = 1.0;
+  const WORLD_STUMPS_X = 0;
+  const WORLD_POPPING_CREASE_X = 1.22;
+  const WORLD_BATTER_GUARD_X = 1.06;
+  const WORLD_KEEPER_X = -8.5;
+  const WORLD_PITCH_FAR_END_X = -1.22;
+
+  const camDist = (worldX: number) => CAM_X - worldX;
+  const groundY = (worldX: number) =>
+    h * (HORIZON_H + PERSP_K / (camDist(worldX) + EYE_D0));
+  const depthFactor = (worldX: number) => PERSP_K / (camDist(worldX) + EYE_D0);
+  const BATTER_RIG_SCALE = 1.3;
+  const actorScale = (worldX: number) =>
+    (BATTER_RIG_SCALE * depthFactor(worldX)) / depthFactor(WORLD_BATTER_GUARD_X);
+  const CORRIDOR_CX = w * 0.5;
+  const stripHalfW = (worldX: number) =>
+    w * 0.27 * (depthFactor(worldX) / depthFactor(WORLD_BATTER_GUARD_X));
+
+  // --- 1. Turf & perspective clay strip receding to the far bowling crease ---
+  const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
+  gradGrass.addColorStop(0, "#122a1b");
+  gradGrass.addColorStop(0.6, "#183925");
+  gradGrass.addColorStop(1, "#0e2015");
+  ctx.fillStyle = gradGrass;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#ad9275";
-  ctx.fillRect(0, h * 0.58, w, h * 0.42);
 
-  const stumpsX = w * 0.46;
-  const stumpsBaseY = h * 0.60;
-  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, { scale: 1.25 });
+  const farEndY = groundY(WORLD_PITCH_FAR_END_X);
+  const nearCutD = PERSP_K / (0.94 - HORIZON_H) - EYE_D0;
+  const nearCutX = CAM_X - nearCutD;
+  const nearCutY = groundY(nearCutX);
 
-  const batterX = w * 0.60;
-  const batterY = h * 0.66;
+  const gradPitch = ctx.createLinearGradient(0, farEndY, 0, nearCutY);
+  gradPitch.addColorStop(0, "#9a8161");
+  gradPitch.addColorStop(0.5, "#b49b78");
+  gradPitch.addColorStop(1, "#ad9275");
+  ctx.fillStyle = gradPitch;
+  ctx.beginPath();
+  ctx.moveTo(CORRIDOR_CX - stripHalfW(WORLD_PITCH_FAR_END_X), farEndY);
+  ctx.lineTo(CORRIDOR_CX + stripHalfW(WORLD_PITCH_FAR_END_X), farEndY);
+  ctx.lineTo(CORRIDOR_CX + stripHalfW(nearCutX), nearCutY);
+  ctx.lineTo(CORRIDOR_CX - stripHalfW(nearCutX), nearCutY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#4d3d29";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // --- 2. Crease geometry (all three lines derived from the same stations) ---
+  // Far bowling crease (end of the clay strip, behind the striker wicket)
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.moveTo(CORRIDOR_CX - stripHalfW(WORLD_PITCH_FAR_END_X) * 0.9, farEndY);
+  ctx.lineTo(CORRIDOR_CX + stripHalfW(WORLD_PITCH_FAR_END_X) * 0.9, farEndY);
+  ctx.stroke();
+
+  // Striker bowling crease (through the stumps plane)
+  const stumpsY = groundY(WORLD_STUMPS_X);
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(CORRIDOR_CX - stripHalfW(WORLD_STUMPS_X) * 0.9, stumpsY + 2);
+  ctx.lineTo(CORRIDOR_CX + stripHalfW(WORLD_STUMPS_X) * 0.9, stumpsY + 2);
+  ctx.stroke();
+
+  // Striker popping crease (the batter takes guard immediately behind this line)
+  const creaseY = groundY(WORLD_POPPING_CREASE_X);
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(CORRIDOR_CX - stripHalfW(WORLD_POPPING_CREASE_X) * 0.95, creaseY);
+  ctx.lineTo(CORRIDOR_CX + stripHalfW(WORLD_POPPING_CREASE_X) * 0.95, creaseY);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.font = "bold 8px monospace";
+  ctx.fillText("POPPING CREASE", CORRIDOR_CX - stripHalfW(WORLD_POPPING_CREASE_X) * 0.9, creaseY - 5);
+
+  // --- 3. Wicketkeeper (farthest actor: behind the striker wicket on the outfield) ---
+  const keeperX = w * 0.485;
+  const keeperY = groundY(WORLD_KEEPER_X);
+  const keeperScale = actorScale(WORLD_KEEPER_X);
+  const keeperK = solveCaughtBehindKeeperKinematics(p, hasEdge);
+  drawArticulatedWicketkeeper(
+    ctx,
+    { x: keeperX, y: keeperY, scale: keeperScale, facing: "RIGHT" },
+    keeperK
+  );
+
+  // --- 4. Striker stumps (between the batter and the keeper) ---
+  drawStumpsAndBails(ctx, CORRIDOR_CX, stumpsY + 2, {
+    scale: actorScale(WORLD_STUMPS_X),
+  });
+
+  // --- 5. Batter (nearest the camera; guard just behind the popping crease) ---
+  const batterX = w * 0.52;
+  const batterY = groundY(WORLD_BATTER_GUARD_X);
   const batterK = solveCaughtBehindBatterKinematics(
     p,
     ev?.shotType,
     ev?.batAngleDeg ?? 14
   );
+  const batterFacing: "LEFT" | "RIGHT" = "LEFT";
 
-  drawArticulatedBatter(
-    ctx,
-    { x: batterX, y: batterY, scale: 1.25, facing: "LEFT" },
-    batterK
-  );
-
-  const keeperX = w * 0.26;
-  const keeperY = h * 0.64;
-  const hasEdge = cb?.hasEdge ?? false;
-  const keeperK = solveCaughtBehindKeeperKinematics(p, hasEdge);
-
-  drawArticulatedWicketkeeper(
-    ctx,
-    { x: keeperX, y: keeperY, scale: 1.22, facing: "RIGHT" },
-    keeperK
-  );
-
-  const batEdgeX = batterX - 28;
-  const batEdgeY = batterY - 34;
-  const deflectionAngle = ev?.apparentDeflectionAngleDeg ?? (hasEdge ? 2.6 : 0);
+  // --- 6. Ball corridor (delivery over the camera → bat plane → gloves / daylight) ---
+  // The physical motion communicates the incident: daylight past the edge for a
+  // clean miss, or a deflection off the edge into the gloves for a nick.
   const gapPx = ev?.apparentGapPixels ?? (hasEdge ? 0 : 18);
+  const batEdgeX = batterX - 26 * BATTER_RIG_SCALE; // bat edge in front of the batter
+  const batEdgeY = batterY - 30 * BATTER_RIG_SCALE;
 
-  let ballX = w * 0.96;
-  let ballY = h * 0.32;
-  let prevBallX = ballX;
-  let prevBallY = ballY;
+  // Keeper glove target (local glove offsets scaled with the keeper rig)
+  const gloveTargetX = keeperX + 14 * keeperScale;
+  const gloveTargetY = keeperY - 18 * keeperScale;
 
-  if (p < 0.50) {
-    const t = p / 0.50;
-    ballX = w * 0.96 + (batEdgeX + gapPx - w * 0.96) * t;
-    ballY = h * 0.32 + (batEdgeY - h * 0.32) * t;
-    prevBallX = ballX + 16;
-    prevBallY = ballY - 4;
+  // The bowler releases over the camera: the delivery enters at the near frame
+  // edge and recedes down the corridor to the bat plane.
+  const entryX = w * 0.5;
+  const entryY = h * 0.965;
+  const batPlaneX = batEdgeX - (hasEdge ? 0 : gapPx);
+  const batPlaneY = batEdgeY;
+
+  let ballX: number;
+  let ballY: number;
+  let ballRadius = 4.6;
+  let prevBallX = 0;
+  let prevBallY = 0;
+
+  if (p < 0.5) {
+    const t = p / 0.5;
+    ballX = entryX + (batPlaneX - entryX) * t;
+    ballY = entryY + (batPlaneY - entryY) * t;
+    ballRadius = 5.2 - t * 0.6; // recedes from the camera
+    prevBallX = entryX + (batPlaneX - entryX) * Math.max(0, t - 0.06);
+    prevBallY = entryY + (batPlaneY - entryY) * Math.max(0, t - 0.06);
   } else {
-    const t = (p - 0.50) / 0.50;
-    const targetX = keeperX + 24;
-    const targetY = deflectionAngle > 0 ? keeperY - 22 : keeperY - 26;
-    ballX = batEdgeX + gapPx + (targetX - (batEdgeX + gapPx)) * t;
-    ballY = batEdgeY + (targetY - batEdgeY) * t;
-    prevBallX = ballX + 12;
-    prevBallY = ballY - 2;
+    const t = (p - 0.5) / 0.5;
+    if (hasEdge) {
+      // Deflects off the edge and dies into the keeper's gloves
+      const easeT = t * (2 - t); // decelerating edge carry
+      ballX = batEdgeX + (gloveTargetX - batEdgeX) * easeT;
+      ballY = batEdgeY + (gloveTargetY - batEdgeY) * easeT;
+    } else {
+      // Carries through with daylight; the keeper tracks it wide of the body
+      const trackX = gloveTargetX - gapPx * 0.6;
+      ballX = batPlaneX + (trackX - batPlaneX) * t;
+      ballY = batPlaneY + (gloveTargetY + 8 - batPlaneY) * t;
+    }
+    ballRadius = 4.6 - t * 1.0;
+    prevBallX = ballX + 10;
+    prevBallY = ballY - 3;
   }
 
   drawCricketBall(ctx, ballX, ballY, {
-    radius: 5.5,
+    radius: ballRadius,
     seamAngleRad: p * Math.PI * 6,
-    shadowY: h * 0.65,
-    motionTrail: p >= 0.20 && p < 0.70,
+    shadowY: ballY + 24,
+    motionTrail: p >= 0.15 && p <= 0.85,
     prevX: prevBallX,
     prevY: prevBallY,
   });
+
+  // --- 7. Batter drawn last (nearest the slip camera) ---
+  drawArticulatedBatter(
+    ctx,
+    { x: batterX, y: batterY, scale: BATTER_RIG_SCALE, facing: batterFacing },
+    batterK
+  );
 }
 
 /* ================================================================

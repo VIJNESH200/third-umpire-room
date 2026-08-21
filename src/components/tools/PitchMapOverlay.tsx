@@ -6,8 +6,6 @@ import {
   Crosshair,
   Footprints,
   Activity,
-  CheckCircle2,
-  AlertOctagon,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
@@ -53,22 +51,9 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
   const impactDotY = 265;
   const stumpTargetX = pitchCenterX + lbw.stumpHitX * 140;
 
-  const getPitchColor = () => {
-    if (lbw.pitchingZone === "OUTSIDE_LEG") return "#EF4444";
-    return "#10B981";
-  };
-
-  const getImpactColor = () => {
-    if (lbw.impactZone === "OUTSIDE_LINE_PLAYING_SHOT") return "#EF4444";
-    if (lbw.impactZone === "OUTSIDE_LINE_NO_SHOT") return "#F59E0B";
-    return "#10B981";
-  };
-
-  const getWicketsColor = () => {
-    if (lbw.projectedStumpHit === "CLEARLY_HITTING") return "#10B981";
-    if (lbw.projectedStumpHit === "UMPIRES_CALL") return "#F59E0B";
-    return "#EF4444";
-  };
+  // Neutral evidence colour: the tool presents physical measurements only.
+  // Gate/verdict conclusions stay internal to the DRS engine — the player makes the call.
+  const EVIDENCE_COLOR = "#38BDF8";
 
   const getStageTitle = (stage: number) => {
     switch (stage) {
@@ -237,21 +222,21 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                 cy={pitchDotY}
                 rx="14"
                 ry="7"
-                fill={getPitchColor()}
+                fill={EVIDENCE_COLOR}
                 fillOpacity="0.35"
-                stroke={getPitchColor()}
+                stroke={EVIDENCE_COLOR}
                 strokeWidth="2"
               />
               <circle cx={pitchDotX} cy={pitchDotY} r="4.5" fill="#FFFFFF" stroke="#0f172a" strokeWidth="1" />
               <text
                 x={pitchDotX + 18}
                 y={pitchDotY + 4}
-                fill={getPitchColor()}
+                fill={EVIDENCE_COLOR}
                 fontSize="11"
                 fontFamily="monospace"
                 fontWeight="900"
               >
-                PITCH: {lbw.pitchingZone.replace("_", " ")}
+                PITCH POINT
               </text>
             </g>
           )}
@@ -270,21 +255,21 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                 cx={impactDotX}
                 cy={impactDotY}
                 r="10"
-                fill={getImpactColor()}
+                fill={EVIDENCE_COLOR}
                 fillOpacity="0.4"
-                stroke={getImpactColor()}
+                stroke={EVIDENCE_COLOR}
                 strokeWidth="2"
               />
               <circle cx={impactDotX} cy={impactDotY} r="4.5" fill="#FFFFFF" stroke="#0f172a" strokeWidth="1" />
               <text
                 x={impactDotX > 250 ? impactDotX - 195 : impactDotX + 18}
                 y={impactDotY + 4}
-                fill={getImpactColor()}
+                fill={EVIDENCE_COLOR}
                 fontSize="11"
                 fontFamily="monospace"
                 fontWeight="900"
               >
-                IMPACT: {lbw.impactZone.replace(/_/g, " ")} ({lbw.impactDistance}m)
+                IMPACT • {lbw.impactDistance}m FROM STUMPS
               </text>
             </g>
           )}
@@ -295,14 +280,14 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
               <path
                 d={`M ${impactDotX},${impactDotY} L ${stumpTargetX},345`}
                 fill="none"
-                stroke={getWicketsColor()}
+                stroke={EVIDENCE_COLOR}
                 strokeWidth="3.5"
               />
               <circle
                 cx={stumpTargetX}
                 cy={345}
                 r="8.5"
-                fill={getWicketsColor()}
+                fill={EVIDENCE_COLOR}
                 fillOpacity="0.8"
                 stroke="#FFFFFF"
                 strokeWidth="2"
@@ -311,32 +296,24 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
           )}
         </svg>
 
-        {/* Live Gate 0 Telemetry Cards (Top Left Overlay) */}
+        {/* Live Gate 0 Telemetry Cards (Top Left Overlay) — raw physical evidence only */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1.5 z-20">
           {revealStage >= 1 && (
-            <div className={`px-3 py-1.5 rounded-md text-[11px] font-mono border backdrop-blur-md flex items-center gap-2 shadow-lg animate-fadeIn ${
-              lbw.isNoBall
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : "bg-emerald-950/90 border-emerald-500/60 text-emerald-200"
-            }`}>
-              <Footprints size={13} className={lbw.isNoBall ? "text-rose-400" : "text-emerald-400"} />
+            <div className="px-3 py-1.5 rounded-md text-[11px] font-mono border backdrop-blur-md flex items-center gap-2 shadow-lg animate-fadeIn bg-slate-950/90 border-cyan-500/50 text-cyan-200">
+              <Footprints size={13} className="text-cyan-400" />
               <div>
                 <span className="font-black">FRONT FOOT: </span>
-                <span>{lbw.isNoBall ? `NO BALL (+${lbw.frontFootOverstepMm}mm)` : "FAIR DELIVERY (LEGAL)"}</span>
+                <span>{lbw.isNoBall ? `HEEL +${lbw.frontFootOverstepMm}mm PAST LINE` : "HEEL BEHIND LINE"}</span>
               </div>
             </div>
           )}
 
           {revealStage >= 2 && (
-            <div className={`px-3 py-1.5 rounded-md text-[11px] font-mono border backdrop-blur-md flex items-center gap-2 shadow-lg animate-fadeIn ${
-              lbw.batContactBeforePad
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : "bg-emerald-950/90 border-emerald-500/60 text-emerald-200"
-            }`}>
-              <Activity size={13} className={lbw.batContactBeforePad ? "text-rose-400" : "text-emerald-400"} />
+            <div className="px-3 py-1.5 rounded-md text-[11px] font-mono border backdrop-blur-md flex items-center gap-2 shadow-lg animate-fadeIn bg-slate-950/90 border-cyan-500/50 text-cyan-200">
+              <Activity size={13} className="text-cyan-400" />
               <div>
-                <span className="font-black">BAT CHECK: </span>
-                <span>{lbw.batContactBeforePad ? "INSIDE EDGE DETECTED" : "NO BAT INVOLVED (PAD FIRST)"}</span>
+                <span className="font-black">ULTRAEDGE: </span>
+                <span>{lbw.batContactBeforePad ? "BAT CONTACT SIGNAL" : "NO BAT SIGNAL"}</span>
               </div>
             </div>
           )}
@@ -380,7 +357,7 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                   cx={50 + lbw.stumpHitX * 90}
                   cy={76 - (lbw.stumpHitHeightCm / 71.1) * 58}
                   r="7"
-                  fill={getWicketsColor()}
+                  fill={EVIDENCE_COLOR}
                   fillOpacity="0.85"
                   stroke="#FFFFFF"
                   strokeWidth="1.5"
@@ -393,98 +370,78 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
             )}
           </svg>
 
-          {/* Wickets Result Pill */}
+          {/* Projection Status Pill — stage status only, never the outcome */}
           <div className="mt-1.5 text-center text-[10px] font-black tracking-wider">
             {revealStage < 5 ? (
               <span className="text-slate-500">STAGE PENDING</span>
-            ) : lbw.projectedStumpHit === "CLEARLY_HITTING" ? (
-              <span className="text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-600/40">
-                CLEARLY HITTING
-              </span>
-            ) : lbw.projectedStumpHit === "UMPIRES_CALL" ? (
-              <span className="text-amber-400 bg-amber-950/70 px-2 py-0.5 rounded border border-amber-600/40">
-                UMPIRE'S CALL
-              </span>
             ) : (
-              <span className="text-rose-400 bg-rose-950/70 px-2 py-0.5 rounded border border-rose-600/40">
-                MISSING STUMPS
+              <span className="text-cyan-300 bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-600/40">
+                PROJECTION SHOWN • MAKE YOUR CALL
               </span>
             )}
           </div>
         </div>
       </div>
 
-      {/* 5-Gate Sequential Status Cards */}
+      {/* 5-Gate Review Sequence Cards — evidence pointers & neutral measurements only */}
       <div className="grid grid-cols-5 gap-2 pt-1 font-mono">
         {/* Gate 0A */}
         <div className={`p-2 rounded-lg border transition-all ${
           revealStage >= 1
-            ? lbw.isNoBall
-              ? "bg-rose-950/50 border-rose-500 text-rose-200"
-              : "bg-emerald-950/50 border-emerald-500 text-emerald-200"
+            ? "bg-slate-800/60 border-cyan-700/50 text-cyan-200"
             : "bg-slate-900 border-slate-800 text-slate-500"
         }`}>
-          <div className="text-[9px] text-slate-400 font-bold">0A. FAIR BALL</div>
+          <div className="text-[9px] text-slate-400 font-bold">0A. FRONT FOOT</div>
           <div className="text-xs font-black truncate">
-            {revealStage >= 1 ? (lbw.isNoBall ? "NO BALL" : "LEGAL") : "PENDING"}
+            {revealStage >= 1 ? (lbw.isNoBall ? `+${lbw.frontFootOverstepMm}mm PAST` : "BEHIND LINE") : "PENDING"}
           </div>
         </div>
 
         {/* Gate 0B */}
         <div className={`p-2 rounded-lg border transition-all ${
           revealStage >= 2
-            ? lbw.batContactBeforePad
-              ? "bg-rose-950/50 border-rose-500 text-rose-200"
-              : "bg-emerald-950/50 border-emerald-500 text-emerald-200"
+            ? "bg-slate-800/60 border-cyan-700/50 text-cyan-200"
             : "bg-slate-900 border-slate-800 text-slate-500"
         }`}>
-          <div className="text-[9px] text-slate-400 font-bold">0B. BAT CHECK</div>
+          <div className="text-[9px] text-slate-400 font-bold">0B. BAT SIGNAL</div>
           <div className="text-xs font-black truncate">
-            {revealStage >= 2 ? (lbw.batContactBeforePad ? "BAT FIRST" : "PAD FIRST") : "PENDING"}
+            {revealStage >= 2 ? (lbw.batContactBeforePad ? "CONTACT" : "NO SIGNAL") : "PENDING"}
           </div>
         </div>
 
         {/* Gate 1 */}
         <div className={`p-2 rounded-lg border transition-all ${
           revealStage >= 3
-            ? lbw.pitchingZone === "OUTSIDE_LEG"
-              ? "bg-rose-950/50 border-rose-500 text-rose-200"
-              : "bg-emerald-950/50 border-emerald-500 text-emerald-200"
+            ? "bg-slate-800/60 border-cyan-700/50 text-cyan-200"
             : "bg-slate-900 border-slate-800 text-slate-500"
         }`}>
           <div className="text-[9px] text-slate-400 font-bold">1. PITCHING</div>
           <div className="text-xs font-black truncate">
-            {revealStage >= 3 ? lbw.pitchingZone.replace("_", " ") : "PENDING"}
+            {revealStage >= 3 ? "SEE PITCH MAP" : "PENDING"}
           </div>
         </div>
 
         {/* Gate 2 */}
         <div className={`p-2 rounded-lg border transition-all ${
           revealStage >= 4
-            ? lbw.impactZone === "OUTSIDE_LINE_PLAYING_SHOT"
-              ? "bg-rose-950/50 border-rose-500 text-rose-200"
-              : "bg-emerald-950/50 border-emerald-500 text-emerald-200"
+            ? "bg-slate-800/60 border-cyan-700/50 text-cyan-200"
             : "bg-slate-900 border-slate-800 text-slate-500"
         }`}>
           <div className="text-[9px] text-slate-400 font-bold">2. IMPACT</div>
           <div className="text-xs font-black truncate">
-            {revealStage >= 4 ? lbw.impactZone.replace(/_/g, " ") : "PENDING"}
+            {revealStage >= 4 ? `${lbw.impactDistance}m FROM STUMPS` : "PENDING"}
           </div>
         </div>
 
         {/* Gate 3 */}
         <div className={`p-2 rounded-lg border transition-all ${
           revealStage >= 5
-            ? lbw.projectedStumpHit === "CLEARLY_HITTING"
-              ? "bg-emerald-950/50 border-emerald-500 text-emerald-200"
-              : lbw.projectedStumpHit === "UMPIRES_CALL"
-              ? "bg-amber-950/50 border-amber-500 text-amber-200"
-              : "bg-rose-950/50 border-rose-500 text-rose-200"
+            ? "bg-slate-800/60 border-cyan-700/50 text-cyan-200"
             : "bg-slate-900 border-slate-800 text-slate-500"
         }`}>
           <div className="text-[9px] text-slate-400 font-bold">3. WICKETS</div>
           <div className="text-xs font-black truncate">
-            {revealStage >= 5 ? lbw.projectedStumpHit.replace("_", " ") : "PENDING"}
+            {revealStage >= 5 ? `${lbw.stumpHitHeightCm.toFixed(1)}cm HEIGHT` : "PENDING"}
           </div>
         </div>
       </div>

@@ -941,10 +941,20 @@ export function drawArticulatedBatter(
 // ================================================================
 // 1B. ARTICULATED RUNNER RIG RENDERER (FORWARD KINEMATIC TREE)
 // ================================================================
+export interface RunnerRenderOptions {
+  // Optional rig-local anchor for the bat TIP (already converted from world/camera
+  // space by the caller). When provided, the bat pivots at the lead hand and points
+  // exactly at this point, so the drawn bat matches a canonical world-space bat while
+  // staying physically connected to the hands. Blade length is clamped so the reach
+  // always reads as one human athlete.
+  batTipLocal?: { x: number; y: number };
+}
+
 export function drawArticulatedRunner(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
-  k: RunnerKinematics
+  k: RunnerKinematics,
+  opts: RunnerRenderOptions = {}
 ) {
   const scale = t.scale ?? 1.0;
   const facingDir = t.facing === "LEFT" ? -1 : 1;
@@ -1183,11 +1193,23 @@ export function drawArticulatedRunner(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(leadHandX - 3, leadHandY - 2, 6, 2);
 
-  // Bat Grip & Blade (Derives strictly from Lead Hand)
+  // Bat Grip & Blade (Derives strictly from Lead Hand).
+  // With opts.batTipLocal the blade points from the hand at the caller's anchor
+  // (canonical world-space bat tip projected into rig-local space); without it the
+  // bat follows the grip angles alone.
   const batAngle = k.leadShoulderAngleRad + k.batGripAngleRad;
+  let bladeLen = 44;
   ctx.save();
   ctx.translate(leadHandX, leadHandY);
-  ctx.rotate(batAngle - Math.PI / 2);
+  if (opts.batTipLocal) {
+    const dx = opts.batTipLocal.x - leadHandX;
+    const dy = opts.batTipLocal.y - leadHandY;
+    // rotate so that the blade axis (0, +L) lands along (dx, dy)
+    ctx.rotate(Math.atan2(-dx, dy));
+    bladeLen = Math.min(60, Math.max(30, Math.hypot(dx, dy)));
+  } else {
+    ctx.rotate(batAngle - Math.PI / 2);
+  }
 
   // Handle & Rubber Grip
   ctx.fillStyle = "#ffffff";
@@ -1206,13 +1228,13 @@ export function drawArticulatedRunner(
   ctx.strokeStyle = "#78350f";
   ctx.lineWidth = 1.0;
   ctx.beginPath();
-  ctx.roundRect(-3.5, 0, 7, 44, [1, 1, 3, 3]);
+  ctx.roundRect(-3.5, 0, 7, bladeLen, [1, 1, 3, 3]);
   ctx.fill();
   ctx.stroke();
 
   // Blade Spine & Red Sponsor Sticker
   ctx.fillStyle = "#b45309";
-  ctx.fillRect(-1.5, 4, 3, 36);
+  ctx.fillRect(-1.5, 4, 3, Math.max(0, bladeLen - 8));
   ctx.fillStyle = "#dc2626";
   ctx.fillRect(-3, 2, 6, 6);
 

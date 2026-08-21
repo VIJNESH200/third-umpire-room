@@ -27,8 +27,6 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
   // Project bat tip from canonical world-space through CAM 07 overhead camera
   const batTipProj = projectToCAM07(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
   const batTipX = batTipProj.screenX;
-  const isPastCrease = state.bat.isPastCrease;
-
   // Stumps at X = 130 (Top-down circles)
   const stumpsX = 130;
 
@@ -182,17 +180,17 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
             <circle cx="0" cy="0" r="4" fill="#38BDF8" stroke="#FFFFFF" strokeWidth="1" />
           </g>
 
-          {/* Distance Indicator Arrow between Crease and Bat Tip */}
+          {/* Distance Indicator Arrow between Crease and Bat Tip — neutral evidence colour only */}
           <line
             x1={creaseX}
             y1="195"
             x2={batTipX}
             y2="195"
-            stroke={isPastCrease ? "#10B981" : "#EF4444"}
+            stroke="#38BDF8"
             strokeWidth="1.5"
           />
-          <circle cx={creaseX} cy="195" r="2.5" fill={isPastCrease ? "#10B981" : "#EF4444"} />
-          <circle cx={batTipX} cy="195" r="2.5" fill={isPastCrease ? "#10B981" : "#EF4444"} />
+          <circle cx={creaseX} cy="195" r="2.5" fill="#38BDF8" />
+          <circle cx={batTipX} cy="195" r="2.5" fill="#38BDF8" />
         </svg>
 
         {/* Real-time Camera Feed Overlay */}
