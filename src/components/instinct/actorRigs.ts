@@ -41,6 +41,115 @@ export function smoothstep(min: number, max: number, value: number): number {
 }
 
 // ================================================================
+// SHARED FK SKELETON PRIMITIVE (infrastructure only)
+// ================================================================
+// Deterministic parent-child skeleton maths intended to become the single
+// shared rig backbone. Existing renderers deliberately do NOT use these yet —
+// visual output, poses and camera behaviour are unchanged in this task.
+//
+// Angle convention matches the existing hierarchical Runner rig:
+//   bone direction = (sin(angleRad), -cos(angleRad))
+//   0 rad points UP (-y); positive angles rotate clockwise on canvas.
+// Downward chains (legs) are expressed with a PI angle offset, which maps
+// their previous (sin b, cos b) form exactly via c = PI - b.
+
+export interface SkeletonJoint {
+  x: number;
+  y: number;
+}
+
+export interface SkeletonBone {
+  length: number;
+  angleRad: number;
+}
+
+/** Shared segment lengths, taken verbatim from the hierarchical Runner rig so
+ *  later rig migrations preserve today's stylized proportions exactly. */
+export const BONE_LENGTHS = {
+  spine: 28,
+  neck: 10,
+  upperArm: 14,
+  forearm: 14,
+  thigh: 16,
+  shin: 16,
+} as const;
+
+/** Unit direction vector of a bone carrying accumulated rotation `angleRad`. */
+export function skeletonBoneDirection(angleRad: number): SkeletonJoint {
+  return { x: Math.sin(angleRad), y: -Math.cos(angleRad) };
+}
+
+/**
+ * Pure forward-kinematics chain solver.
+ *
+ * bones[0] extends from `root`; every subsequent bone extends from the
+ * previous joint and INHERITS the accumulated parent rotation, so rotating a
+ * parent propagates through all descendants and segment lengths stay fixed.
+ * Returns joints[0] = root followed by one joint per bone.
+ */
+export function solveChain(
+  root: SkeletonJoint,
+  bones: readonly SkeletonBone[]
+): SkeletonJoint[] {
+  const joints: SkeletonJoint[] = [{ x: root.x, y: root.y }];
+  let x = root.x;
+  let y = root.y;
+  let accumulated = 0;
+  for (const bone of bones) {
+    accumulated += bone.angleRad;
+    const dir = skeletonBoneDirection(accumulated);
+    x += dir.x * bone.length;
+    y += dir.y * bone.length;
+    joints.push({ x, y });
+  }
+  return joints;
+}
+
+export interface PropAttachmentSpec {
+  /** Index into the chain's joints (0 = root). Clamped into range. */
+  jointIndex: number;
+  /** Optional slide along the local bone axis in px (may be negative). */
+  slideAlongBone?: number;
+  /** Extra rotation relative to the accumulated chain rotation at the joint. */
+  offsetAngleRad?: number;
+}
+
+export interface AttachedPropTransform {
+  x: number;
+  y: number;
+  angleRad: number;
+}
+
+/**
+ * Generic external-prop attachment for equipment (bat, gloves, pads, ...).
+ * Anchors to a chain joint, optionally slides along the local bone axis and
+ * adds an angular offset on top of the inherited chain rotation. At the final
+ * joint the slide continues along the last segment so end-effectors (hands,
+ * feet) can host props naturally. Pure and deterministic.
+ */
+export function attachPropToChain(
+  root: SkeletonJoint,
+  bones: readonly SkeletonBone[],
+  attachment: PropAttachmentSpec
+): AttachedPropTransform {
+  const joints = solveChain(root, bones);
+  const idx = Math.max(0, Math.min(attachment.jointIndex, joints.length - 1));
+
+  let baseAngle = 0;
+  for (let i = 0; i < idx; i++) baseAngle += bones[i].angleRad;
+
+  const slideAngle = idx < bones.length ? baseAngle + bones[idx].angleRad : baseAngle;
+  const slide = attachment.slideAlongBone ?? 0;
+  const dir = skeletonBoneDirection(slideAngle);
+
+  return {
+    x: joints[idx].x + dir.x * slide,
+    y: joints[idx].y + dir.y * slide,
+    angleRad: baseAngle + (attachment.offsetAngleRad ?? 0),
+  };
+}
+
+// ================================================================
 // KINEMATIC DATA STRUCTURES
 // ================================================================
 export interface BatterKinematics {

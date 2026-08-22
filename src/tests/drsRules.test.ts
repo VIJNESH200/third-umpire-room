@@ -13,6 +13,9 @@ import {
   solveRunOutRunnerKinematics,
   solveStumpingBatterKinematics,
   solveStumpingKeeperKinematics,
+  solveChain,
+  attachPropToChain,
+  BONE_LENGTHS,
 } from "../components/instinct/actorRigs";
 import {
   solveRunOutReplayState,
@@ -1249,6 +1252,183 @@ function runAllDRSTests() {
         `MARGINAL ${tiers.MARGINAL} (${pct(tiers.MARGINAL).toFixed(1)}%) / ` +
         `HOWLER ${tiers.HOWLER} (${pct(tiers.HOWLER).toFixed(1)}%)`
     );
+  }
+
+  // --- GROUP 20: SHARED FK SKELETON PRIMITIVE (TASK 2A) ---
+  console.log("\n--- GROUP 20: SHARED FK SKELETON PRIMITIVE ---");
+  {
+    const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps;
+    const isFiniteJoint = (p: { x: number; y: number }) =>
+      Number.isFinite(p.x) && Number.isFinite(p.y);
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+
+    // T20.1 — child-parent distance equals bone length exactly
+    {
+      const joints = solveChain({ x: 10, y: 20 }, [{ length: 4, angleRad: 0 }]);
+      assert(joints.length === 2, "FK Chain: single bone produces root + one joint");
+      assert(
+        near(dist(joints[0], joints[1]), 4),
+        "FK Chain: child distance from parent == bone length"
+      );
+      assert(
+        near(joints[1].x, 10) && near(joints[1].y, 16),
+        "FK Chain: zero-angle bone points straight up (canvas -y) per rig convention"
+      );
+    }
+
+    // T20.2 — cumulative rotation: the child inherits the parent's rotation
+    {
+      const joints = solveChain({ x: 0, y: 0 }, [
+        { length: 3, angleRad: 0 },
+        { length: 4, angleRad: Math.PI / 2 },
+      ]);
+      // First bone up; second bone rotated +90° relative -> points right (+x).
+      assert(near(joints[1].x, 0) && near(joints[1].y, -3), "FK Chain: first joint at (0,-3)");
+      assert(
+        near(joints[2].x, 4) && near(joints[2].y, -3),
+        "FK Chain: cumulative rotations propagate through descendants (90° chain)"
+      );
+    }
+    {
+      const joints = solveChain({ x: 0, y: 0 }, [
+        { length: 3, angleRad: Math.PI / 2 },
+        { length: 4, angleRad: -Math.PI / 2 },
+      ]);
+      // Parent rotated +90° (right); child counter-rotates back to world-up.
+      assert(
+        near(joints[1].x, 3) && near(joints[1].y, 0),
+        "FK Chain: +90° root rotation maps to +x as expected"
+      );
+      assert(
+        near(joints[2].x, 3) && near(joints[2].y, -4),
+        "FK Chain: child inherits parent frame (relative -90° restores world-up)"
+      );
+    }
+
+    // T20.3 — zero-angle spine+neck chain totals its shared bone lengths
+    {
+      const joints = solveChain({ x: 250, y: 200 }, [
+        { length: BONE_LENGTHS.spine, angleRad: 0 },
+        { length: BONE_LENGTHS.neck, angleRad: 0 },
+      ]);
+      assert(
+        near(joints[2].x, 250) && near(joints[2].y, 200 - BONE_LENGTHS.spine - BONE_LENGTHS.neck),
+        "FK Chain: zero-angle multi-bone chain extends straight up by total length"
+      );
+    }
+
+    // T20.4 — downward chains expressible via PI offset (legs convention)
+    {
+      const joints = solveChain({ x: 5, y: 5 }, [
+        { length: BONE_LENGTHS.thigh, angleRad: Math.PI },
+        { length: BONE_LENGTHS.shin, angleRad: 0 },
+      ]);
+      assert(
+        near(joints[1].y, 5 + BONE_LENGTHS.thigh),
+        "FK Chain: PI-offset bone points straight down for leg chains"
+      );
+      assert(
+        near(joints[2].x, 5) && near(joints[2].y, 5 + BONE_LENGTHS.thigh + BONE_LENGTHS.shin),
+        "FK Chain: straight leg keeps thigh+shin collinear through knee"
+      );
+    }
+
+    // T20.5 — multi-bone chain deterministic & finite over a pose sweep
+    {
+      const bones = [
+        { length: BONE_LENGTHS.spine, angleRad: 0.35 },
+        { length: BONE_LENGTHS.neck, angleRad: -0.42 },
+        { length: BONE_LENGTHS.upperArm, angleRad: 1.54 },
+        { length: BONE_LENGTHS.forearm, angleRad: 0.05 },
+      ];
+      const a = solveChain({ x: -17.5, y: 240.25 }, bones);
+      const b = solveChain({ x: -17.5, y: 240.25 }, bones);
+      assert(
+        JSON.stringify(a) === JSON.stringify(b),
+        "FK Chain: identical inputs produce byte-identical joint sets (deterministic)"
+      );
+      let allFinite = true;
+      for (const j of a) if (!isFiniteJoint(j)) allFinite = false;
+      assert(allFinite && a.length === 5, "FK Chain: multi-bone output finite and well-formed");
+
+      let sweepFinite = true;
+      for (let i = 0; i < 64; i++) {
+        const t = i / 63;
+        const sweep = solveChain({ x: t * 500, y: t * 320 }, [
+          { length: BONE_LENGTHS.thigh, angleRad: -0.75 + t * 1.5 },
+          { length: BONE_LENGTHS.shin, angleRad: 0.25 * Math.sin(t * Math.PI * 14) },
+        ]);
+        for (const j of sweep) if (!isFiniteJoint(j)) sweepFinite = false;
+      }
+      assert(sweepFinite, "FK Chain: no NaN/Infinity across a 64-pose stride sweep");
+    }
+
+    // T20.6 — external prop attachment primitive
+    {
+      const armBones = [
+        { length: BONE_LENGTHS.upperArm, angleRad: 0 },
+        { length: BONE_LENGTHS.forearm, angleRad: 0 },
+      ];
+      const shoulder = { x: 100, y: 100 };
+
+      const hand = attachPropToChain(shoulder, armBones, { jointIndex: 2 });
+      assert(
+        near(hand.x, 100) && near(hand.y, 100 - BONE_LENGTHS.upperArm - BONE_LENGTHS.forearm),
+        "Prop Attach: end-effector anchor lands on hand joint with inherited angle"
+      );
+      assert(near(hand.angleRad, 0), "Prop Attach: accumulated rotation exposed at attachment");
+
+      const elbowSlide = attachPropToChain(shoulder, armBones, {
+        jointIndex: 1,
+        slideAlongBone: 5,
+      });
+      assert(
+        near(elbowSlide.x, 100) && near(elbowSlide.y, 86 - 5),
+        "Prop Attach: slideAlongBone moves along outgoing bone axis at the elbow"
+      );
+
+      const rotatedGrip = attachPropToChain(shoulder, armBones, {
+        jointIndex: 2,
+        offsetAngleRad: -Math.PI / 4,
+      });
+      assert(
+        near(rotatedGrip.angleRad, -Math.PI / 4),
+        "Prop Attach: offsetAngleRad adds on top of inherited chain rotation"
+      );
+
+      const clamped = attachPropToChain(shoulder, armBones, { jointIndex: 99 });
+      assert(
+        isFiniteJoint(clamped) && near(clamped.x, 100) && near(clamped.y, 72),
+        "Prop Attach: out-of-range joint index clamps to final joint without NaN"
+      );
+
+      const bent = solveChain(shoulder, [
+        { length: BONE_LENGTHS.upperArm, angleRad: 0.6 },
+        { length: BONE_LENGTHS.forearm, angleRad: 1.2 },
+      ]);
+      const propOnBent = attachPropToChain(shoulder, [
+        { length: BONE_LENGTHS.upperArm, angleRad: 0.6 },
+        { length: BONE_LENGTHS.forearm, angleRad: 1.2 },
+      ], { jointIndex: 2 });
+      assert(
+        near(propOnBent.x, bent[2].x) && near(propOnBent.y, bent[2].y),
+        "Prop Attach: follows bent chain exactly (rotation propagation intact)"
+      );
+    }
+
+    // T20.7 — shared constants match the existing Runner rig proportions
+    {
+      assert(
+        BONE_LENGTHS.spine === 28 &&
+          BONE_LENGTHS.neck === 10 &&
+          BONE_LENGTHS.upperArm === 14 &&
+          BONE_LENGTHS.forearm === 14 &&
+          BONE_LENGTHS.thigh === 16 &&
+          BONE_LENGTHS.shin === 16,
+        "Bone Constants: lengths mirror current Runner rig proportions"
+      );
+    }
   }
 
   console.log("=================================================");
