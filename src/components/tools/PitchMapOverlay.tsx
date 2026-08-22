@@ -333,7 +333,11 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
               <Crosshair size={11} className="text-cyan-400" />
               STUMP IMPACT
             </span>
-            <span className="text-slate-200">{lbw.stumpHitHeightCm.toFixed(1)} cm</span>
+            {/* Stage-gated: the projected impact height is Stage-5 evidence and
+                must stay hidden until the wickets projection is revealed. */}
+            <span className="text-slate-200">
+              {revealStage >= 5 ? `${lbw.stumpHitHeightCm.toFixed(1)} cm` : "--.- cm"}
+            </span>
           </div>
 
           <svg viewBox="0 0 100 80" className="w-full h-20 bg-[#070b14] rounded border border-slate-800">

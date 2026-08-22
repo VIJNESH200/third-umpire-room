@@ -8,12 +8,16 @@ import { sounds } from "../../engine/audioSynth";
 
 /** Task 7 — LBW evidence review checklist. Transmission (normal mode) is
  *  gated until the player has genuinely inspected each forensic feed. The
- *  flags are set by real review actions in ConsoleLayout (transport use on
- *  the replay feed, manual Hawk-Eye stage reveals) — never bare clicks. */
+ *  flags are set by real review actions in ConsoleLayout: transport use on
+ *  CAM 01 while the replay feed is active, and walking the Hawk-Eye stage
+ *  sequence through to the Stage 5 wickets projection — stage 1 alone never
+ *  completes ball-track review. Never bare clicks. */
 export interface ReviewChecklist {
   replay: boolean; // CAM 01 — transport interaction while the replay feed is active
-  track: boolean; // CAM 03 — at least one manual ball-tracking stage reveal
+  trackStage: number; // CAM 03 — furthest Hawk-Eye stage revealed in order (0..5)
 }
+
+const TRACK_REVIEW_COMPLETE_STAGE = 5;
 
 interface VerdictPanelProps {
   incidentType: string;
@@ -47,7 +51,8 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   const evidenceReviewComplete =
     trainingMode || reviewChecklist === undefined
       ? true
-      : reviewChecklist.replay && reviewChecklist.track;
+      : reviewChecklist.replay &&
+        reviewChecklist.trackStage >= TRACK_REVIEW_COMPLETE_STAGE;
   const canTransmit = selectedVerdict !== null && areMarkersPlaced && evidenceReviewComplete;
 
   const handleSelectVerdict = (verdict: DecisionVerdict) => {
@@ -106,13 +111,23 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
         </div>
       </div>
 
-      {/* LBW Evidence Review States — satisfied only by genuine review actions */}
+      {/* LBW Evidence Review States — satisfied only by genuine review actions.
+          Ball-track review reflects real progression through the Hawk-Eye
+          sequence (n/5 stages walked); it completes only at the projection. */}
       {reviewChecklist && !trainingMode && (
         <div className="grid grid-cols-2 gap-2">
           {(
             [
-              { key: "replay", label: "CHECK REPLAY", done: reviewChecklist.replay },
-              { key: "track", label: "CHECK BALL TRACK", done: reviewChecklist.track },
+              { key: "replay", label: "CHECK REPLAY", done: reviewChecklist.replay, progress: "" },
+              {
+                key: "track",
+                label: "CHECK BALL TRACK",
+                done: reviewChecklist.trackStage >= TRACK_REVIEW_COMPLETE_STAGE,
+                progress:
+                  reviewChecklist.trackStage > 0 && reviewChecklist.trackStage < TRACK_REVIEW_COMPLETE_STAGE
+                    ? ` • STAGE ${reviewChecklist.trackStage}/${TRACK_REVIEW_COMPLETE_STAGE}`
+                    : "",
+              },
             ] as const
           ).map((chip) => (
             <div
@@ -125,6 +140,9 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
             >
               {chip.done ? "✓ " : "○ "}
               {chip.label}
+              {!chip.done && chip.progress && (
+                <span className="font-normal opacity-80">{chip.progress}</span>
+              )}
             </div>
           ))}
         </div>

@@ -68,10 +68,12 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
   // Task 7 — LBW evidence review states. Transmission is gated (normal mode)
   // until the player has genuinely inspected each forensic feed: transport
-  // interaction on CAM 01 (replay), and at least one manual Hawk-Eye stage reveal
-  // on CAM 03 (ball track).
+  // interaction on CAM 01 (replay), and the full sequential Hawk-Eye reveal on
+  // CAM 03 — trackStageReached records how far the ball-track sequence has
+  // actually been walked (5 = wickets projection shown); stage 1 alone never
+  // satisfies it.
   const [replayReviewed, setReplayReviewed] = useState<boolean>(false);
-  const [trackReviewed, setTrackReviewed] = useState<boolean>(false);
+  const [trackStageReached, setTrackStageReached] = useState<number>(0);
   const isLbwReview = scenario.incidentType === "LBW" && phase === "REVIEW";
 
   // Reset active tool & markers whenever scenario changes
@@ -84,7 +86,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     setPlayerBatGroundedMs(null);
     setPlayerBailsDislodgedMs(null);
     setReplayReviewed(false);
-    setTrackReviewed(false);
+    setTrackStageReached(0);
   }, [scenario.id, scenario.incidentType]);
 
   // Central Shared Timeline & Transport Engine
@@ -247,9 +249,13 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     if (activeTool === "BROADCAST_FRONT") setReplayReviewed(true);
   };
 
-  // Task 5B — Hawk-Eye manual stage reveals count as ball-track review
+  // Task 5B — Hawk-Eye review progress: the checklist records the furthest
+  // stage the player has actually revealed in order (PitchMapOverlay only
+  // advances sequentially). Reaching Stage 5 — the wickets projection — is
+  // what completes ball-track review; a single early stage never does.
   const handleStageChange = (stage: number) => {
-    if (isLbwReview && !trainingMode && stage >= 1) setTrackReviewed(true);
+    if (!isLbwReview || trainingMode) return;
+    setTrackStageReached((prev) => Math.max(prev, stage));
   };
 
   // Frame Stepping (scaled to active feed's FPS: 500fps -> 2ms/frame, 50fps -> 20ms/frame)
@@ -656,7 +662,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                   trainingMode={trainingMode}
                   reviewChecklist={
                     scenario.incidentType === "LBW"
-                      ? { replay: replayReviewed, track: trackReviewed }
+                      ? { replay: replayReviewed, trackStage: trackStageReached }
                       : undefined
                   }
                 />
