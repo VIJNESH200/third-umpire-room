@@ -32,6 +32,7 @@ interface ConsoleLayoutProps {
     playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
   ) => void;
   onNextIncident: () => void;
+  trainingMode?: boolean;
 }
 
 export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
@@ -45,16 +46,17 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   onSoftSignalSubmit,
   onFinalVerdictSubmit,
   onNextIncident,
+  trainingMode = false,
 }) => {
   // Get initial primary tool for scenario
   const getDefaultTool = (type: string) => {
     switch (type) {
-      case "LBW": return "PITCH_MAP";
+      case "LBW": return "BROADCAST_FRONT";
       case "RUN_OUT":
       case "STUMPING": return "CREASE_ZOOM";
       case "CAUGHT_BEHIND": return "ULTRAEDGE";
       case "BOUNDARY": return "BOUNDARY_ZOOM";
-      default: return "PITCH_MAP";
+      default: return "BROADCAST_FRONT";
     }
   };
 
@@ -64,14 +66,25 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const [playerBatGroundedMs, setPlayerBatGroundedMs] = useState<number | null>(null);
   const [playerBailsDislodgedMs, setPlayerBailsDislodgedMs] = useState<number | null>(null);
 
+  // Task 7 — LBW evidence review states. Transmission is gated (normal mode)
+  // until the player has genuinely inspected each forensic feed: transport
+  // interaction on CAM 01 (replay), and at least one manual Hawk-Eye stage reveal
+  // on CAM 03 (ball track).
+  const [replayReviewed, setReplayReviewed] = useState<boolean>(false);
+  const [trackReviewed, setTrackReviewed] = useState<boolean>(false);
+  const isLbwReview = scenario.incidentType === "LBW" && phase === "REVIEW";
+
   // Reset active tool & markers whenever scenario changes
   useEffect(() => {
     setActiveTool(getDefaultTool(scenario.incidentType));
     setCurrentTimeMs(1200);
+    stopTransportLoop();
     setIsPlaying(false);
     setIsRockAndRoll(false);
     setPlayerBatGroundedMs(null);
     setPlayerBailsDislodgedMs(null);
+    setReplayReviewed(false);
+    setTrackReviewed(false);
   }, [scenario.id, scenario.incidentType]);
 
   // Central Shared Timeline & Transport Engine
@@ -82,6 +95,12 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const [isRockAndRoll, setIsRockAndRoll] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(0.5);
   const [scanlinesEnabled, setScanlinesEnabled] = useState<boolean>(true);
+  // Mirror of the last committed canonical time. Used to re-assert a known-good
+  // timestamp whenever the transport halts (see pauseTransport below).
+  const currentTimeMsRef = useRef<number>(1200);
+  useEffect(() => {
+    currentTimeMsRef.current = currentTimeMs;
+  }, [currentTimeMs]);
 
   // Derive logical frame rate from active camera feed
   const getActiveCameraFps = (tool: string): number => {
@@ -98,6 +117,37 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const rnrDirectionRef = useRef<number>(1);
   const animFrameRef = useRef<number | null>(null);
   const lastTimestampRef = useRef<number>(performance.now());
+  // State drives the controls; these refs synchronously stop a queued frame
+  // before a Run-Out step or camera switch can advance the canonical clock.
+  const playbackIntentRef = useRef<boolean>(false);
+  const rockAndRollIntentRef = useRef<boolean>(false);
+  // Monotonic transport generation. Every Run-Out start/stop increments it so a
+  // clock update queued by a killed animation frame is recognized as stale and
+  // discarded instead of leaking into a later unrelated render (e.g. changing
+  // the timestamp when switching Run-Out cameras after Rock & Roll).
+  const transportEpochRef = useRef<number>(0);
+
+  const stopTransportLoop = () => {
+    transportEpochRef.current += 1;
+    playbackIntentRef.current = false;
+    rockAndRollIntentRef.current = false;
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+  };
+
+  const pauseTransport = () => {
+    stopTransportLoop();
+    setIsPlaying(false);
+    setIsRockAndRoll(false);
+    // Re-assert the last committed canonical time AFTER invalidating queued
+    // updates. React applies queued updaters in order, so this absolute set is
+    // applied last and overrides any stale clock update that slipped through,
+    // guaranteeing a halt (pause / step / scrub / camera switch) never changes
+    // the visible Run-Out timestamp.
+    setCurrentTimeMs(currentTimeMsRef.current);
+  };
 
   // Determine key focal event timestamp for Rock & Roll shuttle looping
   const getFocalEventTimeMs = (): number => {
@@ -118,6 +168,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
   // High-Precision Real-time Transport Animation Loop
   useEffect(() => {
+    const isRunOutTransport = scenario.incidentType === "RUN_OUT";
     if (!isPlaying && !isRockAndRoll) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       return;
@@ -125,28 +176,47 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
     lastTimestampRef.current = performance.now();
 
+    // Queue a canonical-clock update. For Run-Out, each queued updater captures
+    // the current transport generation and no-ops if it was superseded between
+    // frame execution and React's flush (PAUSE / camera switch in the same
+    // tick). Non-Run-Out incident types keep the original direct update.
+    const queueReplayClockUpdate = (computeNext: (prev: number) => number) => {
+      if (!isRunOutTransport) {
+        setCurrentTimeMs(computeNext);
+        return;
+      }
+      const epochAtSchedule = transportEpochRef.current;
+      setCurrentTimeMs((prev) =>
+        epochAtSchedule !== transportEpochRef.current ? prev : computeNext(prev)
+      );
+    };
+
     const loop = (now: number) => {
+      if (isRunOutTransport && !playbackIntentRef.current && !rockAndRollIntentRef.current) {
+        animFrameRef.current = null;
+        return;
+      }
       const deltaRealMs = now - lastTimestampRef.current;
       lastTimestampRef.current = now;
 
-      if (isPlaying) {
+      if (isRunOutTransport ? playbackIntentRef.current : isPlaying) {
         // Linear forward replay at chosen playback speed
         const deltaReplayMs = deltaRealMs * playbackSpeed;
-        setCurrentTimeMs((prev) => {
+        queueReplayClockUpdate((prev) => {
           const next = prev + deltaReplayMs;
           if (next >= maxTimeMs) {
             return minTimeMs; // Seamless broadcast loop
           }
           return next;
         });
-      } else if (isRockAndRoll) {
+      } else if (isRunOutTransport ? rockAndRollIntentRef.current : isRockAndRoll) {
         // Shuttle oscillation around the focal incident frame (+/- 160ms)
         const focalTime = getFocalEventTimeMs();
         const rnrMin = Math.max(minTimeMs, focalTime - 160);
         const rnrMax = Math.min(maxTimeMs, focalTime + 160);
         const deltaReplayMs = deltaRealMs * playbackSpeed * 0.45 * rnrDirectionRef.current;
 
-        setCurrentTimeMs((prev) => {
+        queueReplayClockUpdate((prev) => {
           let next = prev + deltaReplayMs;
           if (next >= rnrMax) {
             rnrDirectionRef.current = -1;
@@ -169,29 +239,74 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     };
   }, [isPlaying, isRockAndRoll, playbackSpeed, maxTimeMs, minTimeMs, scenario]);
 
+  // Task 7 — mark genuine review interaction: transport actions (play, step,
+  // seek, shuttle, scrub) taken while CAM 01 is active count as having
+  // reviewed the replay feed.
+  const markTransportReview = () => {
+    if (!isLbwReview || trainingMode) return;
+    if (activeTool === "BROADCAST_FRONT") setReplayReviewed(true);
+  };
+
+  // Task 5B — Hawk-Eye manual stage reveals count as ball-track review
+  const handleStageChange = (stage: number) => {
+    if (isLbwReview && !trainingMode && stage >= 1) setTrackReviewed(true);
+  };
+
   // Frame Stepping (scaled to active feed's FPS: 500fps -> 2ms/frame, 50fps -> 20ms/frame)
   const handleStep = (frames: number) => {
-    setIsPlaying(false);
-    setIsRockAndRoll(false);
+    if (scenario.incidentType === "RUN_OUT") {
+      pauseTransport();
+    } else {
+      setIsPlaying(false);
+      setIsRockAndRoll(false);
+    }
+    markTransportReview();
     const stepDeltaMs = frames * frameStepMs;
     setCurrentTimeMs((prev) => Math.max(minTimeMs, Math.min(maxTimeMs, prev + stepDeltaMs)));
     sounds.playClick(850 + frames * 30);
   };
 
   const togglePlay = () => {
-    setIsRockAndRoll(false);
-    setIsPlaying((p) => !p);
+    if (scenario.incidentType === "RUN_OUT") {
+      const nextPlaying = !playbackIntentRef.current;
+      pauseTransport();
+      playbackIntentRef.current = nextPlaying;
+      setIsRockAndRoll(false);
+      setIsPlaying(nextPlaying);
+    } else {
+      setIsRockAndRoll(false);
+      setIsPlaying((playing) => !playing);
+    }
+    markTransportReview();
     sounds.playClick(750);
   };
 
   const toggleRockAndRoll = () => {
-    setIsPlaying(false);
-    setIsRockAndRoll((r) => !r);
+    if (scenario.incidentType === "RUN_OUT") {
+      const nextRockAndRoll = !rockAndRollIntentRef.current;
+      pauseTransport();
+      rockAndRollIntentRef.current = nextRockAndRoll;
+      setIsPlaying(false);
+      setIsRockAndRoll(nextRockAndRoll);
+    } else {
+      setIsPlaying(false);
+      setIsRockAndRoll((rocking) => !rocking);
+    }
+    markTransportReview();
     sounds.playClick(850);
   };
 
   const handleTimeChange = (newTimeMs: number) => {
+    if (scenario.incidentType === "RUN_OUT") pauseTransport();
+    markTransportReview();
     setCurrentTimeMs(Math.max(minTimeMs, Math.min(maxTimeMs, newTimeMs)));
+  };
+
+  const handleToolSelect = (tool: string) => {
+    // Run-Out camera feeds are alternate projections of the current physical
+    // state. Switching freezes that state; it never seeks or reinitializes it.
+    if (scenario.incidentType === "RUN_OUT") pauseTransport();
+    setActiveTool(tool);
   };
 
   // Comprehensive Event Keyframe Markers
@@ -350,6 +465,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                   activeTool={activeTool}
                   currentTimeMs={currentTimeMs}
                   onTimeChange={handleTimeChange}
+                  onStageChange={handleStageChange}
+                  trainingMode={trainingMode}
                 />
               </div>
 
@@ -525,7 +642,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
               <ToolPalette
                 incidentType={scenario.incidentType}
                 activeTool={activeTool}
-                onSelectTool={setActiveTool}
+                onSelectTool={handleToolSelect}
               />
 
               {/* TV Umpire Verdict Transmitter */}
@@ -533,10 +650,15 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 <VerdictPanel
                   incidentType={scenario.incidentType}
                   onFieldSignal={scenario.onFieldSignal}
-                  drsEvaluation={scenario.drsEvaluation}
                   playerBatGroundedMs={playerBatGroundedMs}
                   playerBailsDislodgedMs={playerBailsDislodgedMs}
                   onVerdictSubmit={onFinalVerdictSubmit}
+                  trainingMode={trainingMode}
+                  reviewChecklist={
+                    scenario.incidentType === "LBW"
+                      ? { replay: replayReviewed, track: trackReviewed }
+                      : undefined
+                  }
                 />
               )}
 

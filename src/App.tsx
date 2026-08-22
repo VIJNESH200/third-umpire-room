@@ -22,6 +22,7 @@ import {
   Volume2,
   VolumeX,
   Zap,
+  GraduationCap,
 } from "lucide-react";
 
 type AppState = "BRIEFING" | "INCIDENT" | "CARD_REVEAL";
@@ -42,6 +43,8 @@ export const App: React.FC = () => {
   const [incidentHistory, setIncidentHistory] = useState<IncidentResult[]>([]);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  // Training mode: forensic assists (AUTO ALL, review checklist auto-complete)
+  const [trainingMode, setTrainingMode] = useState<boolean>(false);
 
   // Start new shift
   const startNewShift = (count: number = 8, forcedType?: IncidentType) => {
@@ -217,6 +220,19 @@ export const App: React.FC = () => {
               <Zap size={13} className="text-amber-400" />
               <span>RAPID (5)</span>
             </button>
+
+            <button
+              onClick={() => setTrainingMode((t) => !t)}
+              className={`py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 border transition-all active:scale-95 ${
+                trainingMode
+                  ? "bg-emerald-950/60 border-emerald-500 text-emerald-300"
+                  : "bg-console-850 hover:bg-console-800 text-slate-400 border-console-750"
+              }`}
+              title="Training assists: AUTO ALL ball-tracking and auto-satisfied evidence review"
+            >
+              <GraduationCap size={13} className={trainingMode ? "text-emerald-400" : "text-slate-500"} />
+              <span>TRAINING {trainingMode ? "ON" : "OFF"}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -238,6 +254,7 @@ export const App: React.FC = () => {
         onSoftSignalSubmit={handleSoftSignalSubmit}
         onFinalVerdictSubmit={handleFinalVerdictSubmit}
         onNextIncident={handleNextIncident}
+        trainingMode={trainingMode}
       />
     );
   }

@@ -36,9 +36,8 @@ export const ToolPalette: React.FC<ToolPaletteProps> = ({
     switch (incidentType) {
       case "LBW":
         return [
+          { id: "BROADCAST_FRONT", camCode: "CAM 01", label: "Impact Replay", icon: <Camera size={14} /> },
           { id: "PITCH_MAP", camCode: "CAM 03", label: "Hawk-Eye 3D", icon: <Crosshair size={14} />, badge: "PITCH MAP" },
-          { id: "BROADCAST_FRONT", camCode: "CAM 01", label: "Front-On Cam", icon: <Camera size={14} /> },
-          { id: "STUMP_PROJECTION", camCode: "CAM 06", label: "Stump Face", icon: <Layers size={14} /> },
         ];
       case "RUN_OUT":
       case "STUMPING":

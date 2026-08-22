@@ -13,11 +13,15 @@ interface PitchMapOverlayProps {
   lbw: LBWData;
   onFieldSignal: OnFieldSignal;
   onStageChange?: (stage: number) => void;
+  /** Training assist: shows the AUTO ALL bulk-reveal button. Normal gameplay
+   *  requires the player to reveal each evidence stage manually. */
+  trainingMode?: boolean;
 }
 
 export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
   lbw,
   onStageChange,
+  trainingMode = false,
 }) => {
   // Stages:
   // 0: Idle, 1: Front Foot (No-Ball Check), 2: UltraEdge Bat Check, 3: Pitching Zone, 4: Impact Zone, 5: Wickets Projection
@@ -89,12 +93,15 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
           >
             <RotateCcw size={13} />
           </button>
-          <button
-            onClick={revealAll}
-            className="tactical-btn px-2.5 py-1 rounded text-[11px] font-bold text-slate-300 transition-colors"
-          >
-            AUTO ALL
-          </button>
+          {trainingMode && (
+            <button
+              onClick={revealAll}
+              className="tactical-btn px-2.5 py-1 rounded text-[11px] font-bold text-slate-300 transition-colors"
+              title="Training assist: reveal all telemetry stages at once"
+            >
+              AUTO ALL
+            </button>
+          )}
           {revealStage < maxStages && (
             <button
               onClick={advanceStage}

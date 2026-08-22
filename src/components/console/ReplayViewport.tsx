@@ -2,7 +2,6 @@ import React from "react";
 import type { Scenario } from "../../types/scenario";
 import { PitchMapOverlay } from "../tools/PitchMapOverlay";
 import { FrontOnPitchView } from "../tools/FrontOnPitchView";
-import { StumpProjectionView } from "../tools/StumpProjectionView";
 import { CreaseZoom } from "../tools/CreaseZoom";
 import { SideOnWideCreaseView } from "../tools/SideOnWideCreaseView";
 import { OverheadCreaseView } from "../tools/OverheadCreaseView";
@@ -19,6 +18,7 @@ interface ReplayViewportProps {
   currentTimeMs: number;
   onTimeChange: (timeMs: number) => void;
   onStageChange?: (stage: number) => void;
+  trainingMode?: boolean;
 }
 
 export const ReplayViewport: React.FC<ReplayViewportProps> = ({
@@ -27,6 +27,7 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
   currentTimeMs,
   onTimeChange,
   onStageChange,
+  trainingMode = false,
 }) => {
   const renderContent = () => {
     // 1. LBW Incidents
@@ -37,31 +38,15 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
             lbw={scenario.lbw}
             onFieldSignal={scenario.onFieldSignal}
             onStageChange={onStageChange}
+            trainingMode={trainingMode}
           />
         );
       }
-      if (activeTool === "BROADCAST_FRONT") {
-        return (
-          <FrontOnPitchView
-            lbw={scenario.lbw}
-            currentTimeMs={currentTimeMs}
-          />
-        );
-      }
-      if (activeTool === "STUMP_PROJECTION") {
-        return (
-          <StumpProjectionView
-            lbw={scenario.lbw}
-            currentTimeMs={currentTimeMs}
-          />
-        );
-      }
-      // Fallback
+      // Default / BROADCAST_FRONT (CAM 01)
       return (
-        <PitchMapOverlay
+        <FrontOnPitchView
           lbw={scenario.lbw}
-          onFieldSignal={scenario.onFieldSignal}
-          onStageChange={onStageChange}
+          currentTimeMs={currentTimeMs}
         />
       );
     }

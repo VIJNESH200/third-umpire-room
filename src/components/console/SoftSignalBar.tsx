@@ -32,6 +32,7 @@ export const SoftSignalBar: React.FC<SoftSignalBarProps> = ({
     setSubmitted(false);
 
     timerRef.current = window.setInterval(() => {
+      if ((window as any).__PHASE1_PROGRESS__ !== undefined) return;
       setTimeLeft((prev) => {
         const elapsed = (Date.now() - startTimeRef.current) / 1000;
         const remaining = Math.max(0, timeLimitSeconds - elapsed);

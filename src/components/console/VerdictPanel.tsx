@@ -2,15 +2,22 @@ import React, { useState } from "react";
 import type {
   DecisionVerdict,
   OnFieldSignal,
-  DRSRuleEvaluation,
 } from "../../types/scenario";
-import { Send, AlertTriangle, ShieldCheck, Scale, Award, Lock } from "lucide-react";
+import { Send, AlertTriangle, Scale, Lock } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
+
+/** Task 7 — LBW evidence review checklist. Transmission (normal mode) is
+ *  gated until the player has genuinely inspected each forensic feed. The
+ *  flags are set by real review actions in ConsoleLayout (transport use on
+ *  the replay feed, manual Hawk-Eye stage reveals) — never bare clicks. */
+export interface ReviewChecklist {
+  replay: boolean; // CAM 01 — transport interaction while the replay feed is active
+  track: boolean; // CAM 03 — at least one manual ball-tracking stage reveal
+}
 
 interface VerdictPanelProps {
   incidentType: string;
   onFieldSignal: OnFieldSignal;
-  drsEvaluation: DRSRuleEvaluation;
   playerBatGroundedMs?: number | null;
   playerBailsDislodgedMs?: number | null;
   onVerdictSubmit: (
@@ -18,22 +25,30 @@ interface VerdictPanelProps {
     dismissalReason: string,
     playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
   ) => void;
+  trainingMode?: boolean;
+  /** Provided for LBW incidents; gates transmission in normal mode. */
+  reviewChecklist?: ReviewChecklist;
 }
 
 export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   incidentType,
   onFieldSignal,
-  drsEvaluation,
   playerBatGroundedMs = null,
   playerBailsDislodgedMs = null,
   onVerdictSubmit,
+  trainingMode = false,
+  reviewChecklist,
 }) => {
   const [selectedVerdict, setSelectedVerdict] = useState<DecisionVerdict | null>(null);
   const [dismissalReason, setDismissalReason] = useState<string>("STANDARD");
 
   const isRunOutOrStumping = incidentType === "RUN_OUT" || incidentType === "STUMPING";
   const areMarkersPlaced = !isRunOutOrStumping || (playerBatGroundedMs !== null && playerBailsDislodgedMs !== null);
-  const canTransmit = selectedVerdict !== null && areMarkersPlaced;
+  const evidenceReviewComplete =
+    trainingMode || reviewChecklist === undefined
+      ? true
+      : reviewChecklist.replay && reviewChecklist.track;
+  const canTransmit = selectedVerdict !== null && areMarkersPlaced && evidenceReviewComplete;
 
   const handleSelectVerdict = (verdict: DecisionVerdict) => {
     setSelectedVerdict(verdict);
@@ -48,8 +63,6 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
       playerBailsDislodgedMs,
     });
   };
-
-  const isUmpiresCall = incidentType === "LBW" && drsEvaluation.isUmpiresCall;
 
   return (
     <div className="hardware-panel rounded-xl p-3.5 font-mono select-none text-slate-200 space-y-3 shadow-xl">
@@ -83,25 +96,39 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
           </span>
         </div>
 
-        {/* DRS Law Standard of Proof Guidance */}
+        {/* Neutral standard of proof — never enumerates which evidence
+            decides the case; the full law explanation arrives only after
+            transmission, on the result screen. */}
         <div className="text-[11px] text-slate-300 flex items-start gap-1.5 pt-1 border-t border-console-850">
           <Scale size={13} className="text-cyan-400 shrink-0 mt-0.5" />
-          <span>
-            {onFieldSignal === "OUT"
-              ? "Overturn requires conclusive evidence of Missing Stumps, Pitching Outside Leg, or Edge."
-              : onFieldSignal === "NOT_OUT"
-              ? "Overturn requires conclusive evidence of Clearly Hitting (all 4 gates passed)."
-              : "Direct referral: Base verdict purely on visual slow-motion evidence."}
-          </span>
+          <span className="font-bold">STANDARD OF PROOF:</span>
+          <span>CONCLUSIVE EVIDENCE REQUIRED</span>
         </div>
-
-        {isUmpiresCall && (
-          <div className="bg-amber-950/40 border border-amber-500/40 p-2 rounded text-[11px] text-amber-300 flex items-center gap-1.5 animate-pulse">
-            <Award size={13} className="text-amber-400 shrink-0" />
-            <span><b>DRS LAW 3.4:</b> 'Umpire's Call' requires upholding the on-field decision ({onFieldSignal}).</span>
-          </div>
-        )}
       </div>
+
+      {/* LBW Evidence Review States — satisfied only by genuine review actions */}
+      {reviewChecklist && !trainingMode && (
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              { key: "replay", label: "CHECK REPLAY", done: reviewChecklist.replay },
+              { key: "track", label: "CHECK BALL TRACK", done: reviewChecklist.track },
+            ] as const
+          ).map((chip) => (
+            <div
+              key={chip.key}
+              className={`px-2 py-1.5 rounded text-[10px] font-bold text-center border transition-all ${
+                chip.done
+                  ? "bg-emerald-950/70 border-emerald-600/50 text-emerald-300"
+                  : "bg-console-950 border-console-800 text-slate-500"
+              }`}
+            >
+              {chip.done ? "✓ " : "○ "}
+              {chip.label}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Primary Verdict Selection Buttons */}
       <div className="grid grid-cols-2 gap-3 pt-1">

@@ -104,11 +104,7 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
     );
 
     // --- 5. Striker Stumps & Zing Bails (canonical bail state) ---
-    const dislodgeProgress = clamp(
-      (state.currentTimeMs - state.timeline.bailsDislodgedMs) / 300,
-      0,
-      1
-    );
+    const dislodgeProgress = clamp(state.stumps.bailRotationDeg / 55, 0, 1);
     drawStumpsAndBails(ctx, bowlingCreaseProj.screenX, 210, {
       scale: 1.15,
       bailsDislodged: state.stumps.bailsSeparating,

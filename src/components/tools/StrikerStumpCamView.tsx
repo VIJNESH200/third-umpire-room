@@ -225,9 +225,12 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
     0
   );
 
-  // --- TWO INDIVIDUAL ZING BAILS WITH LOCAL BALLISTIC FLIGHT ---
+  // --- TWO INDIVIDUAL ZING BAILS ---
+  // Their camera projection is unique, but every position comes directly from
+  // the canonical state. CAM 10 has no local event timer or bail physics.
   const bailsDislodged = state.stumps.bailsSeparating;
-  const dtDislodgeMs = Math.max(0, currentTimeMs - state.timeline.bailsDislodgedMs);
+  const bailDisplacement = state.stumps.bailDisplacementMm;
+  const bailRotationRad = (state.stumps.bailRotationDeg * Math.PI) / 180;
 
   // Bail 1: Off-Middle Bail (spans -114mm to 0mm at resting height 716mm)
   let b1WorldX = 0;
@@ -241,24 +244,16 @@ export const StrikerStumpCamView: React.FC<StrikerStumpCamViewProps> = ({
   let b2WorldZ = 716;
   let b2RotRad = 0;
 
-  if (bailsDislodged && dtDislodgeMs > 0) {
-    // Flight duration ~340ms, then settles on turf
-    const tFlight1 = Math.min(1, dtDislodgeMs / 320);
-    const tFlight2 = Math.min(1, dtDislodgeMs / 360);
+  if (bailsDislodged) {
+    b1WorldX = -bailDisplacement.x * 0.25;
+    b1WorldY = -57 - bailDisplacement.y;
+    b1WorldZ = 716 + bailDisplacement.z;
+    b1RotRad = bailRotationRad;
 
-    // Bail 1 (Off-Side): pops up, drifts outward to off side, settles on turf near stumps
-    const arcZ1 = Math.sin(tFlight1 * Math.PI) * 75 - tFlight1 * tFlight1 * 40;
-    b1WorldX = -tFlight1 * 35; // slightly behind stumps in throw direction
-    b1WorldY = -57 - tFlight1 * 105; // outward to off-side
-    b1WorldZ = Math.max(12, 716 + arcZ1 - tFlight1 * 710); // lands on turf Z ≈ 12mm
-    b1RotRad = tFlight1 * 1.35; // ~77 degrees tumble
-
-    // Bail 2 (Leg-Side): pops up higher, drifts outward to leg side, settles on turf
-    const arcZ2 = Math.sin(tFlight2 * Math.PI) * 90 - tFlight2 * tFlight2 * 50;
-    b2WorldX = -tFlight2 * 45; // slightly behind stumps
-    b2WorldY = 57 + tFlight2 * 120; // outward to leg-side
-    b2WorldZ = Math.max(12, 716 + arcZ2 - tFlight2 * 710); // lands on turf Z ≈ 12mm
-    b2RotRad = -tFlight2 * 1.55; // ~89 degrees tumble
+    b2WorldX = -bailDisplacement.x * 0.32;
+    b2WorldY = 57 + bailDisplacement.y;
+    b2WorldZ = 716 + bailDisplacement.z;
+    b2RotRad = -bailRotationRad;
   }
 
   // Compute 3D endpoints & clipping for Bail 1 (Off-Middle)
