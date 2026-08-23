@@ -13,9 +13,13 @@ import {
   solveRunOutRunnerKinematics,
   solveStumpingBatterKinematics,
   solveStumpingKeeperKinematics,
+  solveCaughtBehindKeeperKinematics,
+  solveRunOutKeeperKinematics,
   solveChain,
   attachPropToChain,
   solveTwoBoneIK,
+  solveKeeperSkeleton,
+  KEEPER_BONE,
   BONE_LENGTHS,
 } from "../components/instinct/actorRigs";
 import {
@@ -1575,6 +1579,164 @@ function runAllDRSTests() {
         if (!near(chain[2].x, legacyHead.x, 1e-6) || !near(chain[2].y, legacyHead.y, 1e-6)) ok = false;
       }
       assert(ok, "Bowler FK: head chained to torso (10+10) and equals legacy rotated head position");
+    }
+  }
+
+  // --- GROUP 22: WICKETKEEPER FK MIGRATION (TASK 2C) ---
+  console.log("\n--- GROUP 22: WICKETKEEPER FK MIGRATION ---");
+  {
+    const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    const kb = KEEPER_BONE;
+
+    // Every keeper solver across its full parameter domain.
+    const sampleSkeletons = (): { label: string; s: ReturnType<typeof solveKeeperSkeleton> }[] => {
+      const out: { label: string; s: ReturnType<typeof solveKeeperSkeleton> }[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const p = i / 40;
+        out.push({ label: "stumping", s: solveKeeperSkeleton(solveStumpingKeeperKinematics(p)) });
+        out.push({ label: "caught-behind", s: solveKeeperSkeleton(solveCaughtBehindKeeperKinematics(p, i % 2 === 0)) });
+        out.push({ label: "run-out", s: solveKeeperSkeleton(solveRunOutKeeperKinematics(p, i % 3 === 0)) });
+      }
+      return out;
+    };
+    const samples = sampleSkeletons();
+
+    // T22.1 — head/neck adjacency: neck bone fixed and chained off the spine
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.shoulder, s.headBase), kb.neck)) ok = false;
+        if (!near(dist(s.pelvis, s.shoulder), kb.spine)) ok = false;
+      }
+      assert(ok, "Keeper FK: head rides a fixed-length neck chained to the spine for every solver pose");
+    }
+
+    // T22.2 — shoulder/arm adjacency with fixed upper arm + forearm lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.shoulder, s.leadElbow), kb.upperArm)) ok = false;
+        if (!near(dist(s.leadElbow, s.leadHand), kb.forearm)) ok = false;
+        if (!near(dist(s.shoulder, s.rearElbow), kb.upperArm)) ok = false;
+        if (!near(dist(s.rearElbow, s.rearHand), kb.forearm)) ok = false;
+      }
+      assert(ok, "Keeper FK: both arms keep exact upperArm/forearm lengths from the shared shoulder");
+    }
+
+    // T22.3 — hand/glove adjacency: gloves are the hand end-effectors
+    {
+      let ok = true;
+      const crouchK = { crouchElevation: 0, torsoAngleRad: 0.15, headTiltRad: 0.1, gloveX: 12, gloveY: -16, isGlovesOpen: true };
+      const appealK = { crouchElevation: 1, torsoAngleRad: -0.1, headTiltRad: -0.2, gloveX: 0, gloveY: -52, isGlovesOpen: false };
+      const crouchS = solveKeeperSkeleton(crouchK);
+      const appealS = solveKeeperSkeleton(appealK);
+      // Both glove targets are inside arm reach, so hands land exactly on them.
+      if (!near(crouchS.leadHand.x, crouchK.gloveX + 4, 1e-6) || !near(crouchS.rearHand.x, crouchK.gloveX - 4, 1e-6)) ok = false;
+      if (!near(appealS.leadHand.x, appealK.gloveX + 8, 1e-6) || !near(appealS.rearHand.x, appealK.gloveX - 8, 1e-6)) ok = false;
+      assert(ok, "Keeper FK: gloves sit exactly on both hand end-effectors in crouch and appeal");
+    }
+    {
+      // Per-solver fine sweep: consecutive poses must stay within a small
+      // neighbourhood, ruling out teleports and discrete glove-mode switches.
+      const sweeps: [string, (t: number) => ReturnType<typeof solveKeeperSkeleton>][] = [
+        ["stumping", (t) => solveKeeperSkeleton(solveStumpingKeeperKinematics(t))],
+        ["caught-behind-edge", (t) => solveKeeperSkeleton(solveCaughtBehindKeeperKinematics(t, true))],
+        ["caught-behind-clean", (t) => solveKeeperSkeleton(solveCaughtBehindKeeperKinematics(t, false))],
+        ["run-out", (t) => solveKeeperSkeleton(solveRunOutKeeperKinematics(t, t > 0.5))],
+      ];
+      let continuous = true;
+      let culprit = "";
+      for (const [label, fn] of sweeps) {
+        let prev = fn(0);
+        for (let i = 1; i <= 1000; i++) {
+          const curr = fn(i / 1000);
+          if (dist(curr.leadHand, prev.leadHand) > 1.5 || dist(curr.rearHand, prev.rearHand) > 1.5) {
+            continuous = false;
+            culprit = label;
+          }
+          prev = curr;
+        }
+      }
+      assert(continuous, `Keeper FK: gloves glide continuously in every solver timeline (${culprit || "all clean"})`);
+    }
+
+    // T22.4 — hip/leg adjacency: hips ride the pelvis row, legs keep fixed lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.leadHip, s.pelvis), 3.5)) ok = false;
+        if (!near(dist(s.trailHip, s.pelvis), 3.5)) ok = false;
+        if (!near(dist(s.leadHip, s.leadKnee), kb.thigh)) ok = false;
+        if (!near(dist(s.leadKnee, s.leadAnkle), kb.shin)) ok = false;
+        if (!near(dist(s.trailHip, s.trailKnee), kb.thigh)) ok = false;
+        if (!near(dist(s.trailKnee, s.trailAnkle), kb.shin)) ok = false;
+      }
+      assert(ok, "Keeper FK: hips stay on the pelvis with exact thigh/shin lengths to grounded ankles");
+    }
+
+    // T22.5 — crouch extremes: deep crouch keeps feet planted and pelvis low
+    {
+      const crouch = solveKeeperSkeleton({
+        crouchElevation: 0, torsoAngleRad: 0.15, headTiltRad: 0.1, gloveX: 12, gloveY: -16, isGlovesOpen: true,
+      });
+      const grounded =
+        near(crouch.leadAnkle.y, -1, 1e-6) &&
+        near(crouch.trailAnkle.y, -1, 1e-6);
+      assert(grounded, "Keeper FK: deep crouch pins both ankles exactly on the turf line");
+      assert(
+        crouch.leadKnee.y > crouch.leadHip.y && crouch.trailKnee.y < 0,
+        "Keeper FK: deep crouch produces bent knees below the hip line"
+      );
+    }
+
+    // T22.6 — standing appeal extremes: tallest coherent pose, gloves raised above shoulders
+    {
+      const appeal = solveKeeperSkeleton({
+        crouchElevation: 1, torsoAngleRad: -0.1, headTiltRad: -0.2, gloveX: 0, gloveY: -52, isGlovesOpen: false,
+      });
+      assert(
+        appeal.leadHand.y < appeal.shoulder.y && appeal.rearHand.y < appeal.shoulder.y,
+        "Keeper FK: standing appeal raises both gloved hands above the shoulder line"
+      );
+      assert(
+        near(dist(appeal.shoulder, appeal.headBase), kb.neck) &&
+          appeal.headBase.y < appeal.pelvis.y,
+        "Keeper FK: standing appeal keeps head chained above the pelvis"
+      );
+      assert(
+        near(appeal.leadAnkle.y, -1, 1e-6) && near(appeal.trailAnkle.y, -1, 1e-6),
+        "Keeper FK: standing appeal still grounds both feet"
+      );
+    }
+
+    // T22.7 — no NaN/Infinity anywhere, including out-of-domain kinematics
+    {
+      let finite = true;
+      for (const { s } of samples) {
+        for (const j of Object.values(s)) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      const weird = [
+        { crouchElevation: -2, torsoAngleRad: 9, headTiltRad: -7, gloveX: 500, gloveY: 900, isGlovesOpen: true },
+        { crouchElevation: 42, torsoAngleRad: -13, headTiltRad: 5, gloveX: -800, gloveY: -900, isGlovesOpen: false },
+      ];
+      for (const k of weird) {
+        const s = solveKeeperSkeleton(k);
+        for (const j of Object.values(s)) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      assert(finite, "Keeper FK: every joint finite across solvers and clamped out-of-domain inputs");
+    }
+
+    // T22.8 — deterministic output
+    {
+      const mk = () =>
+        JSON.stringify(solveKeeperSkeleton(solveStumpingKeeperKinematics(0.57)));
+      assert(mk() === mk(), "Keeper FK: byte-identical skeletons for repeated solves");
     }
   }
 

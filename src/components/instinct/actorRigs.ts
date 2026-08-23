@@ -41,13 +41,11 @@ export function smoothstep(min: number, max: number, value: number): number {
 }
 
 // ================================================================
-// SHARED FK SKELETON PRIMITIVE (infrastructure only)
+// SHARED FK SKELETON PRIMITIVE
 // ================================================================
-// Deterministic parent-child skeleton maths intended to become the single
-// shared rig backbone. Existing renderers deliberately do NOT use these yet —
-// visual output, poses and camera behaviour are unchanged in this task.
-//
-// Angle convention matches the existing hierarchical Runner rig:
+// Deterministic parent-child skeleton maths shared by migrated rigs
+// (Runner, Bowler, Wicketkeeper). Angle convention matches the
+// hierarchical Runner rig:
 //   bone direction = (sin(angleRad), -cos(angleRad))
 //   0 rad points UP (-y); positive angles rotate clockwise on canvas.
 // Downward chains (legs) are expressed with a PI angle offset, which maps
@@ -524,7 +522,9 @@ export function solveCaughtBehindKeeperKinematics(
     const t = (p - 0.52) / 0.18;
     const smoothT = easeOutCubic(t);
     gloveX = lerp(18, 14, smoothT);
-    gloveY = lerp(-22, -18, smoothT);
+    // Start from the true phase-2 endpoint (edge dives deeper than clean);
+    // the legacy hard-coded -22 teleported clean catches by 2px at p=0.52.
+    gloveY = lerp(hasEdge ? -22 : -20, -18, smoothT);
     isGlovesOpen = false;
     crouchElevation = lerp(0.1, 0.25, smoothT);
   } else {
@@ -1559,6 +1559,124 @@ export function drawArticulatedBowler(
 // ================================================================
 // 3. ARTICULATED WICKETKEEPER RIG RENDERER
 // ================================================================
+// 3. ARTICULATED WICKETKEEPER RIG (SHARED FK SKELETON)
+// ================================================================
+/**
+ * Keeper bone table — half-scale runner proportions chosen so today's
+ * compact crouched silhouette is preserved exactly:
+ * spine 12 + neck 4 == legacy pelvis->head-centre rise (lerp(-32,-46)),
+ * thigh/shin 15+15 covers the standing hip->turf span (~28px) that the
+ * legacy detached leg rectangles could not reach,
+ * upperArm/forearm 10+10 reaches every solver glove target (max ~19px
+ * from the shoulder during the stumping whip).
+ */
+export const KEEPER_BONE = {
+  spine: 12,
+  neck: 4,
+  upperArm: 10,
+  forearm: 10,
+  thigh: 15,
+  shin: 15,
+} as const;
+
+export interface KeeperSkeleton {
+  pelvis: SkeletonJoint;
+  shoulder: SkeletonJoint;
+  headBase: SkeletonJoint;
+
+  leadElbow: SkeletonJoint;
+  leadHand: SkeletonJoint;
+  rearElbow: SkeletonJoint;
+  rearHand: SkeletonJoint;
+
+  leadHip: SkeletonJoint;
+  leadKnee: SkeletonJoint;
+  leadAnkle: SkeletonJoint;
+  trailHip: SkeletonJoint;
+  trailKnee: SkeletonJoint;
+  trailAnkle: SkeletonJoint;
+}
+
+/**
+ * Pure FK solve of the wicketkeeper hierarchy from flat KeeperKinematics:
+ *
+ *   pelvis → spine → shoulder → neck → head
+ *   shoulder → upper arm → forearm → hand/glove   (both arms, IK to gloves)
+ *   hip → thigh → shin → foot                     (both legs, IK to turf)
+ *
+ * The pelvis height is driven solely by crouchElevation so crouch/stand/
+ * appeal move the whole skeleton coherently; ankles stay pinned to the
+ * ground plane and hands land exactly on the solver's glove targets, so
+ * no body part can detach or teleport. Pure and deterministic.
+ */
+export function solveKeeperSkeleton(k: KeeperKinematics): KeeperSkeleton {
+  const e = clamp(k.crouchElevation, 0, 1);
+
+  // --- Pelvis root: low squat -> tall appeal stance ---
+  const pelvis: SkeletonJoint = { x: 0, y: lerp(-16, -29, e) };
+
+  // --- Spine -> shoulder -> neck/head (head inherits torso movement) ---
+  const spineChain = solveChain(pelvis, [
+    { length: KEEPER_BONE.spine, angleRad: k.torsoAngleRad },
+    { length: KEEPER_BONE.neck, angleRad: 0 },
+  ]);
+  const shoulder = spineChain[1];
+  const headBase = spineChain[2];
+
+  // --- Arms: two-link IK onto the solver's glove target pair ---
+  // Glove separation grows continuously with stance height, replacing the
+  // legacy discrete single-mitt -> twin-glove branch.
+  const sep = lerp(4, 8, e);
+  const leadArm = solveTwoBoneIK(
+    shoulder,
+    KEEPER_BONE.upperArm,
+    KEEPER_BONE.forearm,
+    { x: k.gloveX + sep, y: k.gloveY },
+    1
+  );
+  const rearArm = solveTwoBoneIK(
+    shoulder,
+    KEEPER_BONE.upperArm,
+    KEEPER_BONE.forearm,
+    { x: k.gloveX - sep, y: k.gloveY },
+    -1
+  );
+
+  // --- Legs: hips ride the pelvis; ankles pinned to the turf line ---
+  const leadHip: SkeletonJoint = { x: pelvis.x + 3.5, y: pelvis.y };
+  const trailHip: SkeletonJoint = { x: pelvis.x - 3.5, y: pelvis.y };
+  const leadLeg = solveTwoBoneIK(
+    leadHip,
+    KEEPER_BONE.thigh,
+    KEEPER_BONE.shin,
+    { x: 6.5, y: -1 },
+    1
+  );
+  const trailLeg = solveTwoBoneIK(
+    trailHip,
+    KEEPER_BONE.thigh,
+    KEEPER_BONE.shin,
+    { x: lerp(-9.5, -5.5, e), y: -1 },
+    -1
+  );
+
+  return {
+    pelvis,
+    shoulder,
+    headBase,
+    leadElbow: leadArm[1],
+    leadHand: leadArm[2],
+    rearElbow: rearArm[1],
+    rearHand: rearArm[2],
+    leadHip,
+    leadKnee: leadLeg[1],
+    leadAnkle: leadLeg[2],
+    trailHip,
+    trailKnee: trailLeg[1],
+    trailAnkle: trailLeg[2],
+  };
+}
+
 export function drawArticulatedWicketkeeper(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
@@ -1582,25 +1700,35 @@ export function drawArticulatedWicketkeeper(
   ctx.ellipse(0, 0, 20, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const bodyY = lerp(-20, -32, k.crouchElevation);
-  const headY = lerp(-32, -46, k.crouchElevation);
+  // --- FK skeleton (pelvis -> spine/neck/head, shoulders/arms, hips/legs) ---
+  const s = solveKeeperSkeleton(k);
 
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.8;
-  const kneeSpread = lerp(8, 4, k.crouchElevation);
-  const legHeight = lerp(14, 20, k.crouchElevation);
-  ctx.fillRect(-kneeSpread - 4, -legHeight, 6, legHeight);
-  ctx.fillRect(kneeSpread - 2, -legHeight, 6, legHeight);
-  ctx.strokeRect(-kneeSpread - 4, -legHeight, 6, legHeight);
-  ctx.strokeRect(kneeSpread - 2, -legHeight, 6, legHeight);
+  const drawPadLeg = (hip: SkeletonJoint, knee: SkeletonJoint, ankle: SkeletonJoint) => {
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#94a3b8";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(hip.x, hip.y);
+    ctx.lineTo(knee.x, knee.y);
+    ctx.lineTo(ankle.x, ankle.y);
+    ctx.stroke();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 5.2;
+    ctx.stroke();
+  };
+
+  // --- Legs (padded, hip -> knee -> ankle; feet grounded at the turf line) ---
+  drawPadLeg(s.trailHip, s.trailKnee, s.trailAnkle);
+  drawPadLeg(s.leadHip, s.leadKnee, s.leadAnkle);
 
   ctx.fillStyle = "#0f172a";
-  ctx.fillRect(-kneeSpread - 6, -2, 9, 3);
-  ctx.fillRect(kneeSpread - 2, -2, 9, 3);
+  ctx.fillRect(s.trailAnkle.x - 4, -2, 9, 3);
+  ctx.fillRect(s.leadAnkle.x - 1, -2, 9, 3);
 
+  // --- Torso / Flannels (identical art block, rooted at the FK pelvis) ---
   ctx.save();
-  ctx.translate(0, bodyY);
+  ctx.translate(s.pelvis.x, s.pelvis.y);
   ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
@@ -1611,9 +1739,23 @@ export function drawArticulatedWicketkeeper(
   ctx.stroke();
   ctx.restore();
 
+  // --- Arms (shoulder -> elbow -> hand), inheriting torso lean via IK root ---
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 2.8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(s.shoulder.x, s.shoulder.y);
+  ctx.lineTo(s.rearElbow.x, s.rearElbow.y);
+  ctx.lineTo(s.rearHand.x, s.rearHand.y);
+  ctx.moveTo(s.shoulder.x, s.shoulder.y);
+  ctx.lineTo(s.leadElbow.x, s.leadElbow.y);
+  ctx.lineTo(s.leadHand.x, s.leadHand.y);
+  ctx.stroke();
+
+  // --- Helmeted Head (chained to the neck joint; follows torso + own tilt) ---
   ctx.save();
-  ctx.translate(0, headY);
-  ctx.rotate(k.headTiltRad);
+  ctx.translate(s.headBase.x, s.headBase.y);
+  ctx.rotate(k.torsoAngleRad + k.headTiltRad);
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
@@ -1622,26 +1764,20 @@ export function drawArticulatedWicketkeeper(
   ctx.fillRect(1, -3, 7, 3);
   ctx.restore();
 
+  // --- Gloves: always a continuous pair anchored on the hand joints ---
   ctx.fillStyle = "#16a34a";
   ctx.strokeStyle = "#14532d";
   ctx.lineWidth = 1;
-
-  if (k.crouchElevation > 0.8) {
-    ctx.beginPath();
-    ctx.arc(-8, k.gloveY, 6, 0, Math.PI * 2);
-    ctx.arc(8, k.gloveY, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  } else {
-    ctx.beginPath();
-    ctx.ellipse(k.gloveX, k.gloveY, 7.5, 6, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.arc(k.gloveX - 1, k.gloveY, 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  ctx.beginPath();
+  ctx.arc(s.rearHand.x, s.rearHand.y, 6, 0, Math.PI * 2);
+  ctx.arc(s.leadHand.x, s.leadHand.y, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Padded webbing highlight rides the midpoint between both gloves.
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc((s.leadHand.x + s.rearHand.x) / 2 - 1, (s.leadHand.y + s.rearHand.y) / 2, 3, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.restore();
 }
