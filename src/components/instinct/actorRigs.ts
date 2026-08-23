@@ -149,6 +149,39 @@ export function attachPropToChain(
   };
 }
 
+/**
+ * Two-link inverse kinematics for limb chains (hip->knee->foot, etc.).
+ * Places the chain tip on `target` whenever it is inside the reachable annulus;
+ * out-of-range targets clamp to full extension along the same ray, so ground
+ * contact never detaches or stretches. Knee side is chosen by `bendSign`
+ * (+1/-1) relative to the rig's local facing. Pure and deterministic; joints
+ * are produced through solveChain so all shared invariants hold.
+ */
+export function solveTwoBoneIK(
+  root: SkeletonJoint,
+  l1: number,
+  l2: number,
+  target: SkeletonJoint,
+  bendSign: number = 1
+): SkeletonJoint[] {
+  const dx = target.x - root.x;
+  const dy = target.y - root.y;
+  const rawD = Math.hypot(dx, dy);
+  const d = Math.min(Math.max(rawD, Math.abs(l1 - l2) + 1e-3), l1 + l2 - 1e-3);
+  // Angle (in this convention) pointing from root toward the target.
+  const theta = Math.atan2(dx, -dy);
+  const cosAlpha = clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
+  const alpha = Math.acos(cosAlpha);
+  const cosKappa = clamp((l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2), -1, 1);
+  const kappa = Math.acos(cosKappa); // interior knee angle (PI = straight)
+  const c1 = theta + bendSign * alpha;
+  const rel2 = -bendSign * (Math.PI - kappa);
+  return solveChain(root, [
+    { length: l1, angleRad: c1 },
+    { length: l2, angleRad: rel2 },
+  ]);
+}
+
 // ================================================================
 // KINEMATIC DATA STRUCTURES
 // ================================================================
@@ -1355,6 +1388,20 @@ export function drawArticulatedRunner(
 // ================================================================
 // 2. ARTICULATED BOWLER RIG RENDERER
 // ================================================================
+/**
+ * Bowler bone table — derived from the shared constants at the bowler's
+ * broadcast framing size so today's silhouette is preserved exactly:
+ * spine 10 == BONE_LENGTHS.neck (legacy pelvis->arm-anchor rise),
+ * neck   10 == BONE_LENGTHS.neck (shoulder->head centre; 10+10 == legacy 20),
+ * legs          == BONE_LENGTHS.thigh/shin (16/16, matches legacy leg extent).
+ */
+const BOWLER_BONE = {
+  spine: BONE_LENGTHS.neck, // 10
+  neck: BONE_LENGTHS.neck, // 10
+  thigh: BONE_LENGTHS.thigh, // 16
+  shin: BONE_LENGTHS.shin, // 16
+} as const;
+
 export function drawArticulatedBowler(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
@@ -1378,23 +1425,68 @@ export function drawArticulatedBowler(
   ctx.ellipse(0, 0, 18, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // --- FK skeleton root: pelvis (legacy torso pivot position) ---
+  const pelvisX = 0;
+  const pelvisY = -22 + k.torsoY;
+
+  // Spine -> shoulder -> neck -> head. Head inherits torso rotation exactly
+  // like the legacy rig (headTiltRad intentionally unused there too).
+  const spineJoints = solveChain(
+    { x: pelvisX, y: pelvisY },
+    [
+      { length: BOWLER_BONE.spine, angleRad: k.torsoAngleRad },
+      { length: BOWLER_BONE.neck, angleRad: 0 },
+    ]
+  );
+  const shoulder = spineJoints[1];
+  const headJoint = spineJoints[2];
+
+  // Hips ride the pelvis and inherit torso lean (legacy stub was (-3,+4)).
+  const hipOffsetX =
+    -3 * Math.cos(k.torsoAngleRad) - 4 * Math.sin(k.torsoAngleRad);
+  const hipOffsetY =
+    -3 * Math.sin(k.torsoAngleRad) + 4 * Math.cos(k.torsoAngleRad);
+  const hip = { x: pelvisX + hipOffsetX, y: pelvisY + hipOffsetY };
+
+  // Legs: two-link IK onto the solver's own foot targets, so ground contact
+  // stays on the exact animation points while knees become real joints.
+  const frontLeg = solveTwoBoneIK(
+    hip,
+    BOWLER_BONE.thigh,
+    BOWLER_BONE.shin,
+    { x: k.frontLegX, y: k.frontLegY },
+    1
+  );
+  const backLeg = solveTwoBoneIK(
+    hip,
+    BOWLER_BONE.thigh,
+    BOWLER_BONE.shin,
+    { x: k.backLegX, y: k.backLegY },
+    1
+  );
+
+  // --- Legs (hip -> knee -> foot) ---
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 3.5;
   ctx.lineCap = "round";
 
   ctx.beginPath();
-  ctx.moveTo(-3, -18 + k.torsoY);
-  ctx.lineTo(k.frontLegX, k.frontLegY);
-  ctx.moveTo(-3, -18 + k.torsoY);
-  ctx.lineTo(k.backLegX, k.backLegY);
+  ctx.moveTo(hip.x, hip.y);
+  ctx.lineTo(frontLeg[1].x, frontLeg[1].y);
+  ctx.lineTo(frontLeg[2].x, frontLeg[2].y);
+  ctx.moveTo(hip.x, hip.y);
+  ctx.lineTo(backLeg[1].x, backLeg[1].y);
+  ctx.lineTo(backLeg[2].x, backLeg[2].y);
   ctx.stroke();
 
+  // Feet (unchanged art, now anchored to the shins' end joints)
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(k.frontLegX - 2, k.frontLegY - 2, 6, 3);
-  ctx.fillRect(k.backLegX - 2, k.backLegY - 2, 6, 3);
+  ctx.fillRect(frontLeg[2].x - 2, frontLeg[2].y - 2, 6, 3);
+  ctx.fillRect(backLeg[2].x - 2, backLeg[2].y - 2, 6, 3);
 
+  // --- Torso / Flannels (identical block, rooted at the FK pelvis) ---
   ctx.save();
-  ctx.translate(0, -22 + k.torsoY);
+  ctx.translate(pelvisX, pelvisY);
   ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
@@ -1403,32 +1495,60 @@ export function drawArticulatedBowler(
   ctx.roundRect(-7, -14, 14, 18, 3);
   ctx.fill();
   ctx.stroke();
-
-  ctx.fillStyle = "#0f172a";
-  ctx.beginPath();
-  ctx.arc(0, -20, 6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(1, -22, 6, 2.5);
   ctx.restore();
 
+  // --- Neck/Head drawn at its chained joint (inherits torso rotation) ---
   ctx.save();
-  ctx.translate(0, -32 + k.torsoY);
+  ctx.translate(headJoint.x, headJoint.y);
+  ctx.rotate(k.torsoAngleRad);
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(0, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1e293b";
+  ctx.fillRect(1, -2, 6, 2.5);
+  ctx.restore();
+
+  // --- Arms: shoulder -> upper arm -> forearm -> hand ---
+  // Anchor at the FK shoulder so arms inherit torso lean (shear fix). Solver
+  // angles use a (cos a, sin a) convention; the shared chain convention maps
+  // via c = PI/2 + a, reproducing the exact legacy endpoints.
+  const nonBowlingC = Math.PI / 2 + k.nonBowlingArmAngleRad;
+  const bowlingC = Math.PI / 2 + k.bowlingArmAngleRad;
+
+  const nonBowlingChain = solveChain(shoulder, [
+    { length: 7, angleRad: nonBowlingC },
+    { length: 7, angleRad: 0 },
+  ]);
+  const bowlingChain = solveChain(shoulder, [
+    { length: 8, angleRad: bowlingC },
+    { length: 8, angleRad: 0 },
+  ]);
+
+  ctx.save();
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 2.5;
 
   ctx.beginPath();
-  ctx.moveTo(-4, 0);
-  ctx.lineTo(-4 + Math.cos(k.nonBowlingArmAngleRad) * 14, Math.sin(k.nonBowlingArmAngleRad) * 14);
+  ctx.moveTo(nonBowlingChain[0].x, nonBowlingChain[0].y);
+  ctx.lineTo(nonBowlingChain[1].x, nonBowlingChain[1].y);
+  ctx.lineTo(nonBowlingChain[2].x, nonBowlingChain[2].y);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.moveTo(3, 0);
-  ctx.lineTo(3 + Math.cos(k.bowlingArmAngleRad) * 16, Math.sin(k.bowlingArmAngleRad) * 16);
+  ctx.moveTo(bowlingChain[0].x, bowlingChain[0].y);
+  ctx.lineTo(bowlingChain[1].x, bowlingChain[1].y);
+  ctx.lineTo(bowlingChain[2].x, bowlingChain[2].y);
   ctx.stroke();
+
+  // Bowling hand (legacy drew it 17px out; slide 1px past the 16px forearm)
+  const bowlingHand = attachPropToChain(shoulder, [
+    { length: 8, angleRad: bowlingC },
+    { length: 8, angleRad: 0 },
+  ], { jointIndex: 2, slideAlongBone: 1 });
   ctx.fillStyle = "#d4a373";
   ctx.beginPath();
-  ctx.arc(3 + Math.cos(k.bowlingArmAngleRad) * 17, Math.sin(k.bowlingArmAngleRad) * 17, 2.5, 0, Math.PI * 2);
+  ctx.arc(bowlingHand.x, bowlingHand.y, 2.5, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();

@@ -15,6 +15,7 @@ import {
   solveStumpingKeeperKinematics,
   solveChain,
   attachPropToChain,
+  solveTwoBoneIK,
   BONE_LENGTHS,
 } from "../components/instinct/actorRigs";
 import {
@@ -1428,6 +1429,152 @@ function runAllDRSTests() {
           BONE_LENGTHS.shin === 16,
         "Bone Constants: lengths mirror current Runner rig proportions"
       );
+    }
+  }
+
+  // --- GROUP 21: BOWLER FK MIGRATION (TASK 2B) ---
+  console.log("\n--- GROUP 21: BOWLER FK MIGRATION ---");
+  {
+    const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    const l1 = BONE_LENGTHS.thigh;
+    const l2 = BONE_LENGTHS.shin;
+
+    // T21.1 — IK joint adjacency across reachable and clamped targets
+    {
+      let adjacencyOk = true;
+      let finiteOk = true;
+      const targets = [
+        { x: 12, y: 26 }, { x: -9, y: 24 }, { x: 0, y: -30 }, { x: 20, y: 8 },
+        { x: -22, y: -6 }, { x: 0.5, y: 1 }, { x: 0, y: 100 }, { x: -140, y: 3 },
+        { x: 6, y: -18 }, { x: -11, y: 22 },
+      ];
+      for (const tg of targets) {
+        const j = solveTwoBoneIK({ x: -3, y: -18 }, l1, l2, tg, 1);
+        if (!near(dist(j[0], j[1]), l1, 1e-6)) adjacencyOk = false;
+        if (!near(dist(j[1], j[2]), l2, 1e-6)) adjacencyOk = false;
+        for (const p of j) {
+          if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) finiteOk = false;
+        }
+      }
+      assert(adjacencyOk, "Bowler IK: thigh/shin lengths fixed for every target (adjacent joints)");
+      assert(finiteOk, "Bowler IK: no NaN/Infinity including far-clamped targets");
+    }
+
+    // T21.2 — reachable targets land exactly on the animation point
+    {
+      const samples = [
+        { x: 9, y: 6 }, { x: -14, y: 12 }, { x: 4, y: 4 },
+        { x: -8, y: 8 }, { x: 16, y: -10 }, { x: -2, y: 10 },
+      ];
+      let exact = true;
+      for (const tg of samples) {
+        const j = solveTwoBoneIK({ x: -3, y: -18 }, l1, l2, tg, 1);
+        if (!near(j[2].x, tg.x, 1e-6) || !near(j[2].y, tg.y, 1e-6)) exact = false;
+      }
+      assert(exact, "Bowler IK: foot lands exactly on legacy solver endpoints (reachable set)");
+    }
+
+    // T21.3 — unreachable targets clamp along the same ray at full extension
+    {
+      const j = solveTwoBoneIK({ x: 0, y: 0 }, l1, l2, { x: 0, y: 100 }, 1);
+      assert(
+        near(j[2].x, 0, 1e-6) && Math.abs(dist(j[0], j[2]) - (l1 + l2)) < 1e-2,
+        "Bowler IK: far target extends straight to the leg's full length on the same ray"
+      );
+    }
+
+    // T21.4 — bend sign mirrors the knee while keeping the foot planted
+    {
+      const a = solveTwoBoneIK({ x: 0, y: 0 }, l1, l2, { x: 0, y: 30 }, 1);
+      const b = solveTwoBoneIK({ x: 0, y: 0 }, l1, l2, { x: 0, y: 30 }, -1);
+      assert(
+        near(a[2].x, b[2].x, 1e-6) && near(a[2].y, b[2].y, 1e-6),
+        "Bowler IK: both knee sides share identical foot placement"
+      );
+      assert(
+        near(a[1].x, -b[1].x, 1e-6),
+        "Bowler IK: knees mirror across the hip-foot axis per bendSign"
+      );
+    }
+
+    // T21.5 — deterministic output
+    {
+      const mk = () => JSON.stringify(solveTwoBoneIK({ x: 7, y: -3 }, l1, l2, { x: 13, y: 25 }, 1));
+      assert(mk() === mk(), "Bowler IK: byte-identical results for repeated solves");
+    }
+
+    // T21.6 — every solver pose in the timeline stays exactly reachable
+    {
+      let feetExact = true;
+      let anglesFinite = true;
+      for (let i = 0; i <= 40; i++) {
+        const k = solveLBWBowlerKinematics(i / 40, {
+          isNoBall: i % 3 === 0,
+          frontFootOverstepMm: (i % 7) * 3,
+          deliveryLine: ["OVER_THE_WICKET", "ROUND_WICKET", "WIDE_OF_CREASE"][i % 3],
+        });
+        const front = solveTwoBoneIK({ x: -3, y: -18 }, l1, l2, { x: k.frontLegX, y: k.frontLegY }, 1);
+        const back = solveTwoBoneIK({ x: -3, y: -18 }, l1, l2, { x: k.backLegX, y: k.backLegY }, 1);
+        if (!near(front[2].x, k.frontLegX, 1e-6) || !near(front[2].y, k.frontLegY, 1e-6)) feetExact = false;
+        if (!near(back[2].x, k.backLegX, 1e-6) || !near(back[2].y, k.backLegY, 1e-6)) feetExact = false;
+        if (!Number.isFinite(k.bowlingArmAngleRad)) anglesFinite = false;
+      }
+      assert(feetExact, "Bowler FK: all 41 timeline poses keep feet exactly on legacy animation points");
+      assert(anglesFinite, "Bowler FK: solver arm angles finite across delivery lines/no-ball mix");
+    }
+
+    // T21.7 — arm convention conversion reproduces legacy endpoints exactly
+    {
+      const shoulder = { x: 0, y: -32 };
+      let armsMatch = true;
+      for (const a of [-2.35, -1.57, -0.6, 0.2, 0.8, 1.35, 2.2, 3.05]) {
+        const fkEnd = solveChain(shoulder, [
+          { length: 8, angleRad: Math.PI / 2 + a },
+          { length: 8, angleRad: 0 },
+        ])[2];
+        const legacyEnd = {
+          x: shoulder.x + Math.cos(a) * 16,
+          y: shoulder.y + Math.sin(a) * 16,
+        };
+        if (!near(fkEnd.x, legacyEnd.x, 1e-6) || !near(fkEnd.y, legacyEnd.y, 1e-6)) armsMatch = false;
+      }
+      assert(armsMatch, "Bowler FK: PI/2+a conversion reproduces legacy arm endpoints bit-exactly");
+
+      // Hand prop with slide reaches the legacy 17px bowling-hand radius.
+      for (const a of [-0.75, 0.8, 2.2]) {
+        const hand = attachPropToChain(shoulder, [
+          { length: 8, angleRad: Math.PI / 2 + a },
+          { length: 8, angleRad: 0 },
+        ], { jointIndex: 2, slideAlongBone: 1 });
+        const legacyHand = {
+          x: shoulder.x + Math.cos(a) * 17,
+          y: shoulder.y + Math.sin(a) * 17,
+        };
+        if (!near(hand.x, legacyHand.x, 1e-6) || !near(hand.y, legacyHand.y, 1e-6)) armsMatch = false;
+      }
+      assert(armsMatch, "Bowler FK: attached bowling hand matches legacy 17px offset via slideAlongBone");
+    }
+
+    // T21.8 — spine/neck chain keeps head attached and matches legacy rise
+    {
+      const pelvis = { x: 0, y: -22 };
+      let ok = true;
+      for (const torsoA of [-0.15, 0.08, 0.35, 0.6]) {
+        const chain = solveChain(pelvis, [
+          { length: 10, angleRad: torsoA },
+          { length: 10, angleRad: 0 },
+        ]);
+        if (!near(dist(chain[0], chain[1]), 10, 1e-6)) ok = false;
+        if (!near(dist(chain[1], chain[2]), 10, 1e-6)) ok = false;
+        const legacyHead = {
+          x: pelvis.x + Math.sin(torsoA) * 20,
+          y: pelvis.y - Math.cos(torsoA) * 20,
+        };
+        if (!near(chain[2].x, legacyHead.x, 1e-6) || !near(chain[2].y, legacyHead.y, 1e-6)) ok = false;
+      }
+      assert(ok, "Bowler FK: head chained to torso (10+10) and equals legacy rotated head position");
     }
   }
 
