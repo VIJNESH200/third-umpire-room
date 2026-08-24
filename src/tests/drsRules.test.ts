@@ -22,11 +22,16 @@ import {
   solveTwoBoneIK,
   solveKeeperSkeleton,
   solveBatterSkeleton,
+  solveBoundaryFielderKinematics,
+  solveFielderSkeleton,
   KEEPER_BONE,
   BATTER_BONE,
   BATTER_BAT,
+  FIELDER_BONE,
+  FIELDER_GROUND_Y,
   BONE_LENGTHS,
   type BatterKinematics,
+  type FielderKinematics,
 } from "../components/instinct/actorRigs";
 import {
   solveRunOutReplayState,
@@ -1948,6 +1953,173 @@ function runAllDRSTests() {
       const mk = () =>
         JSON.stringify(solveBatterSkeleton(solveLBWBatterKinematics(0.42, false, "DEFENSIVE_FORWARD", 45)));
       assert(mk() === mk(), "Batter FK: byte-identical skeletons for repeated solves");
+    }
+  }
+
+  // --- GROUP 24: FIELDER FK MIGRATION (TASK 2E) ---
+  console.log("\n--- GROUP 24: FIELDER FK MIGRATION ---");
+  {
+    const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    const fb = FIELDER_BONE;
+
+    const sampleSkeletons = (): { label: string; k: FielderKinematics; s: ReturnType<typeof solveFielderSkeleton> }[] => {
+      const out: { label: string; k: FielderKinematics; s: ReturnType<typeof solveFielderSkeleton> }[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const p = i / 40;
+        for (const isBoundary of [true, false]) {
+          const r = solveBoundaryFielderKinematics(p, isBoundary, 300 + (i % 5));
+          out.push({ label: `boundary-${isBoundary ? "out" : "safe"}`, k: r.fielderK, s: solveFielderSkeleton(r.fielderK) });
+        }
+      }
+      return out;
+    };
+    const samples = sampleSkeletons();
+
+    // T24.1 — spine/neck/head adjacency with fixed bone lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.pelvis, s.shoulder), fb.spine)) ok = false;
+        if (!near(dist(s.shoulder, s.headBase), fb.neck)) ok = false;
+      }
+      assert(ok, "Fielder FK: head rides a fixed-length neck chained to the spine for every pose");
+    }
+
+    // T24.2 — shoulder/arm/hand adjacency with fixed segment lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.shoulder, s.reachElbow), fb.upperArm)) ok = false;
+        if (!near(dist(s.reachElbow, s.reachHand), fb.forearm)) ok = false;
+      }
+      assert(ok, "Fielder FK: reach arm keeps exact upperArm/forearm lengths from the shoulder");
+    }
+
+    // T24.3 — reachArmAngleRad actually drives the arm chain (no longer ignored)
+    {
+      let ok = true;
+      for (const { k, s } of samples) {
+        // Chain angle = PI + reach; straight forearm => hand sits exactly at
+        // shoulder + 24 * dir(PI + reach) in the shared skeleton convention.
+        const a = Math.PI + k.reachArmAngleRad;
+        const expected = {
+          x: s.shoulder.x + Math.sin(a) * (fb.upperArm + fb.forearm),
+          y: s.shoulder.y - Math.cos(a) * (fb.upperArm + fb.forearm),
+        };
+        if (!near(s.reachHand.x, expected.x, 1e-6) || !near(s.reachHand.y, expected.y, 1e-6)) ok = false;
+      }
+      assert(ok, "Fielder FK: reachArmAngleRad propagates through the whole arm chain bit-exactly");
+    }
+    {
+      // Distinct reach angles must produce distinct, meaningfully separated hands.
+      const base = solveBoundaryFielderKinematics(0.9, true, 300).fielderK;
+      const h1 = solveFielderSkeleton({ ...base, reachArmAngleRad: -Math.PI * 0.45 }).reachHand;
+      const h2 = solveFielderSkeleton({ ...base, reachArmAngleRad: 0.3 }).reachHand;
+      const h3 = solveFielderSkeleton({ ...base, reachArmAngleRad: -0.6 }).reachHand;
+      assert(
+        dist(h1, h2) > 8 && dist(h1, h3) > 4 && dist(h2, h3) > 4,
+        "Fielder FK: arm angle changes visibly reposition the reaching hand"
+      );
+      assert(
+        h1.x > h2.x,
+        "Fielder FK: full slide reach extends the hand forward towards the intercept target"
+      );
+    }
+
+    // T24.4 — hip/leg adjacency with fixed thigh/shin lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.leadHip, s.pelvis), Math.hypot(3.5, 2))) ok = false;
+        if (!near(dist(s.trailHip, s.pelvis), Math.hypot(3.5, 2))) ok = false;
+        if (!near(dist(s.leadHip, s.leadKnee), fb.thigh)) ok = false;
+        if (!near(dist(s.leadKnee, s.leadAnkle), fb.shin)) ok = false;
+        if (!near(dist(s.trailHip, s.trailKnee), fb.thigh)) ok = false;
+        if (!near(dist(s.trailKnee, s.trailAnkle), fb.shin)) ok = false;
+      }
+      assert(ok, "Fielder FK: legs keep exact thigh/shin lengths from hips fixed to the pelvis");
+    }
+
+    // T24.5 — ground constraint: feet pinned to the turf plane in EVERY phase
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(s.leadAnkle.y, FIELDER_GROUND_Y, 1e-9)) ok = false;
+        if (!near(s.trailAnkle.y, FIELDER_GROUND_Y, 1e-9)) ok = false;
+      }
+      assert(ok, "Fielder FK: both feet stay pinned to the turf line through sprint, slide and recovery");
+    }
+    {
+      // Feet track the solver's stride/slide X targets while grounded, and
+      // still separate (stance never collapses to a single point).
+      const sprint = solveFielderSkeleton(solveBoundaryFielderKinematics(0.2, true, 300).fielderK);
+      const slide = solveFielderSkeleton(solveBoundaryFielderKinematics(0.9, true, 300).fielderK);
+      assert(
+        sprint.leadAnkle.x > sprint.trailAnkle.x && slide.leadAnkle.x > slide.trailAnkle.x,
+        "Fielder FK: lead foot stays ahead of the trail foot in both sprint and slide"
+      );
+      assert(
+        slide.leadAnkle.x < sprint.leadAnkle.x,
+        "Fielder FK: slide drops the lead foot back under the body as the body extends"
+      );
+    }
+
+    // T24.6 — no NaN/Infinity anywhere, including out-of-domain kinematics
+    {
+      let finite = true;
+      for (const { s } of samples) {
+        for (const j of Object.values(s)) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      const weird = [
+        { torsoAngleRad: 55, headX: 900, headY: -900, frontLegX: 800, frontLegY: 600, backLegX: -700, backLegY: -500, reachArmAngleRad: 44, isSliding: true, slideProgress: 3 },
+        { torsoAngleRad: -31, headX: -800, headY: 700, frontLegX: -600, frontLegY: -400, backLegX: 500, backLegY: 300, reachArmAngleRad: -38, isSliding: false, slideProgress: -2 },
+      ] as FielderKinematics[];
+      for (const k of weird) {
+        const s = solveFielderSkeleton(k);
+        for (const j of Object.values(s)) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      assert(finite, "Fielder FK: every joint finite across solvers and clamped out-of-domain inputs");
+    }
+
+    // T24.7 — pose continuity: no joint teleports between fine steps
+    {
+      const sweeps: [string, (t: number) => ReturnType<typeof solveFielderSkeleton>][] = [
+        ["boundary-safe", (t) => solveFielderSkeleton(solveBoundaryFielderKinematics(t, false, 300).fielderK)],
+        ["boundary-out", (t) => solveFielderSkeleton(solveBoundaryFielderKinematics(t, true, 300).fielderK)],
+      ];
+      let continuous = true;
+      let culprit = "";
+      const keys: (keyof ReturnType<typeof solveFielderSkeleton>)[] = [
+        "pelvis", "shoulder", "headBase", "reachElbow", "reachHand",
+        "leadKnee", "leadAnkle", "trailKnee", "trailAnkle",
+      ];
+      for (const [label, fn] of sweeps) {
+        let prev = fn(0);
+        for (let i = 1; i <= 1000; i++) {
+          const curr = fn(i / 1000);
+          for (const key of keys) {
+            if (dist(curr[key] as { x: number; y: number }, prev[key] as { x: number; y: number }) > 1.5) {
+              continuous = false;
+              culprit = label;
+            }
+          }
+          prev = curr;
+        }
+      }
+      assert(continuous, `Fielder FK: every joint glides continuously across sprint->slide (${culprit || "all clean"})`);
+    }
+
+    // T24.8 — deterministic output
+    {
+      const mk = () =>
+        JSON.stringify(solveFielderSkeleton(solveBoundaryFielderKinematics(0.52, true, 317).fielderK));
+      assert(mk() === mk(), "Fielder FK: byte-identical skeletons for repeated solves");
     }
   }
 

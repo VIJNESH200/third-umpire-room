@@ -1970,8 +1970,129 @@ export function drawArticulatedWicketkeeper(
 }
 
 // ================================================================
-// 4. ARTICULATED FIELDER RIG RENDERER
+// 4. ARTICULATED FIELDER RIG (SHARED FK SKELETON)
 // ================================================================
+/**
+ * Fielder bone table — sized at the fielder's broadcast framing so today's
+ * compact sprint/slide silhouette is preserved:
+ * spine 13 reaches the legacy jersey block top (pelvis -14 -> rect top -26),
+ * neck 4 keeps the capped head just above the collar,
+ * upperArm/forearm 12+12 reproduce the legacy 24px intercept-arm reach,
+ * thigh 13 / shin 11 spans hip -> turf for the whole stride/slide sweep and
+ * is deliberately UNEQUAL so the knee never reaches the degenerate
+ * fully-folded singularity while the slide target sweeps past the hip.
+ */
+export const FIELDER_BONE = {
+  spine: 13,
+  neck: 4,
+  upperArm: 12,
+  forearm: 12,
+  thigh: 13,
+  shin: 11,
+} as const;
+
+/** Rig-local turf line the fielder's feet are pinned to (the ground contact
+ *  shadow is drawn at y = 2). The legacy rig drew "feet" at frontLegY = -16,
+ *  i.e. ABOVE the hip and floating off the turf; grounding them here is the
+ *  documented visual correction for that bug. */
+export const FIELDER_GROUND_Y = 1;
+
+export interface FielderSkeleton {
+  pelvis: SkeletonJoint;
+  shoulder: SkeletonJoint;
+  headBase: SkeletonJoint;
+
+  reachElbow: SkeletonJoint;
+  reachHand: SkeletonJoint;
+
+  leadHip: SkeletonJoint;
+  leadKnee: SkeletonJoint;
+  leadAnkle: SkeletonJoint;
+  trailHip: SkeletonJoint;
+  trailKnee: SkeletonJoint;
+  trailAnkle: SkeletonJoint;
+}
+
+/**
+ * Pure FK solve of the fielder hierarchy from flat FielderKinematics:
+ *
+ *   pelvis → spine → shoulder → neck → head
+ *   shoulder → upper arm → forearm → reach hand   (chain driven by
+ *     reachArmAngleRad: chain angle = PI + reach, so the sprint carry
+ *     trails behind the runner and the boundary-slide reach extends
+ *     forward towards the intercept target instead of a hardcoded line)
+ *   hip → thigh → shin → foot                     (IK onto the legacy
+ *     stride/slide foot targets, clamped along the ray so the feet stay
+ *     attached through the sprint-to-slide transition)
+ *
+ * The legacy headX/headY pair is superseded by the chained neck joint
+ * (drift documented in drawArticulatedFielder). Handedness is handled
+ * upstream by ActorTransform.facing canvas mirroring, unchanged. Pure
+ * and deterministic.
+ */
+export function solveFielderSkeleton(k: FielderKinematics): FielderSkeleton {
+  // --- Pelvis root (legacy torso pivot) ---
+  const pelvis: SkeletonJoint = { x: 0, y: -14 };
+
+  // --- Spine -> shoulder -> neck/head (head inherits torso rotation) ---
+  const spineChain = solveChain(pelvis, [
+    { length: FIELDER_BONE.spine, angleRad: k.torsoAngleRad },
+    { length: FIELDER_BONE.neck, angleRad: 0 },
+  ]);
+  const shoulder = spineChain[1];
+  const headBase = spineChain[2];
+
+  // --- Reaching intercept arm: reachArmAngleRad drives the whole chain ---
+  const reachChain = solveChain(shoulder, [
+    { length: FIELDER_BONE.upperArm, angleRad: Math.PI + k.reachArmAngleRad },
+    { length: FIELDER_BONE.forearm, angleRad: 0 },
+  ]);
+  const reachElbow = reachChain[1];
+  const reachHand = reachChain[2];
+
+  // --- Legs: hips ride the pelvis; feet track the legacy stride/slide X
+  //     targets but are PINNED to the turf line in Y, so the sprint and the
+  //     boundary slide both keep the shoes on the ground (the legacy rig
+  //     drew them above the hip, floating). X is clamped to the reachable
+  //     span so the legs never detach or stretch. ---
+  const leadHip: SkeletonJoint = { x: pelvis.x + 3.5, y: pelvis.y + 2 };
+  const trailHip: SkeletonJoint = { x: pelvis.x - 3.5, y: pelvis.y + 2 };
+  const groundedFoot = (hip: SkeletonJoint, tx: number): SkeletonJoint => {
+    const dy = FIELDER_GROUND_Y - hip.y;
+    const maxReach = (FIELDER_BONE.thigh + FIELDER_BONE.shin) * 0.999;
+    const maxDx = Math.sqrt(Math.max(0, maxReach * maxReach - dy * dy));
+    return { x: hip.x + clamp(tx - hip.x, -maxDx, maxDx), y: FIELDER_GROUND_Y };
+  };
+  const leadLeg = solveTwoBoneIK(
+    leadHip,
+    FIELDER_BONE.thigh,
+    FIELDER_BONE.shin,
+    groundedFoot(leadHip, k.frontLegX),
+    1
+  );
+  const trailLeg = solveTwoBoneIK(
+    trailHip,
+    FIELDER_BONE.thigh,
+    FIELDER_BONE.shin,
+    groundedFoot(trailHip, k.backLegX),
+    -1
+  );
+
+  return {
+    pelvis,
+    shoulder,
+    headBase,
+    reachElbow,
+    reachHand,
+    leadHip,
+    leadKnee: leadLeg[1],
+    leadAnkle: leadLeg[2],
+    trailHip,
+    trailKnee: trailLeg[1],
+    trailAnkle: trailLeg[2],
+  };
+}
+
 export function drawArticulatedFielder(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
@@ -1996,9 +2117,12 @@ export function drawArticulatedFielder(
   ctx.ellipse(0, 2, k.isSliding ? 38 : 20, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Torso
+  // --- FK skeleton (pelvis -> spine/neck/head, reach arm, hips/legs) ---
+  const s = solveFielderSkeleton(k);
+
+  // Torso (identical jersey block, rooted at the FK pelvis)
   ctx.save();
-  ctx.translate(0, -14);
+  ctx.translate(s.pelvis.x, s.pelvis.y);
   ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#0f172a"; // Colored training jersey
   ctx.strokeStyle = "#334155";
@@ -2009,9 +2133,9 @@ export function drawArticulatedFielder(
   ctx.stroke();
   ctx.restore();
 
-  // Head
+  // Head (chained to the neck joint; inherits torso movement)
   ctx.save();
-  ctx.translate(k.headX, k.headY);
+  ctx.translate(s.headBase.x, s.headBase.y);
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
@@ -2020,37 +2144,37 @@ export function drawArticulatedFielder(
   ctx.fillRect(1, -3, 7, 3); // Cap peak
   ctx.restore();
 
-  // Sliding legs / Stride legs
+  // Sliding legs / Stride legs (hip -> knee -> ankle FK chains)
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 4;
   ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(0, -10);
-  ctx.lineTo(k.frontLegX, k.frontLegY);
-  ctx.moveTo(0, -10);
-  ctx.lineTo(k.backLegX, k.backLegY);
+  ctx.moveTo(s.leadHip.x, s.leadHip.y);
+  ctx.lineTo(s.leadKnee.x, s.leadKnee.y);
+  ctx.lineTo(s.leadAnkle.x, s.leadAnkle.y);
+  ctx.moveTo(s.trailHip.x, s.trailHip.y);
+  ctx.lineTo(s.trailKnee.x, s.trailKnee.y);
+  ctx.lineTo(s.trailAnkle.x, s.trailAnkle.y);
   ctx.stroke();
 
-  // Shoes
+  // Shoes (anchored to the ankle joints)
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(k.frontLegX - 3, k.frontLegY - 2, 7, 3);
-  ctx.fillRect(k.backLegX - 3, k.backLegY - 2, 7, 3);
+  ctx.fillRect(s.leadAnkle.x - 3, s.leadAnkle.y - 2, 7, 3);
+  ctx.fillRect(s.trailAnkle.x - 3, s.trailAnkle.y - 2, 7, 3);
 
-  // Outstretched Intercept Arm
-  ctx.save();
-  ctx.translate(0, -18);
+  // Outstretched Intercept Arm (reachArmAngleRad drives the FK chain)
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 3.5;
   ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(-24, 6);
+  ctx.moveTo(s.shoulder.x, s.shoulder.y);
+  ctx.lineTo(s.reachElbow.x, s.reachElbow.y);
+  ctx.lineTo(s.reachHand.x, s.reachHand.y);
   ctx.stroke();
   // Hand
   ctx.fillStyle = "#d4a373";
   ctx.beginPath();
-  ctx.arc(-26, 6, 3, 0, Math.PI * 2);
+  ctx.arc(s.reachHand.x, s.reachHand.y, 3, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
 
   ctx.restore();
 }
