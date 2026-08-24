@@ -914,8 +914,168 @@ export function solveBoundaryFielderKinematics(
 }
 
 // ================================================================
-// 1. ARTICULATED BATTER RIG RENDERER
+// 1. ARTICULATED BATTER RIG (SHARED FK SKELETON)
 // ================================================================
+/**
+ * Batter bone table — sized at the batter's broadcast framing (~1.3x the
+ * runner) so today's silhouette is preserved exactly:
+ * spine 18 + neck 5 reproduces the legacy torso pivot (-32) -> head centre
+ * (-54..-48) rise, thigh/shin 20+20 spans the legacy hip (-28) -> shoe (+8)
+ * stance (pelvis at -29 keeps the torso art pixel-identical), and
+ * upperArm/forearm 11+11 reaches every solver bat-grip target (max ~21px
+ * from the shoulder during the stumping advance).
+ */
+export const BATTER_BONE = {
+  spine: 18,
+  neck: 5,
+  upperArm: 11,
+  forearm: 11,
+  thigh: 20,
+  shin: 20,
+} as const;
+
+/** Legacy bat art metrics (handle length / blade length) kept verbatim so
+ *  the drawn willow is pixel-identical; the FK chain exposes them so tests
+ *  can verify hand -> handle -> blade -> tip continuity. */
+export const BATTER_BAT = {
+  handle: 18,
+  rearGripSlide: 6,
+  blade: 46,
+} as const;
+
+export interface BatterSkeleton {
+  pelvis: SkeletonJoint;
+  shoulder: SkeletonJoint;
+  headBase: SkeletonJoint;
+
+  leadElbow: SkeletonJoint;
+  leadHand: SkeletonJoint;
+  rearElbow: SkeletonJoint;
+  rearHand: SkeletonJoint;
+
+  leadHip: SkeletonJoint;
+  leadKnee: SkeletonJoint;
+  leadAnkle: SkeletonJoint;
+  trailHip: SkeletonJoint;
+  trailKnee: SkeletonJoint;
+  trailAnkle: SkeletonJoint;
+
+  // Bat chain (world-local): grip == lead hand, rearGrip == rear hand,
+  // handleTip and batTip close the handle/blade segments.
+  batGrip: SkeletonJoint;
+  rearGrip: SkeletonJoint;
+  handleTip: SkeletonJoint;
+  batTip: SkeletonJoint;
+}
+
+/**
+ * Pure FK solve of the batter hierarchy from flat BatterKinematics:
+ *
+ *   pelvis → spine → shoulder → neck → head
+ *   shoulder → upper arm → forearm → hand → bat grip   (both arms, IK)
+ *   hip → thigh → shin → foot                           (both legs, IK)
+ *
+ * The legacy absolute fields stay authoritative as END-EFFECTOR TARGETS:
+ * (frontLegX/Y, backLegX/Y) are the foot anchors, (batPivotX/Y, batRotRad)
+ * remain the bat grip pose — so bat placement is bit-identical to the flat
+ * rig (gameplay-safe) while head/arms/legs become a connected tree. The
+ * legacy headX/headY pair is superseded by the chained neck joint (drift
+ * documented in drawArticulatedBatter). Handedness is handled upstream by
+ * ActorTransform.facing canvas mirroring, unchanged. Pure and deterministic.
+ */
+export function solveBatterSkeleton(k: BatterKinematics): BatterSkeleton {
+  // --- Pelvis root (torso art block spans the exact legacy -50..-24 band) ---
+  const pelvis: SkeletonJoint = { x: 0, y: -29 };
+
+  // --- Spine -> shoulder -> neck/head (head inherits torso rotation) ---
+  const spineChain = solveChain(pelvis, [
+    { length: BATTER_BONE.spine, angleRad: k.torsoAngleRad },
+    { length: BATTER_BONE.neck, angleRad: 0 },
+  ]);
+  const shoulder = spineChain[1];
+  const headBase = spineChain[2];
+
+  // --- Bat chain first: arms IK onto the bat so hand->bat is continuous ---
+  const batGrip: SkeletonJoint = { x: k.batPivotX, y: k.batPivotY };
+  const sinR = Math.sin(k.batRotRad);
+  const cosR = Math.cos(k.batRotRad);
+  // Legacy bat art: handle extends UP from the pivot (local -y), blade DOWN.
+  // Canvas rotate(batRot) maps local (0, ly) to (-ly*sin, +ly*cos).
+  const batLocal = (ly: number): SkeletonJoint => ({
+    x: batGrip.x - ly * sinR,
+    y: batGrip.y + ly * cosR,
+  });
+  const rearGrip = batLocal(-BATTER_BAT.rearGripSlide);
+  const handleTip = batLocal(-BATTER_BAT.handle);
+  const batTip = batLocal(BATTER_BAT.blade);
+
+  // Arm IK targets clamp to the reachable annulus along the same ray, so an
+  // extreme pose (stumping lunge) keeps the arms attached and pointing at
+  // the bat instead of detaching. The bat chain itself is NEVER clamped.
+  const maxReach = (BATTER_BONE.upperArm + BATTER_BONE.forearm) * 0.999;
+  const armTarget = (t: SkeletonJoint): SkeletonJoint => {
+    const dx = t.x - shoulder.x;
+    const dy = t.y - shoulder.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= maxReach || d === 0) return t;
+    return { x: shoulder.x + (dx / d) * maxReach, y: shoulder.y + (dy / d) * maxReach };
+  };
+
+  const leadArm = solveTwoBoneIK(
+    shoulder,
+    BATTER_BONE.upperArm,
+    BATTER_BONE.forearm,
+    armTarget(batGrip),
+    1
+  );
+  const rearArm = solveTwoBoneIK(
+    shoulder,
+    BATTER_BONE.upperArm,
+    BATTER_BONE.forearm,
+    armTarget(rearGrip),
+    -1
+  );
+
+  // --- Legs: hips ride the pelvis; feet target the legacy anchors ---
+  const ankleY = 6; // legacy shoe centres sat at +8; ankle sits just above
+  const leadHip: SkeletonJoint = { x: pelvis.x + 4, y: pelvis.y };
+  const trailHip: SkeletonJoint = { x: pelvis.x - 4, y: pelvis.y };
+  const leadLeg = solveTwoBoneIK(
+    leadHip,
+    BATTER_BONE.thigh,
+    BATTER_BONE.shin,
+    { x: k.frontLegX, y: ankleY },
+    1
+  );
+  const trailLeg = solveTwoBoneIK(
+    trailHip,
+    BATTER_BONE.thigh,
+    BATTER_BONE.shin,
+    { x: k.backLegX, y: ankleY },
+    -1
+  );
+
+  return {
+    pelvis,
+    shoulder,
+    headBase,
+    leadElbow: leadArm[1],
+    leadHand: leadArm[2],
+    rearElbow: rearArm[1],
+    rearHand: rearArm[2],
+    leadHip,
+    leadKnee: leadLeg[1],
+    leadAnkle: leadLeg[2],
+    trailHip,
+    trailKnee: trailLeg[1],
+    trailAnkle: trailLeg[2],
+    batGrip,
+    rearGrip,
+    handleTip,
+    batTip,
+  };
+}
+
 export function drawArticulatedBatter(
   ctx: CanvasRenderingContext2D,
   t: ActorTransform,
@@ -940,48 +1100,82 @@ export function drawArticulatedBatter(
   ctx.ellipse(k.frontLegX * 0.5, 0, 24, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // --- 1. Rear Leg & Rear Pad ---
-  ctx.save();
-  ctx.translate(k.backLegX, k.backLegY);
-  ctx.fillStyle = "#e2e8f0";
-  ctx.fillRect(-4, 0, 8, 14);
-  ctx.fillStyle = "#cbd5e1";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.roundRect(-5, 12, 10, 24, 2);
-  ctx.fill();
-  ctx.stroke();
+  // --- FK skeleton (pelvis -> spine/neck/head, shoulders/arms -> bat, hips/legs) ---
+  const s = solveBatterSkeleton(k);
+
+  // Padded leg renderer: thigh in flannel trousers, shin as a strapped
+  // batting pad following the knee->ankle chain, shoe at the ankle.
+  const drawPadLeg = (
+    hip: SkeletonJoint,
+    knee: SkeletonJoint,
+    ankle: SkeletonJoint,
+    trousers: string,
+    padFill: string,
+    thighW: number,
+    padW: number
+  ) => {
+    ctx.lineCap = "round";
+    // Thigh (trouser leg)
+    ctx.strokeStyle = trousers;
+    ctx.lineWidth = thighW;
+    ctx.beginPath();
+    ctx.moveTo(hip.x, hip.y);
+    ctx.lineTo(knee.x, knee.y);
+    ctx.stroke();
+    // Shin pad (slate edge under white pad)
+    ctx.strokeStyle = "#94a3b8";
+    ctx.lineWidth = padW + 1.6;
+    ctx.beginPath();
+    ctx.moveTo(knee.x, knee.y);
+    ctx.lineTo(ankle.x, ankle.y);
+    ctx.stroke();
+    ctx.strokeStyle = padFill;
+    ctx.lineWidth = padW;
+    ctx.stroke();
+    // Pad straps: short horizontal ticks across the shin segment
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1.2;
+    for (const f of [0.3, 0.55, 0.8]) {
+      const sx = knee.x + (ankle.x - knee.x) * f;
+      const sy = knee.y + (ankle.y - knee.y) * f;
+      ctx.beginPath();
+      ctx.moveTo(sx - padW * 0.55, sy);
+      ctx.lineTo(sx + padW * 0.55, sy);
+      ctx.stroke();
+    }
+  };
+
+  // --- 1. Rear Leg & Rear Pad (FK chain, drawn behind the torso) ---
+  drawPadLeg(s.trailHip, s.trailKnee, s.trailAnkle, "#e2e8f0", "#cbd5e1", 9, 11);
   ctx.fillStyle = "#1e293b";
   ctx.beginPath();
-  ctx.ellipse(-2, 36, 7, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(s.trailAnkle.x - 2, s.trailAnkle.y + 2, 7, 3, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
 
-  // --- 2. Torso & Flannels ---
+  // --- 2. Torso & Flannels (identical art block, rooted at the FK pelvis) ---
   ctx.save();
-  ctx.translate(0, -32);
+  ctx.translate(s.pelvis.x, s.pelvis.y);
   ctx.rotate(k.torsoAngleRad);
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(-10, -18, 20, 26, [4, 4, 2, 2]);
+  ctx.roundRect(-10, -21, 20, 26, [4, 4, 2, 2]);
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.moveTo(-4, -18);
-  ctx.lineTo(0, -10);
-  ctx.lineTo(4, -18);
+  ctx.moveTo(-4, -21);
+  ctx.lineTo(0, -13);
+  ctx.lineTo(4, -21);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 
-  // --- 3. Head & Protective Helmet ---
+  // --- 3. Head & Protective Helmet (chained to the neck; inherits torso) ---
   ctx.save();
-  ctx.translate(k.headX, k.headY);
-  ctx.rotate(k.headTiltRad);
+  ctx.translate(s.headBase.x, s.headBase.y);
+  ctx.rotate(k.torsoAngleRad + k.headTiltRad);
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
   ctx.arc(0, 0, 9, 0, Math.PI * 2);
@@ -1005,46 +1199,39 @@ export function drawArticulatedBatter(
   ctx.stroke();
   ctx.restore();
 
-  // --- 4. Front Leg & Front Batting Pad ---
+  // --- 4. Front Leg & Front Batting Pad (FK chain; keeps impact recoil) ---
   ctx.save();
-  ctx.translate(k.frontLegX + k.padRecoilX, k.frontLegY + k.padRecoilY);
-  ctx.fillStyle = "#f1f5f9";
-  ctx.fillRect(-5, 0, 10, 14);
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(-6, 10, 13, 26, 3);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(-5, 18);
-  ctx.lineTo(6, 18);
-  ctx.moveTo(-5, 23);
-  ctx.lineTo(6, 23);
-  ctx.moveTo(-5, 28);
-  ctx.lineTo(6, 28);
-  ctx.stroke();
-
-  ctx.fillStyle = "#f8fafc";
-  ctx.beginPath();
-  ctx.roundRect(-5, 8, 11, 4, 1);
-  ctx.fill();
-
+  ctx.translate(k.padRecoilX, k.padRecoilY);
+  drawPadLeg(s.leadHip, s.leadKnee, s.leadAnkle, "#f1f5f9", "#ffffff", 10, 13);
   ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.ellipse(3, 36, 8, 3.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(s.leadAnkle.x + 3, s.leadAnkle.y + 2, 8, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 34, 5, 2);
+  ctx.fillRect(s.leadAnkle.x, s.leadAnkle.y, 5, 2);
   ctx.restore();
 
-  // --- 5. Arms, Gloves & Contoured Willow Bat ---
+  // --- 5. Arms (shoulder -> elbow -> hand), IK-rooted at the FK shoulder ---
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(s.shoulder.x, s.shoulder.y);
+  ctx.lineTo(s.rearElbow.x, s.rearElbow.y);
+  ctx.lineTo(s.rearHand.x, s.rearHand.y);
+  ctx.moveTo(s.shoulder.x, s.shoulder.y);
+  ctx.lineTo(s.leadElbow.x, s.leadElbow.y);
+  ctx.lineTo(s.leadHand.x, s.leadHand.y);
+  ctx.stroke();
+  ctx.fillStyle = "#d4a373";
+  ctx.beginPath();
+  ctx.arc(s.rearHand.x, s.rearHand.y, 3, 0, Math.PI * 2);
+  ctx.arc(s.leadHand.x, s.leadHand.y, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- 6. Contoured Willow Bat (identical art block; pivot == lead hand) ---
   ctx.save();
-  ctx.translate(k.batPivotX, k.batPivotY);
+  ctx.translate(s.batGrip.x, s.batGrip.y);
   ctx.rotate(k.batRotRad);
 
   ctx.fillStyle = "#ffffff";

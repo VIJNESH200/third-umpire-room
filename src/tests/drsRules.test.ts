@@ -12,6 +12,8 @@ import {
   solveLBWBowlerKinematics,
   solveRunOutRunnerKinematics,
   solveStumpingBatterKinematics,
+  solveLBWBatterKinematics,
+  solveCaughtBehindBatterKinematics,
   solveStumpingKeeperKinematics,
   solveCaughtBehindKeeperKinematics,
   solveRunOutKeeperKinematics,
@@ -19,8 +21,12 @@ import {
   attachPropToChain,
   solveTwoBoneIK,
   solveKeeperSkeleton,
+  solveBatterSkeleton,
   KEEPER_BONE,
+  BATTER_BONE,
+  BATTER_BAT,
   BONE_LENGTHS,
+  type BatterKinematics,
 } from "../components/instinct/actorRigs";
 import {
   solveRunOutReplayState,
@@ -1737,6 +1743,211 @@ function runAllDRSTests() {
       const mk = () =>
         JSON.stringify(solveKeeperSkeleton(solveStumpingKeeperKinematics(0.57)));
       assert(mk() === mk(), "Keeper FK: byte-identical skeletons for repeated solves");
+    }
+  }
+
+  // --- GROUP 23: BATTER FK MIGRATION (TASK 2D) ---
+  console.log("\n--- GROUP 23: BATTER FK MIGRATION ---");
+  {
+    const near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) < eps;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    const bb = BATTER_BONE;
+
+    // Every batter solver across its full parameter domain.
+    const sampleSkeletons = (): { label: string; s: ReturnType<typeof solveBatterSkeleton> }[] => {
+      const out: { label: string; s: ReturnType<typeof solveBatterSkeleton> }[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const p = i / 40;
+        out.push({ label: "lbw-shot", s: solveBatterSkeleton(solveLBWBatterKinematics(p, false, "DEFENSIVE_FORWARD", 60)) });
+        out.push({ label: "lbw-noshot", s: solveBatterSkeleton(solveLBWBatterKinematics(p, true, "PADDED_AWAY_NO_SHOT", 60)) });
+        out.push({ label: "caught-behind", s: solveBatterSkeleton(solveCaughtBehindBatterKinematics(p, "FORWARD_DEFENCE", 14)) });
+        out.push({ label: "stumping", s: solveBatterSkeleton(solveStumpingBatterKinematics(p, 300, 10).batterK) });
+        out.push({ label: "stumping-wide", s: solveBatterSkeleton(solveStumpingBatterKinematics(p, 300, 55).batterK) });
+      }
+      return out;
+    };
+    const samples = sampleSkeletons();
+
+    // T23.1 — spine/neck/head adjacency with fixed bone lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.pelvis, s.shoulder), bb.spine)) ok = false;
+        if (!near(dist(s.shoulder, s.headBase), bb.neck)) ok = false;
+      }
+      assert(ok, "Batter FK: head rides a fixed-length neck chained to the spine for every solver pose");
+    }
+
+    // T23.2 — shoulder/arm/hand adjacency with fixed segment lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.shoulder, s.leadElbow), bb.upperArm)) ok = false;
+        if (!near(dist(s.leadElbow, s.leadHand), bb.forearm)) ok = false;
+        if (!near(dist(s.shoulder, s.rearElbow), bb.upperArm)) ok = false;
+        if (!near(dist(s.rearElbow, s.rearHand), bb.forearm)) ok = false;
+      }
+      assert(ok, "Batter FK: both arms keep exact upperArm/forearm lengths from the shared shoulder");
+    }
+
+    // T23.3 — pelvis/hip adjacency
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.leadHip, s.pelvis), 4)) ok = false;
+        if (!near(dist(s.trailHip, s.pelvis), 4)) ok = false;
+      }
+      assert(ok, "Batter FK: hip sockets stay fixed to the pelvis across all poses");
+    }
+
+    // T23.4 — thigh/shin/foot adjacency with fixed lengths
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.leadHip, s.leadKnee), bb.thigh)) ok = false;
+        if (!near(dist(s.leadKnee, s.leadAnkle), bb.shin)) ok = false;
+        if (!near(dist(s.trailHip, s.trailKnee), bb.thigh)) ok = false;
+        if (!near(dist(s.trailKnee, s.trailAnkle), bb.shin)) ok = false;
+      }
+      assert(ok, "Batter FK: legs keep exact thigh/shin lengths from hips riding the pelvis");
+    }
+
+    // T23.5 — bat attachment: lead hand owns the grip; rear hand the handle
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        // Lead hand: the grip is always inside arm reach -> exact anchor.
+        if (!near(s.leadHand.x, s.batGrip.x, 1e-6) || !near(s.leadHand.y, s.batGrip.y, 1e-6)) ok = false;
+        // Rear hand: exact on the handle when reachable; otherwise clamped
+        // along the same ray but still fully attached to the shoulder.
+        const reach = dist(s.shoulder, s.rearGrip);
+        if (reach <= (bb.upperArm + bb.forearm) * 0.999) {
+          if (!near(s.rearHand.x, s.rearGrip.x, 1e-6) || !near(s.rearHand.y, s.rearGrip.y, 1e-6)) ok = false;
+        } else {
+          if (dist(s.shoulder, s.rearHand) > bb.upperArm + bb.forearm + 1e-6) ok = false;
+        }
+      }
+      assert(ok, "Batter FK: lead hand owns the bat grip; rear hand rides or tracks the handle");
+    }
+
+    // T23.6 — bat tip attachment: handle -> blade -> tip is a rigid rotated frame
+    {
+      let ok = true;
+      for (const { s } of samples) {
+        if (!near(dist(s.batGrip, s.handleTip), BATTER_BAT.handle)) ok = false;
+        if (!near(dist(s.batGrip, s.batTip), BATTER_BAT.blade)) ok = false;
+        // Collinear through the grip (cross product ~ 0)
+        const hx = s.handleTip.x - s.batGrip.x, hy = s.handleTip.y - s.batGrip.y;
+        const bx = s.batTip.x - s.batGrip.x, by = s.batTip.y - s.batGrip.y;
+        if (Math.abs(hx * by - hy * bx) > 1e-6) ok = false;
+      }
+      assert(ok, "Batter FK: hand -> handle -> blade -> tip stays one continuous rigid chain");
+    }
+
+    // T23.7 — bat placement is bit-identical to the legacy flat rig (gameplay-safe)
+    {
+      let ok = true;
+      const cases: BatterKinematics[] = [
+        solveLBWBatterKinematics(0.5, false, "DEFENSIVE_FORWARD", 60),
+        solveLBWBatterKinematics(0.9, true, "PADDED_AWAY_NO_SHOT", 60),
+        solveCaughtBehindBatterKinematics(0.6, "FORWARD_DEFENCE", 20),
+        solveStumpingBatterKinematics(0.7, 300, 30).batterK,
+      ];
+      for (const k of cases) {
+        const s = solveBatterSkeleton(k);
+        if (s.batGrip.x !== k.batPivotX || s.batGrip.y !== k.batPivotY) ok = false;
+        // Canvas rotate(batRot) maps local (0, blade) to (-sin, +cos) * blade.
+        const legacyTip = {
+          x: k.batPivotX - Math.sin(k.batRotRad) * BATTER_BAT.blade,
+          y: k.batPivotY + Math.cos(k.batRotRad) * BATTER_BAT.blade,
+        };
+        if (!near(s.batTip.x, legacyTip.x, 1e-6) || !near(s.batTip.y, legacyTip.y, 1e-6)) ok = false;
+      }
+      assert(ok, "Batter FK: bat grip/tip reproduce the legacy canvas transform bit-exactly");
+    }
+
+    // T23.8 — grounded stance: ankles pinned to the turf for normal ranges
+    {
+      let ok = true;
+      for (const { label, s } of samples) {
+        if (label === "stumping-wide") continue; // extreme lunge may clamp (documented)
+        if (!near(s.leadAnkle.y, 6, 1e-6) || !near(s.trailAnkle.y, 6, 1e-6)) ok = false;
+      }
+      assert(ok, "Batter FK: both ankles stay pinned to the turf line across all solvers");
+    }
+
+    // T23.9 — extreme stumping lunge keeps legs ATTACHED (clamped, never detached)
+    {
+      let ok = true;
+      let finite = true;
+      for (let m = 10; m <= 90; m += 5) {
+        const s = solveBatterSkeleton(solveStumpingBatterKinematics(0.9, 300, m).batterK);
+        if (!near(dist(s.trailHip, s.trailKnee), bb.thigh)) ok = false;
+        if (!near(dist(s.trailKnee, s.trailAnkle), bb.shin)) ok = false;
+        for (const j of [s.trailHip, s.trailKnee, s.trailAnkle]) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      assert(ok && finite, "Batter FK: 90mm back-foot drag keeps the trail leg attached and finite");
+    }
+
+    // T23.10 — no NaN/Infinity anywhere, including out-of-domain kinematics
+    {
+      let finite = true;
+      for (const { s } of samples) {
+        for (const j of Object.values(s)) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      const weird = [
+        { torsoAngleRad: 42, headTiltRad: -31, frontLegX: 900, frontLegY: -900, backLegX: -800, backLegY: 700, batPivotX: 1200, batPivotY: -1500, batRotRad: 33, padRecoilX: 0, padRecoilY: 0 },
+        { torsoAngleRad: -17, headTiltRad: 12, frontLegX: -750, frontLegY: 300, backLegX: 640, backLegY: -280, batPivotX: -990, batPivotY: 880, batRotRad: -25, padRecoilX: 0, padRecoilY: 0 },
+      ] as BatterKinematics[];
+      for (const k of weird) {
+        const s = solveBatterSkeleton(k);
+        for (const j of Object.values(s)) {
+          if (!Number.isFinite(j.x) || !Number.isFinite(j.y)) finite = false;
+        }
+      }
+      assert(finite, "Batter FK: every joint finite across solvers and clamped out-of-domain inputs");
+    }
+
+    // T23.11 — extreme pose continuity: no joint teleports between fine steps
+    {
+      const sweeps: [string, (t: number) => ReturnType<typeof solveBatterSkeleton>][] = [
+        ["lbw-shot", (t) => solveBatterSkeleton(solveLBWBatterKinematics(t, false, "DEFENSIVE_FORWARD", 60))],
+        ["lbw-noshot", (t) => solveBatterSkeleton(solveLBWBatterKinematics(t, true, "LEAVE_WITHDRAWN", 80))],
+        ["caught-behind", (t) => solveBatterSkeleton(solveCaughtBehindBatterKinematics(t, "FORWARD_DEFENCE", 14))],
+        ["stumping", (t) => solveBatterSkeleton(solveStumpingBatterKinematics(t, 300, 25).batterK)],
+      ];
+      let continuous = true;
+      let culprit = "";
+      const keys: (keyof ReturnType<typeof solveBatterSkeleton>)[] = [
+        "pelvis", "shoulder", "headBase", "leadElbow", "leadHand", "rearElbow", "rearHand",
+        "leadKnee", "leadAnkle", "trailKnee", "trailAnkle", "batGrip", "batTip",
+      ];
+      for (const [label, fn] of sweeps) {
+        let prev = fn(0);
+        for (let i = 1; i <= 1000; i++) {
+          const curr = fn(i / 1000);
+          for (const key of keys) {
+            if (dist(curr[key] as { x: number; y: number }, prev[key] as { x: number; y: number }) > 1.5) {
+              continuous = false;
+              culprit = label;
+            }
+          }
+          prev = curr;
+        }
+      }
+      assert(continuous, `Batter FK: every joint glides continuously in every solver timeline (${culprit || "all clean"})`);
+    }
+
+    // T23.12 — deterministic output
+    {
+      const mk = () =>
+        JSON.stringify(solveBatterSkeleton(solveLBWBatterKinematics(0.42, false, "DEFENSIVE_FORWARD", 45)));
+      assert(mk() === mk(), "Batter FK: byte-identical skeletons for repeated solves");
     }
   }
 
