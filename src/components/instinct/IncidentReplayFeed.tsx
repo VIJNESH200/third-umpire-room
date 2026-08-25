@@ -6,6 +6,7 @@ import {
   solveRunOutReplayState,
 } from "../../engine/runOutPhysics";
 import { projectToPhase1 } from "../../engine/cameraProjections";
+import { solveCaughtBehindBallState } from "../../engine/caughtBehindPhysics";
 import {
   lerp,
   clamp,
@@ -957,8 +958,9 @@ function renderCaughtBehindBroadcast(
   const batterFacing: "LEFT" | "RIGHT" = "LEFT";
 
   // --- 6. Ball corridor (delivery over the camera → bat plane → gloves / daylight) ---
-  // The physical motion communicates the incident: daylight past the edge for a
-  // clean miss, or a deflection off the edge into the gloves for a nick.
+  // The canonical corridor solver owns the motion. A clean miss is one
+  // continuous arc that holds its line past the bat; only a genuine edge
+  // deflects. See src/engine/caughtBehindPhysics.ts.
   const gapPx = ev?.apparentGapPixels ?? (hasEdge ? 0 : 18);
   const batEdgeX = batterX - 26 * BATTER_RIG_SCALE; // bat edge in front of the batter
   const batEdgeY = batterY - 30 * BATTER_RIG_SCALE;
@@ -969,49 +971,28 @@ function renderCaughtBehindBroadcast(
 
   // The bowler releases over the camera: the delivery enters at the near frame
   // edge and recedes down the corridor to the bat plane.
-  const entryX = w * 0.5;
-  const entryY = h * 0.965;
-  const batPlaneX = batEdgeX - (hasEdge ? 0 : gapPx);
-  const batPlaneY = batEdgeY;
+  const ballState = solveCaughtBehindBallState(
+    {
+      entryX: w * 0.5,
+      entryY: h * 0.965,
+      batEdgeX,
+      batEdgeY,
+      gloveX: gloveTargetX,
+      gloveY: gloveTargetY,
+      gapPx,
+      hasEdge,
+      deflectionAngleDeg: ev?.apparentDeflectionAngleDeg ?? 0,
+    },
+    p
+  );
 
-  let ballX: number;
-  let ballY: number;
-  let ballRadius = 4.6;
-  let prevBallX = 0;
-  let prevBallY = 0;
-
-  if (p < 0.5) {
-    const t = p / 0.5;
-    ballX = entryX + (batPlaneX - entryX) * t;
-    ballY = entryY + (batPlaneY - entryY) * t;
-    ballRadius = 5.2 - t * 0.6; // recedes from the camera
-    prevBallX = entryX + (batPlaneX - entryX) * Math.max(0, t - 0.06);
-    prevBallY = entryY + (batPlaneY - entryY) * Math.max(0, t - 0.06);
-  } else {
-    const t = (p - 0.5) / 0.5;
-    if (hasEdge) {
-      // Deflects off the edge and dies into the keeper's gloves
-      const easeT = t * (2 - t); // decelerating edge carry
-      ballX = batEdgeX + (gloveTargetX - batEdgeX) * easeT;
-      ballY = batEdgeY + (gloveTargetY - batEdgeY) * easeT;
-    } else {
-      // Carries through with daylight; the keeper tracks it wide of the body
-      const trackX = gloveTargetX - gapPx * 0.6;
-      ballX = batPlaneX + (trackX - batPlaneX) * t;
-      ballY = batPlaneY + (gloveTargetY + 8 - batPlaneY) * t;
-    }
-    ballRadius = 4.6 - t * 1.0;
-    prevBallX = ballX + 10;
-    prevBallY = ballY - 3;
-  }
-
-  drawCricketBall(ctx, ballX, ballY, {
-    radius: ballRadius,
+  drawCricketBall(ctx, ballState.x, ballState.y, {
+    radius: ballState.radius,
     seamAngleRad: p * Math.PI * 6,
-    shadowY: ballY + 24,
+    shadowY: ballState.y + 24,
     motionTrail: p >= 0.15 && p <= 0.85,
-    prevX: prevBallX,
-    prevY: prevBallY,
+    prevX: ballState.prevX,
+    prevY: ballState.prevY,
   });
 
   // --- 7. Batter drawn last (nearest the slip camera) ---

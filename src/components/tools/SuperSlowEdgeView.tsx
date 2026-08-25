@@ -1,12 +1,22 @@
 import React, { useState } from "react";
 import type { CaughtBehindData } from "../../types/scenario";
 import { ZoomIn, Crosshair } from "lucide-react";
+import { solveEdgeOpticalEvidence } from "../../engine/caughtBehindPhysics";
 
 interface SuperSlowEdgeViewProps {
   caughtBehind: CaughtBehindData;
   currentTimeMs: number;
 }
 
+/**
+ * CAM 02 — 1000 fps optical macro edge camera.
+ *
+ * The camera reports only what the optics can resolve. At this shutter speed
+ * the ball smears across a few millimetres, so a fine miss and a genuine edge
+ * both read as no measurable daylight. The view never states whether contact
+ * occurred: it shows the ball, the blur envelope and the separation the lens
+ * resolves, and leaves the judgement to the third umpire.
+ */
 export const SuperSlowEdgeView: React.FC<SuperSlowEdgeViewProps> = ({
   caughtBehind,
   currentTimeMs,
@@ -18,7 +28,10 @@ export const SuperSlowEdgeView: React.FC<SuperSlowEdgeViewProps> = ({
   const maxTime = 1600;
   const clampedTime = Math.max(minTime, Math.min(maxTime, currentTimeMs));
 
-  const contactTime = caughtBehind.ballPassesBatFrameMs; // ~1200ms
+  const transitTime = caughtBehind.ballPassesBatFrameMs; // ~1200ms
+
+  // Optical evidence: true gap reduced by the motion-blur envelope.
+  const optical = solveEdgeOpticalEvidence(caughtBehind);
 
   // Ball motion progress
   const progress = Math.max(0, Math.min(1, (clampedTime - minTime) / (maxTime - minTime)));
@@ -26,18 +39,20 @@ export const SuperSlowEdgeView: React.FC<SuperSlowEdgeViewProps> = ({
   // Ball vertical travel from top to bottom
   const ballY = 30 + progress * 240;
 
-  // Ball horizontal distance: bat outside edge is at X = 180
-  // Ball radius is 32px
-  // If edge: ball center is at 180 + 32 = 212
-  // If gap: ball center is at 212 + gapMm * 3.5
+  // Bat outside edge sits at X = 180. The ball centre is offset by its radius
+  // plus whatever separation the lens can resolve, so an inconclusive reading
+  // always places the ball at the same apparent standoff.
   const edgeX = 180;
   const ballRadius = 32;
-  const ballX = caughtBehind.hasEdge
-    ? edgeX + ballRadius
-    : edgeX + ballRadius + caughtBehind.gapMm * 3.5;
+  const MM_TO_PX = 3.5;
+  const ballX = edgeX + ballRadius + optical.apparentSeparationMm * MM_TO_PX;
 
-  // Contact status
-  const isAtContactFrame = Math.abs(clampedTime - contactTime) <= 40;
+  // Blur envelope half-width in view units. Drawn on both sides of the ball
+  // to show why sub-envelope separations cannot be measured.
+  const blurPx = optical.blurToleranceMm * MM_TO_PX * 0.5;
+
+  // Frames inside the transit window carry the heaviest smear.
+  const isInTransitWindow = Math.abs(clampedTime - transitTime) <= 60;
 
   // Seam angle rotating with time
   const seamAngle = (clampedTime / 10) % 360;
@@ -103,6 +118,13 @@ export const SuperSlowEdgeView: React.FC<SuperSlowEdgeViewProps> = ({
               <stop offset="70%" stopColor="#b91c1c" />
               <stop offset="100%" stopColor="#7f1d1d" />
             </radialGradient>
+
+            {/* Motion smear envelope: the ball travels while the shutter is open */}
+            <linearGradient id="smearFade" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#dc2626" stopOpacity="0" />
+              <stop offset="50%" stopColor="#dc2626" stopOpacity="0.42" />
+              <stop offset="100%" stopColor="#dc2626" stopOpacity="0" />
+            </linearGradient>
           </defs>
 
           {/* Cricket Bat Outside Edge Profile (Left half of frame) */}
@@ -133,65 +155,71 @@ export const SuperSlowEdgeView: React.FC<SuperSlowEdgeViewProps> = ({
             </text>
           </g>
 
+          {/* Motion-blur envelope around the ball. Sub-envelope separations
+              cannot be resolved, so this band is the reason a fine miss and a
+              genuine edge look identical. */}
+          <rect
+            x={ballX - ballRadius - blurPx}
+            y={ballY - ballRadius}
+            width={(ballRadius + blurPx) * 2}
+            height={ballRadius * 2}
+            fill="url(#smearFade)"
+            opacity={isInTransitWindow ? 1 : 0.55}
+          />
+
           {/* Red Cricket Ball (Right side, traveling past edge) */}
           <g transform={`translate(${ballX}, ${ballY})`}>
             {/* Ball Sphere with Realistic Shading */}
-            <circle cx="0" cy="0" r={ballRadius} fill="url(#ballShading)" stroke="#450a0a" strokeWidth="1.2" />
+            <circle cx="0" cy="0" r={ballRadius} fill="url(#ballShading)" stroke="#450a0a" strokeWidth="1.2" opacity="0.92" />
 
             {/* Stitched White Seam Rotating */}
-            <g transform={`rotate(${seamAngle})`}>
+            <g transform={`rotate(${seamAngle})`} opacity={isInTransitWindow ? 0.55 : 0.85}>
               <ellipse cx="0" cy="0" rx={ballRadius - 1} ry={ballRadius * 0.4} fill="none" stroke="#FFFFFF" strokeWidth="2" strokeDasharray="3 2" />
               <line x1={-(ballRadius - 1)} y1="0" x2={ballRadius - 1} y2="0" stroke="#FFFFFF" strokeWidth="1" opacity="0.7" />
             </g>
           </g>
 
-          {/* Laser Ruler Measurement between Bat Edge & Ball Surface */}
+          {/* Laser Ruler Measurement between Bat Edge & resolved ball surface */}
           {showRuler && (
             <g>
-              {/* Daylight Ruler Line */}
+              {/* Blur-limited measurement span */}
               <line
                 x1={edgeX}
                 y1={ballY}
-                x2={ballX - ballRadius}
+                x2={Math.max(edgeX, ballX - ballRadius - blurPx)}
                 y2={ballY}
                 stroke="#38BDF8"
                 strokeWidth="1.5"
                 strokeDasharray="2 2"
               />
               <circle cx={edgeX} cy={ballY} r="2.5" fill="#38BDF8" />
-              <circle cx={ballX - ballRadius} cy={ballY} r="2.5" fill="#38BDF8" />
+              <circle cx={Math.max(edgeX, ballX - ballRadius - blurPx)} cy={ballY} r="2.5" fill="#38BDF8" />
 
-              {/* Daylight Measurement Badge */}
-              <g transform={`translate(${(edgeX + ballX - ballRadius) / 2}, ${ballY - 14})`}>
-                <rect x="-35" y="-9" width="70" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="#38BDF8" strokeWidth="0.8" />
+              {/* Resolved separation badge. Reports the optical limit, not truth. */}
+              <g transform={`translate(${(edgeX + Math.max(edgeX, ballX - ballRadius - blurPx)) / 2}, ${ballY - 14})`}>
+                <rect x="-46" y="-9" width="92" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="#38BDF8" strokeWidth="0.8" />
                 <text x="0" y="3.5" fill="#38BDF8" fontSize="9" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
-                  {caughtBehind.hasEdge ? "0.0 mm" : `${caughtBehind.gapMm}.0 mm`}
+                  {optical.reading === "VISIBLE_DAYLIGHT"
+                    ? `${optical.apparentSeparationMm.toFixed(1)} mm RESOLVED`
+                    : `< ${optical.blurToleranceMm} mm UNRESOLVED`}
                 </text>
               </g>
             </g>
           )}
-
-          {/* Microscopic Impact Contact Spark if Edge occurs */}
-          {caughtBehind.hasEdge && isAtContactFrame && (
-            <g transform={`translate(${edgeX}, ${ballY})`}>
-              <circle cx="0" cy="0" r="10" fill="#FACC15" opacity="0.6" className="animate-ping" />
-              <circle cx="0" cy="0" r="4" fill="#FFFFFF" />
-            </g>
-          )}
         </svg>
 
-        {/* Real-time Status Overlay */}
+        {/* Real-time Status Overlay. States what the optics resolve; never the verdict. */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
           <div
             className={`px-3 py-1.5 rounded-md text-xs font-bold border backdrop-blur-md shadow-lg flex items-center gap-1.5 ${
-              caughtBehind.hasEdge
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : "bg-emerald-950/90 border-emerald-500 text-emerald-200"
+              optical.reading === "VISIBLE_DAYLIGHT"
+                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
+                : "bg-amber-950/90 border-amber-500 text-amber-200"
             }`}
           >
-            {caughtBehind.hasEdge
-              ? "OPTICAL CONTACT CONFIRMED: ZERO DAYLIGHT (EDGE IMPACT)"
-              : `CLEAR OPTICAL DAYLIGHT: ${caughtBehind.gapMm} mm GAP MAINTAINED`}
+            {optical.reading === "VISIBLE_DAYLIGHT"
+              ? `DAYLIGHT RESOLVED: ${optical.apparentSeparationMm.toFixed(1)} mm CLEAR OF EDGE`
+              : `SEPARATION BELOW OPTICAL LIMIT (< ${optical.blurToleranceMm} mm) — INCONCLUSIVE`}
           </div>
         </div>
       </div>
@@ -199,19 +227,27 @@ export const SuperSlowEdgeView: React.FC<SuperSlowEdgeViewProps> = ({
       {/* Footer Metrics */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">OPTICAL CLEARANCE</div>
-          <div className={`text-[11px] font-black ${caughtBehind.hasEdge ? "text-rose-400" : "text-emerald-400"}`}>
-            {caughtBehind.hasEdge ? "0 mm (BAT CONTACT)" : `${caughtBehind.gapMm} mm (DAYLIGHT)`}
+          <div className="text-[9px] text-slate-400 font-bold">RESOLVED SEPARATION</div>
+          <div
+            className={`text-[11px] font-black ${
+              optical.reading === "VISIBLE_DAYLIGHT" ? "text-emerald-400" : "text-amber-400"
+            }`}
+          >
+            {optical.reading === "VISIBLE_DAYLIGHT"
+              ? `${optical.apparentSeparationMm.toFixed(1)} mm`
+              : "UNRESOLVED"}
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">FRAME RATE</div>
-          <div className="text-[11px] font-black text-cyan-300">1000 FPS ULTRA-MACRO</div>
+          <div className="text-[9px] text-slate-400 font-bold">MOTION BLUR ENVELOPE</div>
+          <div className="text-[11px] font-black text-cyan-300">±{optical.blurToleranceMm} mm @ 1000 FPS</div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">BAT SEPARATION</div>
+          <div className="text-[9px] text-slate-400 font-bold">TRANSIT OFFSET</div>
           <div className="text-[11px] font-black text-amber-300">
-            {Math.abs(currentTimeMs - contactTime) < 30 ? "AT TRANSIT POINT" : `${Math.round(currentTimeMs - contactTime)} ms`}
+            {Math.abs(currentTimeMs - transitTime) < 30
+              ? "AT TRANSIT POINT"
+              : `${Math.round(currentTimeMs - transitTime)} ms`}
           </div>
         </div>
       </div>

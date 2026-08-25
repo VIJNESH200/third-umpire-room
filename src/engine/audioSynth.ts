@@ -30,6 +30,49 @@ class SoundEngine {
   }
 
   /**
+   * Reports why audio is unavailable, or `null` when playback should work.
+   *
+   * Browsers create an `AudioContext` in the `suspended` state until the page
+   * receives a user gesture. `resume()` returns a promise, so the first
+   * synchronous playback after page load can be dropped even though the call
+   * succeeded. Call `unlock()` from a click handler to avoid that.
+   */
+  public getUnavailableReason(): "MUTED" | "NO_AUDIO_CONTEXT" | "SUSPENDED" | null {
+    if (this.isMuted) return "MUTED";
+    if (typeof window === "undefined") return "NO_AUDIO_CONTEXT";
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return "NO_AUDIO_CONTEXT";
+    if (this.ctx && this.ctx.state === "suspended") return "SUSPENDED";
+    return null;
+  }
+
+  /**
+   * Resumes the audio context from inside a user gesture.
+   *
+   * Resolves to `true` when the context is running and playback can proceed.
+   * Awaiting this before scheduling nodes fixes the case where the first
+   * sound of a session is silently dropped by the autoplay policy.
+   */
+  public async unlock(): Promise<boolean> {
+    const ctx = this.getContext();
+    if (!ctx) return false;
+    if (ctx.state === "running") return true;
+    try {
+      await ctx.resume();
+    } catch {
+      return false;
+    }
+    return (ctx.state as AudioContextState) === "running";
+  }
+
+  /** Current audio context state, for diagnostics. */
+  public getState(): AudioContextState | "none" {
+    return this.ctx ? this.ctx.state : "none";
+  }
+
+  /**
    * Tactile console switch click
    */
   public playClick(pitch: number = 800) {
@@ -199,6 +242,60 @@ class SoundEngine {
       osc.start(now);
       osc.stop(now + 0.16);
     }
+  }
+
+  /**
+   * Plays a stump-microphone recording built from an amplitude model.
+   *
+   * The caller supplies the same signal model the scope draws, so the operator
+   * hears exactly what the waveform shows. The engine does not know, and does
+   * not ask, whether the transients came from a bat edge: it renders whatever
+   * amplitudes it is given.
+   *
+   * `sample(timeMs)` must return an amplitude, normally in `[-1, 1]`.
+   * Returns `true` when the buffer was scheduled.
+   */
+  public async playStumpMicSignal(
+    sample: (timeMs: number) => number,
+    windowStartMs: number,
+    windowEndMs: number,
+    opts: { playbackRate?: number; gain?: number } = {}
+  ): Promise<boolean> {
+    if (this.isMuted) return false;
+    const unlocked = await this.unlock();
+    const ctx = this.getContext();
+    if (!ctx || !unlocked) return false;
+
+    // Stretch the review window so a 800 ms clip is audible as a short burst
+    // at the requested rate.
+    const rate = opts.playbackRate ?? 0.35;
+    const spanMs = Math.max(1, windowEndMs - windowStartMs);
+    const durationS = (spanMs / 1000) * (1 / Math.max(0.05, 1 / rate));
+    const sr = ctx.sampleRate;
+    const frames = Math.max(1, Math.floor(durationS * sr));
+    const buffer = ctx.createBuffer(1, frames, sr);
+    const data = buffer.getChannelData(0);
+
+    let peak = 0;
+    for (let i = 0; i < frames; i++) {
+      const timeMs = windowStartMs + (i / frames) * spanMs;
+      const v = sample(timeMs);
+      data[i] = Number.isFinite(v) ? v : 0;
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+    // Normalise so quiet incidents stay audible without clipping loud ones.
+    const norm = peak > 0 ? 0.85 / peak : 0;
+    for (let i = 0; i < frames; i++) data[i] *= norm;
+
+    const src = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    src.buffer = buffer;
+    gain.gain.value = opts.gain ?? 0.9;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(ctx.currentTime);
+    return true;
   }
 
   /**

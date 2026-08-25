@@ -34,6 +34,16 @@ import {
   type FielderKinematics,
 } from "../components/instinct/actorRigs";
 import {
+  solveCaughtBehindBallState,
+  measureBatPlaneTurnDeg,
+  solveEdgeOpticalEvidence,
+  solveUltraEdgeSignal,
+  sampleUltraEdgeAmplitude,
+  findNearestTransient,
+  CB_BAT_CROSS_P,
+  type CaughtBehindCorridor,
+} from "../engine/caughtBehindPhysics";
+import {
   solveRunOutReplayState,
   getRunOutEventTimeline,
   mapPhase1TimeToReplayTime,
@@ -53,6 +63,20 @@ import type {
   BoundaryData,
   IncidentResult,
 } from "../types/scenario";
+
+/** Baseline Caught Behind ground truth for evidence-neutrality assertions. */
+const cbBase: CaughtBehindData = {
+  hasEdge: false,
+  waveformSpikeTimeMs: null,
+  distractorNoise: false,
+  distractorTimeMs: null,
+  distractorType: null,
+  proximityFrameMs: 1200,
+  spikeIntensity: 0.1,
+  ballPassesBatFrameMs: 1200,
+  gapMm: 0,
+  soundType: "SILENCE",
+};
 
 function runAllDRSTests() {
   console.log("=================================================");
@@ -2120,6 +2144,267 @@ function runAllDRSTests() {
       const mk = () =>
         JSON.stringify(solveFielderSkeleton(solveBoundaryFielderKinematics(0.52, true, 317).fielderK));
       assert(mk() === mk(), "Fielder FK: byte-identical skeletons for repeated solves");
+    }
+  }
+
+  // --- GROUP 25: CAUGHT BEHIND BALL CORRIDOR & EVIDENCE NEUTRALITY (TASK 3) ---
+  console.log("\n--- GROUP 25: CAUGHT BEHIND BALL CORRIDOR & EVIDENCE NEUTRALITY ---");
+  {
+    const corridor = (over: Partial<CaughtBehindCorridor> = {}): CaughtBehindCorridor => ({
+      entryX: 400,
+      entryY: 270,
+      batEdgeX: 380,
+      batEdgeY: 120,
+      gloveX: 320,
+      gloveY: 96,
+      gapPx: 14,
+      hasEdge: false,
+      deflectionAngleDeg: 0,
+      ...over,
+    });
+
+    // T25.1 — clean miss never reverses lateral direction
+    {
+      let monotone = true;
+      let signFlips = 0;
+      for (const gapPx of [0, 4, 9, 18, 30]) {
+        const c = corridor({ hasEdge: false, gapPx });
+        let prev = solveCaughtBehindBallState(c, 0);
+        let refSign = 0;
+        for (let i = 1; i <= 400; i++) {
+          const s = solveCaughtBehindBallState(c, i / 400);
+          const step = s.x - prev.x;
+          const sg = Math.sign(Math.abs(step) < 1e-9 ? 0 : step);
+          if (sg !== 0) {
+            if (refSign === 0) refSign = sg;
+            else if (sg !== refSign) {
+              signFlips++;
+              monotone = false;
+            }
+          }
+          prev = s;
+        }
+      }
+      assert(monotone && signFlips === 0, "CB Ball: clean miss holds one lateral direction for the whole flight");
+    }
+
+    // T25.2 — clean miss is continuous in POSITION at the bat plane
+    {
+      let ok = true;
+      for (const gapPx of [0, 6, 20, 34]) {
+        const c = corridor({ hasEdge: false, gapPx });
+        const before = solveCaughtBehindBallState(c, CB_BAT_CROSS_P - 1e-4);
+        const after = solveCaughtBehindBallState(c, CB_BAT_CROSS_P + 1e-4);
+        if (Math.hypot(after.x - before.x, after.y - before.y) > 0.05) ok = false;
+      }
+      assert(ok, "CB Ball: clean miss position is continuous across the bat plane");
+    }
+
+    // T25.3 — clean miss is continuous in DIRECTION at the bat plane
+    {
+      let maxTurn = 0;
+      for (const gapPx of [0, 6, 20, 34]) {
+        const turn = Math.abs(measureBatPlaneTurnDeg(corridor({ hasEdge: false, gapPx })));
+        if (turn > maxTurn) maxTurn = turn;
+      }
+      assert(maxTurn < 0.5, `CB Ball: clean miss direction is continuous at the bat plane (max turn ${maxTurn.toFixed(3)} deg)`);
+    }
+
+    // T25.4 — no artificial reversal: the miss keeps travelling past the bat
+    {
+      let ok = true;
+      for (const gapPx of [4, 14, 28]) {
+        const c = corridor({ hasEdge: false, gapPx });
+        const atCross = solveCaughtBehindBallState(c, CB_BAT_CROSS_P);
+        const end = solveCaughtBehindBallState(c, 1);
+        // Corridor runs right-to-left here, so x must keep decreasing.
+        if (!(end.x < atCross.x)) ok = false;
+        if (!(atCross.x < solveCaughtBehindBallState(c, 0).x)) ok = false;
+        if (Math.sign(atCross.vx) !== Math.sign(end.vx)) ok = false;
+      }
+      assert(ok, "CB Ball: clean miss continues down the corridor without an artificial turn-back");
+    }
+
+    // T25.5 — edge deflects, plausibly and in one place only
+    {
+      let ok = true;
+      let sawTurn = false;
+      for (const deg of [0.6, 2.4, 3.6]) {
+        const c = corridor({ hasEdge: true, gapPx: 0, deflectionAngleDeg: deg });
+        const turn = Math.abs(measureBatPlaneTurnDeg(c));
+        if (turn > 0.4) sawTurn = true;
+        // A plausible nick bends the line without doubling back on itself.
+        if (turn >= 90) ok = false;
+        const before = solveCaughtBehindBallState(c, CB_BAT_CROSS_P - 1e-4);
+        const after = solveCaughtBehindBallState(c, CB_BAT_CROSS_P + 1e-4);
+        if (Math.hypot(after.x - before.x, after.y - before.y) > 0.05) ok = false;
+      }
+      assert(sawTurn && ok, "CB Ball: edge produces a single plausible deflection with continuous position");
+    }
+
+    // T25.6 — edge carries into the gloves and decelerates
+    {
+      const c = corridor({ hasEdge: true, gapPx: 0, deflectionAngleDeg: 2.4 });
+      const early = solveCaughtBehindBallState(c, 0.6);
+      const late = solveCaughtBehindBallState(c, 0.98);
+      const speed = (s: { vx: number; vy: number }) => Math.hypot(s.vx, s.vy);
+      const endGap = Math.hypot(late.x - (c.gloveX + 2.4 * 1.6), late.y - (c.gloveY + 6));
+      assert(
+        speed(late) < speed(early) && endGap < 3,
+        "CB Ball: edge carry decelerates into the keeper's gloves"
+      );
+    }
+
+    // T25.7 — trajectories are deterministic
+    {
+      const mk = (hasEdge: boolean) =>
+        JSON.stringify(
+          [0, 0.25, 0.5, 0.75, 1].map((p) =>
+            solveCaughtBehindBallState(corridor({ hasEdge, gapPx: hasEdge ? 0 : 16, deflectionAngleDeg: hasEdge ? 2.8 : 0 }), p)
+          )
+        );
+      assert(mk(false) === mk(false) && mk(true) === mk(true), "CB Ball: trajectories are byte-identical for repeated solves");
+    }
+
+    // T25.8 — no NaN/Infinity anywhere on either path
+    {
+      let finite = true;
+      for (const hasEdge of [true, false]) {
+        for (let i = 0; i <= 200; i++) {
+          const s = solveCaughtBehindBallState(corridor({ hasEdge, gapPx: hasEdge ? 0 : 11, deflectionAngleDeg: hasEdge ? 3 : 0 }), i / 200);
+          for (const v of [s.x, s.y, s.vx, s.vy, s.radius, s.prevX, s.prevY]) {
+            if (!Number.isFinite(v)) finite = false;
+          }
+        }
+      }
+      assert(finite, "CB Ball: every sample is finite across both corridors");
+    }
+
+    // T25.9 — Super Slow-Mo cannot be read as the answer on marginal gaps
+    {
+      const edge = solveEdgeOpticalEvidence({ ...cbBase, hasEdge: true, gapMm: 0 });
+      // Any gap inside the blur envelope is indistinguishable from contact.
+      let marginalMatchesEdge = true;
+      for (const gapMm of [1, 3, 5, 6]) {
+        const miss = solveEdgeOpticalEvidence({ ...cbBase, hasEdge: false, gapMm });
+        if (miss.reading !== edge.reading) marginalMatchesEdge = false;
+        if (miss.apparentSeparationMm !== edge.apparentSeparationMm) marginalMatchesEdge = false;
+      }
+      assert(
+        edge.reading === "INCONCLUSIVE" && marginalMatchesEdge,
+        "CB Optical: a fine miss and a genuine edge produce an identical inconclusive reading"
+      );
+    }
+    {
+      // A genuine edge has no gap, so the camera can never resolve daylight
+      // on one. That keeps INCONCLUSIVE ambiguous instead of meaning "edge".
+      let neverResolves = true;
+      for (const intensity of [0.1, 0.5, 0.95]) {
+        const o = solveEdgeOpticalEvidence({ ...cbBase, hasEdge: true, gapMm: 0, spikeIntensity: intensity });
+        if (o.reading !== "INCONCLUSIVE" || o.apparentSeparationMm !== 0) neverResolves = false;
+      }
+      assert(neverResolves, "CB Optical: an edge never resolves daylight, whatever its intensity");
+    }
+    {
+      // Across the generator's real output, an inconclusive reading must cover
+      // both truths, so the operator cannot invert it into a verdict.
+      let inconclusiveEdges = 0;
+      let inconclusiveMisses = 0;
+      for (let s = 0; s < 400; s++) {
+        const sc = generateScenario(6000 + s * 53, "CAUGHT_BEHIND");
+        const cb = sc.caughtBehind!;
+        if (solveEdgeOpticalEvidence(cb).reading !== "INCONCLUSIVE") continue;
+        if (cb.hasEdge) inconclusiveEdges++;
+        else inconclusiveMisses++;
+      }
+      assert(
+        inconclusiveEdges > 0 && inconclusiveMisses > 0,
+        `CB Optical: an inconclusive reading covers both edges (${inconclusiveEdges}) and misses (${inconclusiveMisses})`
+      );
+    }
+    {
+      // Wide misses still resolve, otherwise clear incidents are undecidable.
+      const clear = solveEdgeOpticalEvidence({ ...cbBase, hasEdge: false, gapMm: 30 });
+      assert(
+        clear.reading === "VISIBLE_DAYLIGHT" && clear.apparentSeparationMm > 0,
+        "CB Optical: a wide miss still resolves visible daylight"
+      );
+    }
+
+    // T25.10 — UltraEdge never encodes hasEdge structurally
+    {
+      const edgeSig = solveUltraEdgeSignal({ ...cbBase, hasEdge: true, waveformSpikeTimeMs: 1200, spikeIntensity: 0.8, gapMm: 0 });
+      const decoySig = solveUltraEdgeSignal({ ...cbBase, hasEdge: false, waveformSpikeTimeMs: null, distractorNoise: true, distractorTimeMs: 1290, distractorType: "PAD", gapMm: 5 });
+      const cleanSig = solveUltraEdgeSignal({ ...cbBase, hasEdge: false, waveformSpikeTimeMs: null, gapMm: 30 });
+
+      // Every incident produces a signal: silence can no longer mean "no edge".
+      assert(
+        edgeSig.transients.length > 0 && decoySig.transients.length > 0 && cleanSig.transients.length > 0,
+        "CB Acoustic: every incident yields at least one transient (no giveaway flat line)"
+      );
+      assert(
+        edgeSig.noiseFloor > 0 && decoySig.noiseFloor > 0 && cleanSig.noiseFloor > 0,
+        "CB Acoustic: the noise floor is always present"
+      );
+
+      // Amplitude and frequency bands overlap between a real edge and a decoy,
+      // so loudness or tone alone cannot decide the incident.
+      const peak = (s: ReturnType<typeof solveUltraEdgeSignal>) =>
+        Math.max(...s.transients.map((t) => t.amplitude));
+      const edgePeak = peak(edgeSig);
+      const decoyPeak = peak(decoySig);
+      assert(
+        edgePeak >= 0.4 && edgePeak <= 0.8 && decoyPeak >= 0.4 && decoyPeak <= 0.8,
+        "CB Acoustic: edge and decoy transients share the same amplitude band"
+      );
+
+      // A decoy sits off the transit frame; a genuine edge sits close to it.
+      const edgeNear = findNearestTransient(edgeSig)!;
+      const decoyNear = findNearestTransient(decoySig)!;
+      assert(
+        Math.abs(edgeNear.offsetMs) < Math.abs(decoyNear.offsetMs),
+        "CB Acoustic: alignment with the transit frame is the discriminator, not loudness"
+      );
+    }
+
+    // T25.12 — alignment is evidence, not a lookup table
+    {
+      // Across the generator's whole output, edge offsets must spread over a
+      // band rather than collapsing to one constant, and clean-miss offsets
+      // must overlap that band, so a tight offset is never conclusive proof.
+      const edgeOffsets: number[] = [];
+      const missOffsets: number[] = [];
+      for (let s = 0; s < 400; s++) {
+        const sc = generateScenario(4000 + s * 41, "CAUGHT_BEHIND");
+        const cb = sc.caughtBehind!;
+        const near = findNearestTransient(solveUltraEdgeSignal(cb));
+        if (!near) continue;
+        (cb.hasEdge ? edgeOffsets : missOffsets).push(Math.abs(near.offsetMs));
+      }
+      const distinctEdge = new Set(edgeOffsets.map((v) => v.toFixed(1))).size;
+      assert(
+        edgeOffsets.length > 20 && distinctEdge > 10,
+        `CB Acoustic: edge alignment offsets vary across incidents (${distinctEdge} distinct values)`
+      );
+      const edgeMax = Math.max(...edgeOffsets);
+      const missOverlapping = missOffsets.filter((v) => v <= edgeMax).length;
+      assert(
+        missOverlapping > 0,
+        "CB Acoustic: clean misses also produce transients inside the edge alignment band"
+      );
+    }
+
+    // T25.11 — acoustic signal is deterministic and finite
+    {
+      const mk = () => JSON.stringify(solveUltraEdgeSignal({ ...cbBase, hasEdge: true, waveformSpikeTimeMs: 1200, gapMm: 0 }));
+      assert(mk() === mk(), "CB Acoustic: signal model is byte-identical for repeated solves");
+
+      let finite = true;
+      const sig = solveUltraEdgeSignal({ ...cbBase, hasEdge: true, waveformSpikeTimeMs: 1200, distractorNoise: true, distractorTimeMs: 1310, distractorType: "PAD", gapMm: 0 });
+      for (let t = sig.windowStartMs; t <= sig.windowEndMs; t += 4) {
+        if (!Number.isFinite(sampleUltraEdgeAmplitude(sig, t))) finite = false;
+      }
+      assert(finite, "CB Acoustic: amplitude samples stay finite across the review window");
     }
   }
 

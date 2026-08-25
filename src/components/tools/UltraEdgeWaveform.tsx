@@ -1,7 +1,13 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useMemo, useState } from "react";
 import type { CaughtBehindData } from "../../types/scenario";
-import { Volume2, Activity } from "lucide-react";
+import { Volume2, Activity, AlertTriangle } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
+import {
+  solveUltraEdgeSignal,
+  sampleUltraEdgeAmplitude,
+  findNearestTransient,
+  solveEdgeOpticalEvidence,
+} from "../../engine/caughtBehindPhysics";
 
 interface UltraEdgeWaveformProps {
   caughtBehind: CaughtBehindData;
@@ -9,18 +15,33 @@ interface UltraEdgeWaveformProps {
   onTimeChange: (timeMs: number) => void;
 }
 
+/**
+ * CAM 04 — UltraEdge stump-microphone telemetry.
+ *
+ * The scope draws every transient in the review window without labelling its
+ * source. A bat edge, a pad contact and ambient kit noise occupy overlapping
+ * amplitude and frequency bands, so the only usable discriminator is how
+ * closely a transient aligns with the frame in which the ball passed the bat.
+ * The speaker plays the same signal the scope draws, so what the operator
+ * hears always matches what they see.
+ */
 export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
   caughtBehind,
   currentTimeMs,
   onTimeChange,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [audioNotice, setAudioNotice] = useState<string | null>(null);
 
-  const minTime = 800;
-  const maxTime = 1600;
-  const contactTime = caughtBehind.ballPassesBatFrameMs; // ~1200ms
+  const signal = useMemo(() => solveUltraEdgeSignal(caughtBehind), [caughtBehind]);
+  const optical = useMemo(() => solveEdgeOpticalEvidence(caughtBehind), [caughtBehind]);
+  const nearest = useMemo(() => findNearestTransient(signal), [signal]);
 
-  // Draw synchronized audio decibel waveform onto canvas
+  const minTime = signal.windowStartMs;
+  const maxTime = signal.windowEndMs;
+  const transitTime = signal.batPlaneTimeMs;
+
+  // Draw the synchronized stump-mic scope.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -59,53 +80,53 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
     ctx.fillText("-20dB", 4, centerY - 25);
     ctx.fillText("-40dB", 4, centerY + 35);
 
-    // Synchronized Contact Window (Cyan Frame)
-    const contactX = ((contactTime - minTime) / (maxTime - minTime)) * width;
+    // Transit window: the frames in which the ball crossed the bat plane. The
+    // operator checks alignment against this band; the band itself asserts
+    // nothing about contact.
+    const transitX = ((transitTime - minTime) / (maxTime - minTime)) * width;
     ctx.fillStyle = "rgba(56, 189, 248, 0.06)";
-    ctx.fillRect(contactX - 22, 0, 44, height);
+    ctx.fillRect(transitX - 22, 0, 44, height);
     ctx.strokeStyle = "rgba(56, 189, 248, 0.4)";
     ctx.lineWidth = 1.2;
-    ctx.strokeRect(contactX - 22, 0, 44, height);
+    ctx.strokeRect(transitX - 22, 0, 44, height);
 
-    // Render Procedural UltraEdge Waveform
+    // Render the acoustic trace from the shared signal model.
     ctx.beginPath();
     ctx.lineWidth = 2;
     ctx.strokeStyle = "#F43F5E"; // Clean broadcast magenta/rose
     ctx.shadowColor = "rgba(244, 63, 94, 0.5)";
     ctx.shadowBlur = 4;
 
-    const numPoints = 220;
+    const numPoints = 480;
+    const AMP_PX = 62; // full-scale deflection in pixels
     for (let i = 0; i < numPoints; i++) {
       const t = minTime + (i / numPoints) * (maxTime - minTime);
       const x = (i / numPoints) * width;
-
-      // Realistic microphone ambient noise floor
-      let amplitude = (Math.sin(i * 0.4) * 3.5) + (Math.cos(i * 0.85) * 2.5);
-
-      // 1. Wood Edge Spike (Multi-harmonic high-frequency resonant burst)
-      if (caughtBehind.hasEdge && caughtBehind.waveformSpikeTimeMs) {
-        const delta = Math.abs(t - caughtBehind.waveformSpikeTimeMs);
-        if (delta < 50) {
-          const envelope = Math.exp(-delta / 16);
-          amplitude += Math.sin(delta * 0.8) * 52 * envelope * caughtBehind.spikeIntensity;
-        }
-      }
-
-      // 2. Decoy Distractor Noise (Low-frequency pad / clothing brush)
-      if (caughtBehind.distractorNoise && caughtBehind.distractorTimeMs) {
-        const delta = Math.abs(t - caughtBehind.distractorTimeMs);
-        if (delta < 75) {
-          const envelope = Math.exp(-delta / 30);
-          amplitude += Math.sin(delta * 0.22) * 25 * envelope;
-        }
-      }
-
-      const y = centerY + amplitude;
+      const y = centerY + sampleUltraEdgeAmplitude(signal, t) * AMP_PX;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
     ctx.shadowBlur = 0;
+
+    // Unlabelled candidate markers. Each marker says "a transient occurred
+    // here", not what caused it.
+    for (const tr of signal.transients) {
+      const tx = ((tr.timeMs - minTime) / (maxTime - minTime)) * width;
+      if (tx < 0 || tx > width) continue;
+      ctx.strokeStyle = "rgba(226, 232, 240, 0.35)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(tx, 8);
+      ctx.lineTo(tx, height - 8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(226, 232, 240, 0.8)";
+      ctx.beginPath();
+      ctx.arc(tx, 8, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Current Scrub Time Needle Indicator
     const currentNeedleX = ((currentTimeMs - minTime) / (maxTime - minTime)) * width;
@@ -124,7 +145,7 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
     ctx.lineTo(currentNeedleX, 7);
     ctx.closePath();
     ctx.fill();
-  }, [caughtBehind, currentTimeMs, contactTime]);
+  }, [signal, currentTimeMs, transitTime, minTime, maxTime]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -135,20 +156,40 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
     sounds.playClick(900);
   };
 
-  const handlePlaySound = () => {
-    if (caughtBehind.hasEdge) {
-      sounds.playUltraEdgeSound("WOODY_SNICK");
-    } else if (caughtBehind.distractorNoise) {
-      sounds.playUltraEdgeSound("DULL_THUD");
-    } else {
-      sounds.playUltraEdgeSound("SILENCE");
+  /**
+   * Plays the stump microphone.
+   *
+   * Runs inside the click handler so the browser treats it as a user gesture,
+   * then awaits `unlock()` before scheduling the buffer. If playback is still
+   * unavailable, the reason is shown in the panel rather than failing silently.
+   */
+  const handlePlaySound = async () => {
+    setAudioNotice(null);
+    const played = await sounds.playStumpMicSignal(
+      (timeMs) => sampleUltraEdgeAmplitude(signal, timeMs),
+      minTime,
+      maxTime,
+      { playbackRate: 0.3 }
+    );
+    if (!played) {
+      const reason = sounds.getUnavailableReason();
+      setAudioNotice(
+        reason === "MUTED"
+          ? "Audio is muted. Unmute in the console header to listen."
+          : reason === "NO_AUDIO_CONTEXT"
+          ? "This browser does not expose the Web Audio API."
+          : "The browser blocked audio playback. Interact with the page, then try again."
+      );
     }
   };
 
-  // Magnified Bat-Ball Proximity parameters
+  // Magnified bat-ball proximity uses the same blur-limited optical evidence
+  // as CAM 02, so this panel cannot leak the verdict either.
   const ballProgress = Math.max(0, Math.min(1, (currentTimeMs - minTime) / (maxTime - minTime)));
   const ballY = 20 + ballProgress * 180;
-  const ballX = caughtBehind.hasEdge ? 76 : 76 + caughtBehind.gapMm * 1.4;
+  const ballX = 76 + optical.apparentSeparationMm * 1.4;
+
+  const alignmentOffsetMs = nearest ? Math.round(nearest.offsetMs) : null;
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
@@ -173,6 +214,13 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
         </button>
       </div>
 
+      {audioNotice && (
+        <div className="mt-2 flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-950/40 px-2 py-1.5 text-[10px] text-amber-200">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-400" />
+          <span>{audioNotice}</span>
+        </div>
+      )}
+
       {/* Split View: Optical Zoom (Left) + Decibel Scope (Right) */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 my-2 flex-1 min-h-[220px]">
         {/* Left Column (5 Cols): Optical Super-Slow Bat-Ball Proximity Cam */}
@@ -193,20 +241,40 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
               BAT OUTSIDE EDGE
             </text>
 
-            {/* Red Cricket Ball with Stitched White Seam */}
-            <circle cx={ballX} cy={ballY} r="13" fill="#dc2626" stroke="#991b1b" strokeWidth="1" />
-            <line x1={ballX - 9} y1={ballY} x2={ballX + 9} y2={ballY} stroke="#FFFFFF" strokeWidth="1.2" strokeDasharray="2 1" />
+            {/* Motion smear envelope: the reason fine separations cannot be read */}
+            <rect
+              x={ballX - 13 - optical.blurToleranceMm * 0.7}
+              y={ballY - 13}
+              width={(13 + optical.blurToleranceMm * 0.7) * 2}
+              height="26"
+              fill="#dc2626"
+              opacity="0.22"
+            />
 
-            {/* Laser Gap Ruler */}
-            <line x1="59" y1={ballY} x2={ballX - 13} y2={ballY} stroke="#38BDF8" strokeWidth="1.5" strokeDasharray="2 2" />
+            {/* Red Cricket Ball with Stitched White Seam */}
+            <circle cx={ballX} cy={ballY} r="13" fill="#dc2626" stroke="#991b1b" strokeWidth="1" opacity="0.92" />
+            <line x1={ballX - 9} y1={ballY} x2={ballX + 9} y2={ballY} stroke="#FFFFFF" strokeWidth="1.2" strokeDasharray="2 1" opacity="0.7" />
+
+            {/* Laser Gap Ruler, limited by the blur envelope */}
+            <line
+              x1="59"
+              y1={ballY}
+              x2={Math.max(59, ballX - 13 - optical.blurToleranceMm * 0.7)}
+              y2={ballY}
+              stroke="#38BDF8"
+              strokeWidth="1.5"
+              strokeDasharray="2 2"
+            />
             <circle cx="59" cy={ballY} r="2" fill="#38BDF8" />
-            <circle cx={ballX - 13} cy={ballY} r="2" fill="#38BDF8" />
+            <circle cx={Math.max(59, ballX - 13 - optical.blurToleranceMm * 0.7)} cy={ballY} r="2" fill="#38BDF8" />
           </svg>
 
-          {/* Gap Readout Badge */}
+          {/* Resolved separation badge */}
           <div className="absolute bottom-2 left-2 z-20">
             <span className="text-[10px] font-mono font-bold bg-slate-950/90 text-cyan-300 px-2 py-0.5 rounded border border-slate-700">
-              GAP: {caughtBehind.gapMm} mm {caughtBehind.gapMm > 0 ? "(CLEAR DAYLIGHT)" : "(EDGE CONTACT)"}
+              {optical.reading === "VISIBLE_DAYLIGHT"
+                ? `RESOLVED: ${optical.apparentSeparationMm.toFixed(1)} mm DAYLIGHT`
+                : `UNRESOLVED: < ${optical.blurToleranceMm} mm`}
             </span>
           </div>
         </div>
@@ -231,26 +299,28 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
         </div>
       </div>
 
-      {/* Telemetry Diagnostics Footer */}
+      {/* Telemetry Diagnostics Footer. Reports measurements, not conclusions. */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">TIMELINE SYNC</div>
+          <div className="text-[9px] text-slate-400 font-bold">TRANSIENTS DETECTED</div>
           <div className="text-[11px] font-black text-cyan-300 truncate">
-            {caughtBehind.hasEdge ? "EDGE SPIKE ALIGNED" : "FLATLINE / CLEAN"}
+            {signal.transients.length} IN WINDOW
           </div>
         </div>
 
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">FREQUENCY SIGNATURE</div>
+          <div className="text-[9px] text-slate-400 font-bold">NEAREST TO TRANSIT</div>
           <div className="text-[11px] font-black text-rose-300 truncate">
-            {caughtBehind.soundType.replace("_", " ")}
+            {alignmentOffsetMs === null
+              ? "NONE"
+              : `${alignmentOffsetMs > 0 ? "+" : ""}${alignmentOffsetMs} ms`}
           </div>
         </div>
 
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">OPTICAL CLEARANCE</div>
+          <div className="text-[9px] text-slate-400 font-bold">PEAK AMPLITUDE</div>
           <div className="text-[11px] font-black text-amber-300 truncate">
-            {caughtBehind.hasEdge ? "ZERO GAP / WOOD IMPACT" : `${caughtBehind.gapMm}mm CLEAR DAYLIGHT`}
+            {nearest ? `${Math.round(nearest.transient.amplitude * 100)}%` : "—"}
           </div>
         </div>
       </div>
