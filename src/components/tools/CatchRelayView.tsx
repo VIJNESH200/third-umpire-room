@@ -22,7 +22,6 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
 
   const isRopeContact = clampedTime >= contactTime;
   const isBallReleased = clampedTime >= releaseTime;
-  const isTouchingRopeWithBall = isRopeContact && !isBallReleased;
 
   // Fielder running/sliding from outfield (X=120) towards boundary rope (X=350)
   const fielderX = 120 + progress * 240;
@@ -55,7 +54,7 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
         </div>
 
         <div className="text-[11px] text-slate-400">
-          CHECK: <span className="text-cyan-300 font-bold">{boundary.catchOrSave.replace(/_/g, " ")}</span>
+          TRACKING: <span className="text-cyan-300 font-bold">BOUNDARY INTERACTION</span>
         </div>
       </div>
 
@@ -88,7 +87,7 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
             width="22"
             height="230"
             rx="3"
-            fill={isTouchingRopeWithBall ? "#ef4444" : "url(#relayCushion)"}
+            fill="url(#relayCushion)"
             stroke="#78350f"
             strokeWidth="1.2"
           />
@@ -111,8 +110,8 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
           {/* Boundary Run-Up Guide */}
           <line x1="0" y1="220" x2="360" y2="220" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 4" />
 
-          {/* Relay Partner Fielder inside play (at X=160, waiting for lob) */}
-          {!boundary.isBoundary && (
+          {/* Relay Partner Fielder inside play (waiting for lob in relay scenario) */}
+          {boundary.catchOrSave === "RELAY_CATCH" && (
             <g transform="translate(160, 160)">
               <circle cx="0" cy="-28" r="8" fill="#1e293b" />
               <rect x="-6" y="-20" width="12" height="24" fill="#1e293b" rx="2" />
@@ -150,52 +149,42 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
           <circle cx={ballX} cy={ballY} r="7" fill="#dc2626" stroke="#FFFFFF" strokeWidth="0.8" />
 
           {/* Contact Laser Indicator */}
-          {isTouchingRopeWithBall && (
+          {isRopeContact && (
             <g transform="translate(360, 210)">
-              <circle cx="0" cy="0" r="16" fill="#EF4444" opacity="0.5" className="animate-ping" />
+              <circle cx="0" cy="0" r="16" fill="#FACC15" opacity="0.45" className="animate-ping" />
               <circle cx="0" cy="0" r="6" fill="#FFFFFF" />
             </g>
           )}
         </svg>
 
-        {/* Real-time Status Overlay */}
+        {/* Real-time Status Overlay — neutral instrument state only */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
-          <div
-            className={`px-3 py-1.5 rounded-md text-xs font-bold border backdrop-blur-md shadow-lg ${
-              isTouchingRopeWithBall
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : isBallReleased
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
-                : "bg-cyan-950/90 border-cyan-500 text-cyan-200"
-            }`}
-          >
-            {isTouchingRopeWithBall
-              ? "BOUNDARY ROPE TOUCH DETECTED (BALL IN HAND WHILE TOUCHING CUSHION)"
-              : isBallReleased
-              ? "CLEAN RELEASE (BALL FLICKED BEFORE CUSHION CONTACT)"
-              : "AERIAL CATCH IN PROGRESS (APPROACHING ROPE)"}
+          <div className="px-3 py-1.5 rounded-md text-xs font-bold border backdrop-blur-md shadow-lg bg-slate-950/90 border-slate-700 text-slate-300">
+            {isRopeContact
+              ? (!isBallReleased ? "BOUNDARY CONTACT ZONE (BALL IN HAND)" : "BOUNDARY CONTACT ZONE (BALL AIRBORNE)")
+              : "BOUNDARY PURSUIT IN PROGRESS"}
           </div>
         </div>
       </div>
 
-      {/* Footer Metrics */}
+      {/* Neutral Diagnostics Footer */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">SEQUENCE TIMING</div>
+          <div className="text-[9px] text-slate-400 font-bold">SENSOR FEED</div>
           <div className="text-[11px] font-black text-cyan-300">
-            RELEASE {releaseTime}ms • ROPE {contactTime}ms
+            1080P 50FPS BROADCAST
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">TIMELINE DELTA</div>
-          <div className={`text-[11px] font-black ${boundary.isBoundary ? "text-rose-400" : "text-emerald-400"}`}>
-            {boundary.isBoundary ? `TOUCH PRIOR (+${contactTime - releaseTime}ms)` : `RELEASED BEFORE (-${contactTime - releaseTime}ms)`}
+          <div className="text-[9px] text-slate-400 font-bold">BALL STATUS</div>
+          <div className="text-[11px] font-black text-slate-200">
+            {isBallReleased ? "RELEASED / IN AIR" : "HELD IN HAND"}
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">VERDICT OUTCOME</div>
-          <div className={`text-[11px] font-black ${boundary.isBoundary ? "text-rose-400" : "text-emerald-400"}`}>
-            {boundary.isBoundary ? "BOUNDARY (NOT OUT)" : "CLEAN CATCH (OUT)"}
+          <div className="text-[9px] text-slate-400 font-bold">ROPE INTERACTION</div>
+          <div className="text-[11px] font-black text-amber-300">
+            {isRopeContact ? "AT BOUNDARY CUSHION" : "OUTFIELD PURSUIT"}
           </div>
         </div>
       </div>

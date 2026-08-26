@@ -27,7 +27,6 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
 
   const isRopeContact = clampedTime >= contactTime;
   const isBallHeld = clampedTime < releaseTime;
-  const simultaneousTouch = isRopeContact && isBallHeld;
 
   // Fielder foot sliding horizontally towards cushion (cushion apex at X=240)
   // Starts at X=120, slides to X=245 at contactTime, slides past to X=280
@@ -116,8 +115,8 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
                 ? "180,180 320,180 335,210 165,210"
                 : "180,180 320,180 340,210 160,210"
             }
-            fill={simultaneousTouch ? "#EF4444" : "url(#cushionFoam)"}
-            stroke={simultaneousTouch ? "#FCA5A5" : "#78350f"}
+            fill="url(#cushionFoam)"
+            stroke="#78350f"
             strokeWidth="1.5"
             className="transition-colors duration-100"
           />
@@ -188,53 +187,43 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
             strokeDasharray="2 1"
           />
 
-          {/* Contact Spark Flash when cushion is touched */}
+          {/* Contact Spark Flash when cushion is reached */}
           {isRopeContact && (
             <g transform="translate(240, 180)">
-              <circle cx="0" cy="0" r="14" fill={simultaneousTouch ? "#EF4444" : "#FACC15"} opacity="0.6" className="animate-ping" />
+              <circle cx="0" cy="0" r="14" fill="#FACC15" opacity="0.45" className="animate-ping" />
               <circle cx="0" cy="0" r="5" fill="#FFFFFF" />
             </g>
           )}
         </svg>
 
-        {/* Live Contact Telemetry Overlay */}
+        {/* Live Contact Telemetry Overlay — neutral instrument state only */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
-          <div
-            className={`px-3 py-1.5 rounded-md text-[11px] font-bold border backdrop-blur-md shadow-lg ${
-              simultaneousTouch
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : isRopeContact
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
-                : "bg-cyan-950/90 border-cyan-500 text-cyan-200"
-            }`}
-          >
-            {simultaneousTouch
-              ? "CUSHION CONTACT DETECTED (SIMULTANEOUS TOUCH — BOUNDARY)"
-              : isRopeContact
-              ? "CLEAN RELEASE BEFORE CUSHION CONTACT"
-              : "AERIAL CATCH IN PROGRESS / IN PLAY"}
+          <div className="px-3 py-1.5 rounded-md text-[11px] font-bold border backdrop-blur-md shadow-lg bg-slate-950/90 border-slate-700 text-slate-300">
+            {isRopeContact
+              ? (isBallHeld ? "CUSHION CONTACT ZONE (BALL IN HAND)" : "CUSHION CONTACT ZONE (BALL RELEASED)")
+              : "AERIAL PURSUIT / SLIDE IN PROGRESS"}
           </div>
         </div>
       </div>
 
-      {/* Diagnostics */}
+      {/* Neutral Diagnostics Footer */}
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">CONTACT DELTA</div>
+          <div className="text-[9px] text-slate-400 font-bold">OPTICAL FEED</div>
           <div className="text-[11px] font-black text-cyan-300">
-            {Math.round(currentTimeMs - contactTime)} ms
+            4K 120 FPS HIGH-SPEED
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">RELEASE TIMING</div>
+          <div className="text-[9px] text-slate-400 font-bold">BALL STATUS</div>
           <div className="text-[11px] font-black text-slate-200">
-            {isBallHeld ? `HELD (${Math.round(releaseTime - currentTimeMs)}ms to rel)` : "RELEASED / IN AIR"}
+            {isBallHeld ? "HELD IN HAND" : "RELEASED / IN AIR"}
           </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">DECISION IMPACT</div>
-          <div className={`text-[11px] font-black ${boundary.isBoundary ? "text-rose-400" : "text-emerald-400"}`}>
-            {boundary.isBoundary ? "BOUNDARY AWARDED (NOT OUT)" : "CLEAN CATCH (OUT)"}
+          <div className="text-[9px] text-slate-400 font-bold">CUSHION CONTACT</div>
+          <div className="text-[11px] font-black text-amber-300">
+            {isRopeContact ? "FOOT AT CUSHION" : "APPROACHING"}
           </div>
         </div>
       </div>
