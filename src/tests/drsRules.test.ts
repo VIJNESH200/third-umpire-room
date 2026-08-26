@@ -56,6 +56,15 @@ import {
   projectToCAM07,
 } from "../engine/cameraProjections";
 import { projectPitchToCAM10, clipAndProjectSegment } from "../components/tools/StrikerStumpCamView";
+import {
+  solveHotSpotThermal,
+  solveHotSpotThermalFrame,
+  sampleHotSpotIntensity,
+} from "../engine/hotspotThermal";
+import { resolveReplayShortcut, isTextEntryTarget } from "../engine/replayKeyboard";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { HotSpotIRView } from "../components/tools/HotSpotIRView";
 import type {
   LBWData,
   RunOutData,
@@ -2405,6 +2414,206 @@ function runAllDRSTests() {
         if (!Number.isFinite(sampleUltraEdgeAmplitude(sig, t))) finite = false;
       }
       assert(finite, "CB Acoustic: amplitude samples stay finite across the review window");
+    }
+
+    // ==============================================================
+    // GROUP 26 — HOTSPOT NEUTRAL THERMAL EVIDENCE (CAM 08)
+    // The IR element must present observable evidence only: intensity,
+    // placement, decay and timing context that overlap between a genuine
+    // edge and a fine pass, so the operator interprets rather than reads.
+    // ==============================================================
+    console.log("\n--- GROUP 26: HOTSPOT NEUTRAL THERMAL EVIDENCE ---");
+
+    // T26.1 — the thermal model never branches on truth flags
+    {
+      const edgeModel = solveHotSpotThermal({ ...cbBase, hasEdge: true, waveformSpikeTimeMs: 1200, spikeIntensity: 0.8, gapMm: 0 });
+      assert(
+        !("hasEdge" in edgeModel) && !("soundType" in edgeModel) && !("verdict" in edgeModel),
+        "HotSpot: model exposes no truth field (hasEdge / soundType / verdict absent)"
+      );
+      // Flip ONLY the truth flag on an otherwise identical incident: every
+      // solved value must stay identical, proving no hidden truth branch.
+      const flipped = { ...cbBase, hasEdge: true as const };
+      assert(
+        JSON.stringify(solveHotSpotThermal(flipped)) === JSON.stringify(solveHotSpotThermal(cbBase)),
+        "HotSpot: flipping only hasEdge changes nothing in the model"
+      );
+      const flippedFrame = solveHotSpotThermalFrame(solveHotSpotThermal(flipped), 1350);
+      const baseFrame = solveHotSpotThermalFrame(solveHotSpotThermal(cbBase), 1350);
+      assert(
+        JSON.stringify(flippedFrame) === JSON.stringify(baseFrame),
+        "HotSpot: frames are identical when only the truth flag differs"
+      );
+    }
+
+    // T26.2 — deterministic signal generation
+    {
+      const cb = { ...cbBase, gapMm: 5, spikeIntensity: 0.7, waveformSpikeTimeMs: 1200 };
+      const a = solveHotSpotThermal(cb);
+      const b = solveHotSpotThermal({ ...cb });
+      assert(
+        JSON.stringify(a) === JSON.stringify(b),
+        "HotSpot: repeated solves of one incident are byte-identical"
+      );
+      const fa = solveHotSpotThermalFrame(a, 1240);
+      const fb = solveHotSpotThermalFrame(b, 1240);
+      assert(
+        JSON.stringify(fa) === JSON.stringify(fb),
+        "HotSpot: frame solves are byte-identical across repeats"
+      );
+      // Scrub away and back: heat history replays exactly.
+      const fwd = solveHotSpotThermalFrame(a, 1500);
+      const backAgain = solveHotSpotThermalFrame(a, 1240);
+      assert(
+        JSON.stringify(backAgain) === JSON.stringify(fa) && fwd.timeMs > backAgain.timeMs,
+        "HotSpot: scrubbing backwards reproduces the exact earlier frame"
+      );
+      // Every zone reading stays finite across the whole window.
+      let finite = true;
+      for (let t = 800; t <= 1600; t += 10) {
+        const f = solveHotSpotThermalFrame(a, t);
+        if (!Number.isFinite(f.ambientLevel) || !Number.isFinite(f.noiseLevel) || !Number.isFinite(f.peakIntensityPct)) finite = false;
+        for (const z of f.zones) {
+          if (!Number.isFinite(z.intensity)) finite = false;
+          const s = sampleHotSpotIntensity(f, z.xMm + 1, z.yMm - 1);
+          if (!Number.isFinite(s)) finite = false;
+        }
+      }
+      assert(finite, "HotSpot: all sampled intensities stay finite across the review window");
+    }
+
+    // T26.3 — every incident shows a live sensor picture; bands overlap truths
+    {
+      const edgeModel = solveHotSpotThermal({ ...cbBase, hasEdge: true, waveformSpikeTimeMs: 1200, spikeIntensity: 0.85, gapMm: 0 });
+      const missModel = solveHotSpotThermal({ ...cbBase, hasEdge: false, gapMm: 4 });
+      const edgePeakAtTransit = Math.max(...solveHotSpotThermalFrame(edgeModel, 1260).zones.map((z) => z.intensity));
+      const missPeakAtTransit = Math.max(...solveHotSpotThermalFrame(missModel, 1260).zones.map((z) => z.intensity));
+      assert(
+        edgePeakAtTransit > 0 && missPeakAtTransit > 0,
+        "HotSpot: both an edge and a near-miss show measurable radiance at the transit"
+      );
+      // Overlap: neither truth owns an exclusive intensity band.
+      const overlaps =
+        edgePeakAtTransit <= Math.max(missPeakAtTransit * 1.6, missPeakAtTransit + 0.25) &&
+        missPeakAtTransit >= edgePeakAtTransit * 0.55;
+      assert(overlaps, "HotSpot: edge and marginal-miss radiance bands overlap");
+    }
+
+    // T26.4 — no direct verdict labels anywhere in the rendered UI
+    {
+      const mkMarkup = (cb: CaughtBehindData) =>
+        renderToStaticMarkup(React.createElement(HotSpotIRView, { caughtBehind: cb, currentTimeMs: 1300 }));
+      const cases: Array<[string, CaughtBehindData]> = [
+        ["edge", { ...cbBase, hasEdge: true, waveformSpikeTimeMs: 1200, spikeIntensity: 0.9, gapMm: 0 }],
+        ["clean", { ...cbBase, hasEdge: false, gapMm: 30 }],
+        ["decoy", { ...cbBase, hasEdge: false, gapMm: 6, distractorNoise: true, distractorTimeMs: 1320, distractorType: "PAD" }],
+      ];
+      const forbidden = [
+        "HOTSPOT DETECTED",
+        "OUTSIDE EDGE FRICTION",
+        "POSITIVE",
+        "NEGATIVE",
+        "NO SPOT",
+        "CONFIRMED",
+        "CLEAN",
+        "NICK",
+        "HAS EDGE",
+        "CONTACT",
+        "THERMAL FRICTION SIGNATURE",
+      ];
+      let leakFree = true;
+      for (const [name, cb] of cases) {
+        const markup = mkMarkup(cb);
+        const upper = markup.toUpperCase();
+        for (const term of forbidden) {
+          if (upper.includes(term)) {
+            leakFree = false;
+            console.error(`    [leak] ${name} case renders "${term}"`);
+          }
+        }
+      }
+      assert(leakFree, "HotSpot UI: clean/edge/decoy cases render zero verdict labels");
+      // And each case still produces a live instrument picture.
+      for (const [name, cb] of cases) {
+        const markup = mkMarkup(cb);
+        const ok = markup.includes("RADIANCE") || markup.includes("DETECTION THRESHOLD") || markup.includes("APPROACHING BAT PLANE");
+        assert(ok, `HotSpot UI: ${name} case renders an interpretive status line`);
+      }
+    }
+
+    // T26.5 — generator-wide neutrality sweep
+    {
+      let neutral = true;
+      let lastEdge: string | null = null;
+      let lastMiss: string | null = null;
+      for (let s = 0; s < 300; s++) {
+        const sc = generateScenario(9000 + s * 37, "CAUGHT_BEHIND");
+        const cb = sc.caughtBehind!;
+        const model = solveHotSpotThermal(cb);
+        const payload = JSON.stringify(model);
+        if (payload.includes('"hasEdge":')) neutral = false;
+        if (cb.hasEdge && lastEdge === null) lastEdge = payload;
+        if (!cb.hasEdge && lastMiss === null) lastMiss = payload;
+      }
+      assert(neutral, "HotSpot: no serialized model carries a hasEdge key across generator output");
+      assert(
+        lastEdge !== null && lastMiss !== null && lastEdge !== lastMiss,
+        "HotSpot: distinct incidents solve to distinct presentations (both truths exercised)"
+      );
+    }
+
+    // ==============================================================
+    // GROUP 27 — REPLAY KEYBOARD TRANSPORT MAPPING
+    // Pure mapping layer: keys become commands executed by the shared
+    // canonical transport. Verified here without a browser.
+    // ==============================================================
+    console.log("\n--- GROUP 27: REPLAY KEYBOARD TRANSPORT ---");
+
+    // T27.1 — shortcut mapping
+    {
+      assert(
+        resolveReplayShortcut(" ", false)?.type === "TOGGLE_PLAY",
+        "Keys: SPACE resolves to play/pause toggle"
+      );
+      const left = resolveReplayShortcut("ArrowLeft", false);
+      const right = resolveReplayShortcut("ArrowRight", false);
+      const shiftLeft = resolveReplayShortcut("ArrowLeft", true);
+      const shiftRight = resolveReplayShortcut("ArrowRight", true);
+      assert(
+        left?.type === "STEP" && left.frames === -1,
+        "Keys: ArrowLeft steps back exactly 1 frame"
+      );
+      assert(
+        right?.type === "STEP" && right.frames === 1,
+        "Keys: ArrowRight steps forward exactly 1 frame"
+      );
+      assert(
+        shiftLeft?.type === "STEP" && shiftLeft.frames === -5,
+        "Keys: Shift+ArrowLeft steps back exactly 5 frames"
+      );
+      assert(
+        shiftRight?.type === "STEP" && shiftRight.frames === 5,
+        "Keys: Shift+ArrowRight steps forward exactly 5 frames"
+      );
+      assert(
+        resolveReplayShortcut("a", false) === null &&
+          resolveReplayShortcut("Enter", false) === null &&
+          resolveReplayShortcut("Escape", false) === null,
+        "Keys: non-transport keys resolve to nothing"
+      );
+    }
+
+    // T27.2 — typing-target guard
+    {
+      assert(isTextEntryTarget(null) === false, "Keys: null target is never treated as typing");
+      assert(
+        isTextEntryTarget(undefined as unknown as EventTarget) === false,
+        "Keys: undefined target is never treated as typing"
+      );
+      assert(
+        isTextEntryTarget({} as EventTarget) === false,
+        "Keys: plain object target is never treated as typing"
+      );
     }
   }
 

@@ -13,6 +13,7 @@ import { VerdictPanel } from "./VerdictPanel";
 import { ResultReveal } from "./ResultReveal";
 import { IncidentReplayFeed } from "../instinct/IncidentReplayFeed";
 import { sounds } from "../../engine/audioSynth";
+import { isTextEntryTarget, resolveReplayShortcut } from "../../engine/replayKeyboard";
 import { Tv, Radio, Crosshair, Clock } from "lucide-react";
 
 export type ConsolePhase = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
@@ -241,6 +242,43 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     };
   }, [isPlaying, isRockAndRoll, playbackSpeed, maxTimeMs, minTimeMs, scenario]);
 
+  // Keyboard shortcuts for the canonical replay transport (SPACE, arrows,
+  // Shift+arrows). Active only on a replay-capable screen — the forensic
+  // REVIEW phase, which owns the shared ScrubBar timeline. The handlers
+  // below are the SAME functions the on-screen buttons call, so keyboard
+  // and mouse drive one identical timeline; no second clock exists.
+  // preventDefault stops SPACE from scrolling or re-triggering a focused
+  // button and keeps arrows from scrolling the console; typing targets
+  // (input/textarea/select/contenteditable) are left untouched.
+  const replayShortcutsActive = phase === "REVIEW";
+  // Latest-handler mirrors: the listener is registered once per phase while
+  // these closures capture per-render transport state (speed, intents,
+  // frameStepMs), so the refs keep it driving the live timeline without
+  // re-subscribing on every render.
+  const togglePlayRef = useRef<() => void>(() => {});
+  const handleStepRef = useRef<(frames: number) => void>(() => {});
+  useEffect(() => {
+    if (!replayShortcutsActive) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTextEntryTarget(event.target)) return;
+
+      const command = resolveReplayShortcut(event.key, event.shiftKey);
+      if (!command) return;
+
+      event.preventDefault();
+      if (command.type === "TOGGLE_PLAY") {
+        togglePlayRef.current();
+      } else {
+        handleStepRef.current(command.frames);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [replayShortcutsActive]);
+
   // Task 7 — mark genuine review interaction: transport actions (play, step,
   // seek, shuttle, scrub) taken while CAM 01 is active count as having
   // reviewed the replay feed.
@@ -308,10 +346,20 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     setCurrentTimeMs(Math.max(minTimeMs, Math.min(maxTimeMs, newTimeMs)));
   };
 
+  // Keep the keyboard listener pointed at the live transport closures.
+  togglePlayRef.current = togglePlay;
+  handleStepRef.current = handleStep;
+
   const handleToolSelect = (tool: string) => {
-    // Run-Out camera feeds are alternate projections of the current physical
-    // state. Switching freezes that state; it never seeks or reinitializes it.
-    if (scenario.incidentType === "RUN_OUT") pauseTransport();
+    // Every camera feed is an alternate projection of the same canonical
+    // replay state. Switching therefore halts transport on ALL incident
+    // types: stopTransportLoop cancels/invalidate the old animation loop
+    // (epoch bump discards any queued clock update), the absolute set in
+    // pauseTransport re-asserts canonical time exactly, and the new camera
+    // mounts rendering precisely that frame in a PAUSED state. Playback
+    // resumes only when the operator explicitly presses PLAY again. No
+    // camera ever owns its own clock.
+    pauseTransport();
     setActiveTool(tool);
   };
 
