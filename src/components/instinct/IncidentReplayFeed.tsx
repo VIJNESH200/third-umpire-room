@@ -6,7 +6,12 @@ import {
   solveRunOutReplayState,
 } from "../../engine/runOutPhysics";
 import { projectToPhase1 } from "../../engine/cameraProjections";
-import { solveCaughtBehindBallState } from "../../engine/caughtBehindPhysics";
+import {
+  solveCaughtBehindBallState,
+  solveCaughtBehindDeliveryTrajectory,
+  getKeeperCatchPosition,
+  solveCaughtBehindSlipCorridor,
+} from "../../engine/caughtBehindPhysics";
 import {
   lerp,
   clamp,
@@ -24,9 +29,15 @@ import {
   drawArticulatedBowler,
   drawArticulatedWicketkeeper,
   drawArticulatedFielder,
+  drawAthleticBoundaryFielder,
   drawStumpsAndBails,
   drawCricketBall,
+  calculateBatOutsideEdgeScreenPos,
 } from "./actorRigs";
+import {
+  solveBoundaryReplayState,
+  resolveBoundaryArchetype,
+} from "../../engine/boundaryPhysics";
 
 interface IncidentReplayFeedProps {
   scenario: Scenario;
@@ -90,7 +101,7 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
       } else if (scenario.incidentType === "STUMPING") {
         renderStumpingBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
       } else if (scenario.incidentType === "CAUGHT_BEHIND") {
-        renderCaughtBehindBroadcast(ctx, width, height, progress, scenario);
+        renderCaughtBehindBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
       } else if (scenario.incidentType === "BOUNDARY") {
         renderBoundaryBroadcast(ctx, width, height, progress, scenario);
       }
@@ -844,7 +855,8 @@ function renderCaughtBehindBroadcast(
   w: number,
   h: number,
   p: number,
-  scenario: Scenario
+  scenario: Scenario,
+  canonicalTimeMs?: number
 ) {
   const ev = scenario.initialEvidence?.caughtBehind;
   const cb = scenario.caughtBehind;
@@ -858,7 +870,7 @@ function renderCaughtBehindBroadcast(
   const WORLD_STUMPS_X = 0;
   const WORLD_POPPING_CREASE_X = 1.22;
   const WORLD_BATTER_GUARD_X = 1.06;
-  const WORLD_KEEPER_X = -8.5;
+  const WORLD_KEEPER_X = -1.8;
   const WORLD_PITCH_FAR_END_X = -1.22;
 
   const camDist = (worldX: number) => CAM_X - worldX;
@@ -931,11 +943,11 @@ function renderCaughtBehindBroadcast(
   ctx.font = "bold 8px monospace";
   ctx.fillText("POPPING CREASE", CORRIDOR_CX - stripHalfW(WORLD_POPPING_CREASE_X) * 0.9, creaseY - 5);
 
-  // --- 3. Wicketkeeper (farthest actor: behind the striker wicket on the outfield) ---
-  const keeperX = w * 0.485;
-  const keeperY = groundY(WORLD_KEEPER_X);
+  // --- 3. Wicketkeeper (stationed directly behind striker stumps in fixed, planted stance) ---
   const keeperScale = actorScale(WORLD_KEEPER_X);
   const keeperK = solveCaughtBehindKeeperKinematics(p, hasEdge);
+  const keeperX = w * 0.47;
+  const keeperY = groundY(WORLD_KEEPER_X);
   drawArticulatedWicketkeeper(
     ctx,
     { x: keeperX, y: keeperY, scale: keeperScale, facing: "RIGHT" },
@@ -947,7 +959,7 @@ function renderCaughtBehindBroadcast(
     scale: actorScale(WORLD_STUMPS_X),
   });
 
-  // --- 5. Batter (nearest the camera; guard just behind the popping crease) ---
+  // --- 5. Batter (guard just behind the popping crease) ---
   const batterX = w * 0.52;
   const batterY = groundY(WORLD_BATTER_GUARD_X);
   const batterK = solveCaughtBehindBatterKinematics(
@@ -957,42 +969,40 @@ function renderCaughtBehindBroadcast(
   );
   const batterFacing: "LEFT" | "RIGHT" = "LEFT";
 
-  // --- 6. Ball corridor (delivery over the camera → bat plane → gloves / daylight) ---
-  // The canonical corridor solver owns the motion. A clean miss is one
-  // continuous arc that holds its line past the bat; only a genuine edge
-  // deflects. See src/engine/caughtBehindPhysics.ts.
-  const gapPx = ev?.apparentGapPixels ?? (hasEdge ? 0 : 18);
-  const batEdgeX = batterX - 26 * BATTER_RIG_SCALE; // bat edge in front of the batter
-  const batEdgeY = batterY - 30 * BATTER_RIG_SCALE;
-
-  // Keeper glove target (local glove offsets scaled with the keeper rig)
-  const gloveTargetX = keeperX + 14 * keeperScale;
-  const gloveTargetY = keeperY - 18 * keeperScale;
-
-  // The bowler releases over the camera: the delivery enters at the near frame
-  // edge and recedes down the corridor to the bat plane.
-  const ballState = solveCaughtBehindBallState(
-    {
-      entryX: w * 0.5,
-      entryY: h * 0.965,
-      batEdgeX,
-      batEdgeY,
-      gloveX: gloveTargetX,
-      gloveY: gloveTargetY,
-      gapPx,
-      hasEdge,
-      deflectionAngleDeg: ev?.apparentDeflectionAngleDeg ?? 0,
-    },
-    p
+  const transitP = Math.max(0, Math.min(1, (1200 - 600) / 1600));
+  const transitBatterK = solveCaughtBehindBatterKinematics(
+    transitP,
+    ev?.shotType,
+    ev?.batAngleDeg ?? 14
   );
+  const { batEdgeX, batEdgeY } = calculateBatOutsideEdgeScreenPos(
+    batterX,
+    batterY,
+    transitBatterK,
+    BATTER_RIG_SCALE,
+    batterFacing
+  );
+  const gloveX = keeperX + 14 * keeperScale;
+  const gloveY = keeperY + keeperK.gloveY * keeperScale;
 
-  drawCricketBall(ctx, ballState.x, ballState.y, {
-    radius: ballState.radius,
+  // Current millisecond timeline position (600ms to 2200ms)
+  const currentMs = canonicalTimeMs !== undefined ? canonicalTimeMs : (600 + p * 1600);
+
+  // --- 6. Ball corridor sampled from calibrated 2.5D visual delivery corridor ---
+  const current = cb
+    ? solveCaughtBehindSlipCorridor(cb, currentMs, w, h, batEdgeX, batEdgeY, gloveX, gloveY)
+    : { x: w * 0.5, y: h * 0.965, radius: 5.2, hasBounced: false, hasPassedBat: false, isDeflected: false };
+  const past = cb
+    ? solveCaughtBehindSlipCorridor(cb, Math.max(600, currentMs - 24), w, h, batEdgeX, batEdgeY, gloveX, gloveY)
+    : { x: current.x, y: current.y, radius: current.radius, hasBounced: false, hasPassedBat: false, isDeflected: false };
+
+  drawCricketBall(ctx, current.x, current.y, {
+    radius: current.radius,
     seamAngleRad: p * Math.PI * 6,
-    shadowY: ballState.y + 24,
+    shadowY: current.y + 24,
     motionTrail: p >= 0.15 && p <= 0.85,
-    prevX: ballState.prevX,
-    prevY: ballState.prevY,
+    prevX: past.x,
+    prevY: past.y,
   });
 
   // --- 7. Batter drawn last (nearest the slip camera) ---
@@ -1014,53 +1024,133 @@ function renderBoundaryBroadcast(
   scenario: Scenario
 ) {
   const b = scenario.boundary;
-  const isBoundary = b?.isBoundary ?? false;
+  if (!b) return;
 
-  ctx.fillStyle = "#183b25";
-  ctx.fillRect(0, 0, w, h * 0.62);
-  ctx.fillStyle = "#0c1810";
-  ctx.fillRect(0, h * 0.62, w, h * 0.38);
+  // Map normalised progress (0→1) to physical timeline (800ms → 2200ms)
+  const currentTimeMs = 800 + p * 1400;
+  const state = solveBoundaryReplayState(b, currentTimeMs);
+  const archetype = resolveBoundaryArchetype(b);
 
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 3;
+  // ─── Background: elevated outfield broadcast perspective ───
+  const groundLine = h * 0.62;
+  const turfGrad = ctx.createLinearGradient(0, 0, 0, h);
+  turfGrad.addColorStop(0, "#183b25");
+  turfGrad.addColorStop(0.55, "#163020");
+  turfGrad.addColorStop(1, "#0c1810");
+  ctx.fillStyle = turfGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // Mow stripes
+  ctx.globalAlpha = 0.06;
+  for (let sx = 0; sx < w; sx += 32) {
+    ctx.fillStyle = sx % 64 === 0 ? "#2a5e38" : "#1a3d25";
+    ctx.fillRect(sx, 0, 32, groundLine);
+  }
+  ctx.globalAlpha = 1.0;
+
+  // Ground line
+  ctx.strokeStyle = "#254a33";
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(0, h * 0.62);
-  ctx.lineTo(w, h * 0.62);
+  ctx.moveTo(0, groundLine);
+  ctx.lineTo(w, groundLine);
   ctx.stroke();
 
-  const cushionX = w * 0.50;
-  const cushionY = h * 0.62;
-  ctx.fillStyle = "#ea580c";
-  ctx.strokeStyle = "#9a3412";
+  // ─── Boundary Cushion (positioned at far right of broadcast view) ───
+  const cushionScreenX = w * 0.78;
+  const cushionW = 60;
+
+  // Cushion foam wedge
+  const cushGrad = ctx.createLinearGradient(cushionScreenX, groundLine - 14, cushionScreenX + cushionW, groundLine + 16);
+  cushGrad.addColorStop(0, "#f59e0b");
+  cushGrad.addColorStop(0.5, "#d97706");
+  cushGrad.addColorStop(1, "#b45309");
+  ctx.fillStyle = cushGrad;
+  ctx.strokeStyle = "#78350f";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(cushionX - 120, cushionY);
-  ctx.lineTo(cushionX + 120, cushionY);
-  ctx.lineTo(cushionX + 140, cushionY + 28);
-  ctx.lineTo(cushionX - 140, cushionY + 28);
+  ctx.moveTo(cushionScreenX, groundLine);
+  ctx.lineTo(cushionScreenX + cushionW, groundLine);
+  ctx.lineTo(cushionScreenX + cushionW + 8, groundLine + 16);
+  ctx.lineTo(cushionScreenX - 8, groundLine + 16);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(255,255,255,0.7)";
-  ctx.font = "bold 9px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("BOUNDARY CUSHION", cushionX, cushionY + 18);
+  // White boundary line
+  ctx.strokeStyle = "rgba(255,255,255,0.8)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cushionScreenX + cushionW + 10, groundLine + 16);
+  ctx.lineTo(cushionScreenX - 10, groundLine + 16);
+  ctx.stroke();
 
-  const boundaryResult = solveBoundaryFielderKinematics(
-    p,
-    isBoundary,
-    cushionX - 20
-  );
+  // ─── Map fielder world X to screen X ───
+  // Fielder worldX ranges from ~ -6 (far outfield) to ~ +0.5 (past cushion)
+  // Screen range: 80px (outfield) to cushionScreenX (boundary)
+  const mapX = (worldX: number) => {
+    const t = clamp((worldX - (-6.5)) / (0.5 - (-6.5)), 0, 1);
+    return lerp(80, cushionScreenX + 20, t);
+  };
 
-  drawArticulatedFielder(
-    ctx,
-    { x: boundaryResult.fielderX, y: h * 0.58, scale: 1.1, facing: "LEFT" },
-    boundaryResult.fielderK
-  );
+  // Map Z (height) to screen Y offset
+  const mapZ = (worldZ: number) => worldZ * 35;
 
-  drawCricketBall(ctx, boundaryResult.ballX, boundaryResult.ballY, {
+  // ─── Determine pose ───
+  let pose: "SPRINT" | "AIRBORNE" | "SLIDE" | "RELAY_FLICK" | "PARTNER_GATHER" = "SPRINT";
+  if (state.phase === "PURSUIT") {
+    pose = "SPRINT";
+  } else if (state.phase === "INTERCEPTION" || state.phase === "CATCH_CONTROL") {
+    if (state.primaryFielder.isAirborne) pose = "AIRBORNE";
+    else if (state.primaryFielder.isSliding) pose = "SLIDE";
+    else pose = "SPRINT";
+  } else if (state.phase === "ROPE_TRANSIT" || state.phase === "COMPLETION") {
+    pose = state.primaryFielder.isSliding ? "SLIDE" : "SPRINT";
+  } else if (state.phase === "RELAY_AIRBORNE") {
+    pose = "RELAY_FLICK";
+  }
+  if (archetype === "AIRBORNE_RELAY" && state.primaryFielder.isAirborne) {
+    pose = "AIRBORNE";
+  }
+
+  const fielderScreenX = mapX(state.primaryFielder.x);
+  const fielderScreenY = groundLine - mapZ(state.primaryFielder.z);
+
+  // ─── Draw Primary Fielder ───
+  drawAthleticBoundaryFielder(ctx, {
+    x: fielderScreenX,
+    y: fielderScreenY,
+    scale: 1.1,
+    facing: "RIGHT",
+  }, {
+    pose,
+    torsoAngleRad: state.primaryFielder.torsoAngleRad,
+    elevationM: state.primaryFielder.z,
+  });
+
+  // ─── Partner Fielder (relay scenarios) ───
+  if (state.partnerFielder) {
+    const partnerScreenX = mapX(state.partnerFielder.x);
+    drawAthleticBoundaryFielder(ctx, {
+      x: partnerScreenX,
+      y: groundLine,
+      scale: 0.95,
+      facing: "RIGHT",
+    }, {
+      pose: state.partnerFielder.hasCaughtBall ? "PARTNER_GATHER" : "SPRINT",
+      jerseyColor: "#1e3a5f",
+    });
+  }
+
+  // ─── Cricket Ball ───
+  const ballScreenX = mapX(state.ball.x);
+  const ballScreenY = groundLine - mapZ(state.ball.z);
+
+  drawCricketBall(ctx, ballScreenX, ballScreenY, {
     radius: 4.8,
     seamAngleRad: p * Math.PI * 6,
+    shadowY: groundLine,
+    motionTrail: state.ball.isInFlight,
   });
 }
+

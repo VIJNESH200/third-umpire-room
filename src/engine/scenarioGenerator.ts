@@ -7,6 +7,7 @@ import type {
   RunOutData,
   CaughtBehindData,
   BoundaryData,
+  BoundaryArchetype,
   PitchingZone,
   ImpactZone,
   ProjectedStumpHit,
@@ -254,48 +255,80 @@ export function generateScenario(
       }
     }
 
-    const impactDistance = parseFloat(rng.range(1.5, 2.8).toFixed(2));
     const ballSpeedKph = rng.rangeInt(128, 148);
     const spinOrPace = bowlerObj.type;
 
-    let pitchX = rng.range(-0.15, 0.15);
-    if (pitchingZone === "OUTSIDE_LEG") pitchX = -0.42;
-    if (pitchingZone === "OUTSIDE_OFF") pitchX = 0.38;
-
-    let impactX = rng.range(-0.18, 0.18);
-    if (impactZone !== "IN_LINE") impactX = 0.44;
+    const isRightHand = batterObj.hand === "RIGHT";
+    const offSign = isRightHand ? 1 : -1;
+    const legSign = -offSign;
 
     let stumpHitX = 0;
     let stumpHitHeightCm = 45;
 
     if (projectedStumpHit === "CLEARLY_HITTING") {
-      stumpHitX = rng.range(-0.14, 0.14);
-      stumpHitHeightCm = rng.range(25, 62);
+      stumpHitX = rng.range(-0.08, 0.08);
+      stumpHitHeightCm = rng.range(28, 62);
     } else if (projectedStumpHit === "UMPIRES_CALL") {
       const isHeightClipping = rng.boolean(0.4);
       if (isHeightClipping) {
-        stumpHitX = rng.range(-0.1, 0.1);
-        stumpHitHeightCm = rng.range(70.5, 73.0);
+        stumpHitX = rng.range(-0.07, 0.07);
+        stumpHitHeightCm = rng.range(70.5, 72.8);
       } else {
-        stumpHitX = rng.boolean(0.5) ? rng.range(0.20, 0.25) : rng.range(-0.25, -0.20);
+        const side = rng.boolean(0.5) ? offSign : legSign;
+        stumpHitX = side * rng.range(0.095, 0.13);
         stumpHitHeightCm = rng.range(35, 60);
       }
     } else {
+      // MISSING
       const isGoingOver = rng.boolean(0.6);
       if (isGoingOver) {
-        stumpHitX = rng.range(-0.1, 0.1);
-        stumpHitHeightCm = rng.range(78, 92);
+        stumpHitX = rng.range(-0.07, 0.07);
+        stumpHitHeightCm = rng.range(77, 92);
       } else {
-        stumpHitX = rng.boolean(0.5) ? rng.range(0.38, 0.55) : rng.range(-0.55, -0.38);
+        const side = rng.boolean(0.5) ? offSign : legSign;
+        stumpHitX = side * rng.range(0.22, 0.42);
         stumpHitHeightCm = rng.range(30, 60);
       }
     }
+
+    // Generate pitching point consistent with pitchingZone
+    let pitchX = 0;
+    if (pitchingZone === "IN_LINE") {
+      pitchX = rng.range(-0.08, 0.08);
+    } else if (pitchingZone === "OUTSIDE_OFF") {
+      pitchX = offSign * rng.range(0.18, 0.35);
+    } else {
+      // OUTSIDE_LEG
+      pitchX = legSign * rng.range(0.18, 0.35);
+    }
+
+    // Canonical LBW timetable: Release 800ms -> Bounce 1200ms -> Impact 1500ms -> Stumps 1680ms
+    const uImpact = (1500 - 1200) / (1680 - 1200); // 0.625
+    const impactDistance = 2.44;
+
+    // If impactZone is outside line: ensure impactX lands outside off stump
+    if (impactZone !== "IN_LINE") {
+      const targetImpactX = offSign * rng.range(0.18, 0.32);
+      pitchX = (targetImpactX - stumpHitX * uImpact) / (1 - uImpact);
+      pitchX = Math.max(-0.6, Math.min(0.6, pitchX));
+    }
+
+    // Authoritative collinear post-bounce trajectory:
+    // From bounce (Z = 6.5m) to striker stumps (Z = 0.0m)
+    const impactX = (1 - uImpact) * pitchX + uImpact * stumpHitX;
+
+    // Continuous parabolic height along post-bounce flight at impact distance
+    const yStumpM = Math.max(0.15, Math.min(0.95, stumpHitHeightCm / 100));
+    const yApex = Math.max(0.68, yStumpM + 0.18);
+    const u1 = 1 - uImpact;
+    const impactHeightM = u1 * u1 * 0.036 + 2 * u1 * uImpact * yApex + uImpact * uImpact * yStumpM;
+    const impactHeight = Math.round(impactHeightM * 100);
 
     const trajectory = [
       { x: pitchX * 0.4, y: 0, z: 1.8 },
       { x: pitchX * 0.7, y: 10, z: 0.6 },
       { x: pitchX, y: 15.5, z: 0.05 },
-      { x: impactX, y: 18.2, z: (stumpHitHeightCm / 100) * 0.7 },
+      { x: impactX, y: 18.2, z: impactHeightM },
       { x: stumpHitX, y: 20.12, z: stumpHitHeightCm / 100 },
     ];
 
@@ -307,7 +340,7 @@ export function generateScenario(
       ultraEdgeSpikeAtBatFrame,
       pitchingZone,
       impactZone,
-      impactHeight: Math.round(stumpHitHeightCm * 0.8),
+      impactHeight,
       projectedStumpHit,
       impactDistance,
       batterHand: batterObj.hand,
@@ -346,26 +379,30 @@ export function generateScenario(
 
     if (difficultyTier === "CLEAR") {
       const isOut = rng.boolean(0.5);
-      marginMs = isOut ? rng.rangeInt(140, 260) : rng.rangeInt(-260, -140);
+      marginMs = isOut ? rng.rangeInt(60, 110) : rng.rangeInt(-110, -60);
       onFieldSignal = "REFERRED";
     } else if (difficultyTier === "MARGINAL") {
       const hasBounce = rng.boolean(0.3);
       if (hasBounce) {
         batBounced = true;
         batGrounded = false;
-        marginMs = rng.rangeInt(10, 45);
+        // Airborne bat bounce: bail dislodgement occurs while bat is airborne above turf
+        marginMs = rng.rangeInt(18, 45);
       } else {
-        marginMs = rng.boolean(0.5) ? rng.rangeInt(8, 35) : rng.rangeInt(-35, -8);
+        // Enforce minimum 6 frames (>= 12ms at 500 FPS, using [18, 45]ms = 9 to 22.5 frames)
+        marginMs = rng.boolean(0.5) ? rng.rangeInt(18, 45) : rng.rangeInt(-45, -18);
       }
       onFieldSignal = "REFERRED";
     } else {
-      marginMs = rng.boolean(0.5) ? rng.rangeInt(90, 150) : rng.rangeInt(-150, -90);
+      marginMs = rng.boolean(0.5) ? rng.rangeInt(50, 90) : rng.rangeInt(-90, -50);
       onFieldSignal = marginMs > 0 ? "NOT_OUT" : "OUT";
     }
 
     const bailsDislodgedFrameMs = 1500;
     const groundedFrameMs = bailsDislodgedFrameMs + marginMs;
-    const creaseMarginMm = Math.round(marginMs * -3.2);
+    // Synchronize crease margin strictly with continuous slide speed (6.2 mm/ms)
+    // so physical crossing time and canonical groundedFrameMs match identically
+    const creaseMarginMm = Math.round(marginMs * -6.2);
     const diveType = rng.pick<"SLIDE" | "DIVE" | "STANDING">(["SLIDE", "DIVE", "STANDING"]);
 
     runOutData = {
@@ -482,6 +519,10 @@ export function generateScenario(
       fielderTouchingRopeWhileInContact: isBoundary,
       marginMm,
       catchOrSave: isBoundary ? "BOUNDARY_TOUCH" : "RELAY_CATCH",
+      // R1 Canonical Event-Anchor Engine: archetype selection
+      archetype: isBoundary
+        ? rng.pick(["SLIDING_CATCH", "RUNNING_ROPE_CATCH"] as const)
+        : rng.pick(["SLIDING_CATCH", "AIRBORNE_RELAY", "RUNNING_ROPE_CATCH"] as const),
     };
 
     // Phase 1 Initial Evidence Synthesis

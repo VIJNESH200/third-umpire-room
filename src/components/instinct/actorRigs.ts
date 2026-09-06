@@ -497,6 +497,28 @@ export function solveCaughtBehindBatterKinematics(
 }
 
 /**
+ * Calculates the exact screen position of the batsman's outside bat edge at transit
+ * based on articulated kinematics and rig scale.
+ */
+export function calculateBatOutsideEdgeScreenPos(
+  batterX: number,
+  batterY: number,
+  batterK: BatterKinematics,
+  rigScale: number = 1.35,
+  facing: "LEFT" | "RIGHT" = "LEFT"
+): { batEdgeX: number; batEdgeY: number } {
+  const cosR = Math.cos(batterK.batRotRad);
+  const sinR = Math.sin(batterK.batRotRad);
+  // Outside edge of the contoured willow blade at mid-blade impact zone (local bx = 3.5, ly = 24)
+  const batOutsideEdgeX = batterK.batPivotX + 3.5 * cosR - 24 * sinR;
+  const batOutsideEdgeY = batterK.batPivotY + 3.5 * sinR + 24 * cosR;
+  const facingDir = facing === "LEFT" ? -1 : 1;
+  const batEdgeX = batterX + batOutsideEdgeX * rigScale * facingDir;
+  const batEdgeY = batterY + batOutsideEdgeY * rigScale;
+  return { batEdgeX, batEdgeY };
+}
+
+/**
  * Solves continuous wicketkeeper kinematics for Caught Behind.
  */
 export function solveCaughtBehindKeeperKinematics(
@@ -1523,22 +1545,34 @@ export function drawArticulatedRunner(
   ctx.fillRect(leadHandX - 3, leadHandY - 2, 6, 2);
 
   // Bat Grip & Blade (Derives strictly from Lead Hand).
-  // With opts.batTipLocal the blade points from the hand at the caller's anchor
-  // (canonical world-space bat tip projected into rig-local space); without it the
-  // bat follows the grip angles alone.
-  const batAngle = k.leadShoulderAngleRad + k.batGripAngleRad;
   let bladeLen = 44;
   ctx.save();
   ctx.translate(leadHandX, leadHandY);
-  if (opts.batTipLocal) {
-    const dx = opts.batTipLocal.x - leadHandX;
-    const dy = opts.batTipLocal.y - leadHandY;
-    // rotate so that the blade axis (0, +L) lands along (dx, dy)
-    ctx.rotate(Math.atan2(-dx, dy));
-    bladeLen = Math.min(60, Math.max(30, Math.hypot(dx, dy)));
+
+  let rotAngle = -Math.PI / 2;
+  if (k.diveProgress > 0.2) {
+    // When sliding or diving, bat extends forward towards crease and down to turf
+    if (opts.batTipLocal) {
+      const dx = Math.max(15, opts.batTipLocal.x - leadHandX);
+      const dy = Math.max(0, opts.batTipLocal.y - leadHandY);
+      const reachAngle = Math.atan2(dy, dx);
+      // Clamp reach incline to a realistic sliding bat angle [2 deg, 22 deg]
+      const clampedAngle = Math.max(0.03, Math.min(0.38, reachAngle));
+      rotAngle = -Math.PI / 2 + clampedAngle;
+      bladeLen = Math.min(60, Math.max(36, Math.hypot(dx, dy)));
+    } else {
+      // Natural sliding bat orientation: angled slightly downward from hands to turf
+      const slideIncline = 0.05 + 0.10 * (1 - k.diveProgress);
+      rotAngle = -Math.PI / 2 + slideIncline;
+      bladeLen = 46;
+    }
   } else {
-    ctx.rotate(batAngle - Math.PI / 2);
+    // Upright running: bat carried naturally aligned with lead arm swing
+    const carryAngle = (k.leadShoulderAngleRad + k.batGripAngleRad) * 0.4 - 0.2;
+    rotAngle = -Math.PI / 2 + carryAngle;
+    bladeLen = 44;
   }
+  ctx.rotate(rotAngle);
 
   // Handle & Rubber Grip
   ctx.fillStyle = "#ffffff";
@@ -2120,60 +2154,275 @@ export function drawArticulatedFielder(
   // --- FK skeleton (pelvis -> spine/neck/head, reach arm, hips/legs) ---
   const s = solveFielderSkeleton(k);
 
-  // Torso (identical jersey block, rooted at the FK pelvis)
-  ctx.save();
-  ctx.translate(s.pelvis.x, s.pelvis.y);
-  ctx.rotate(k.torsoAngleRad);
-  ctx.fillStyle = "#0f172a"; // Colored training jersey
-  ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(-8, -12, 16, 16, 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  // --- Trail Arm (behind body) for athletic two-armed balance ---
+  const trailArmAngle = k.isSliding
+    ? Math.PI + k.reachArmAngleRad - 0.45
+    : Math.PI - k.reachArmAngleRad * 0.7;
+  const trailUpperArmLen = FIELDER_BONE.upperArm * 0.9;
+  const trailForearmLen = FIELDER_BONE.forearm * 0.9;
+  const trailElbow = {
+    x: s.shoulder.x + Math.sin(trailArmAngle) * trailUpperArmLen,
+    y: s.shoulder.y - Math.cos(trailArmAngle) * trailUpperArmLen,
+  };
+  const trailForearmAngle = trailArmAngle + (k.isSliding ? 0.35 : -0.45);
+  const trailHand = {
+    x: trailElbow.x + Math.sin(trailForearmAngle) * trailForearmLen,
+    y: trailElbow.y - Math.cos(trailForearmAngle) * trailForearmLen,
+  };
 
-  // Head (chained to the neck joint; inherits torso movement)
-  ctx.save();
-  ctx.translate(s.headBase.x, s.headBase.y);
-  ctx.fillStyle = "#0f172a";
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 3.0;
+  ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
+  ctx.moveTo(s.shoulder.x, s.shoulder.y);
+  ctx.lineTo(trailElbow.x, trailElbow.y);
+  ctx.lineTo(trailHand.x, trailHand.y);
+  ctx.stroke();
+
+  // Trail hand
+  ctx.fillStyle = "#c68a4c";
+  ctx.beginPath();
+  ctx.arc(trailHand.x, trailHand.y, 2.8, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(1, -3, 7, 3); // Cap peak
-  ctx.restore();
 
   // Sliding legs / Stride legs (hip -> knee -> ankle FK chains)
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 4;
   ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(s.leadHip.x, s.leadHip.y);
-  ctx.lineTo(s.leadKnee.x, s.leadKnee.y);
-  ctx.lineTo(s.leadAnkle.x, s.leadAnkle.y);
   ctx.moveTo(s.trailHip.x, s.trailHip.y);
   ctx.lineTo(s.trailKnee.x, s.trailKnee.y);
   ctx.lineTo(s.trailAnkle.x, s.trailAnkle.y);
+  ctx.moveTo(s.leadHip.x, s.leadHip.y);
+  ctx.lineTo(s.leadKnee.x, s.leadKnee.y);
+  ctx.lineTo(s.leadAnkle.x, s.leadAnkle.y);
   ctx.stroke();
 
-  // Shoes (anchored to the ankle joints)
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(s.leadAnkle.x - 3, s.leadAnkle.y - 2, 7, 3);
-  ctx.fillRect(s.trailAnkle.x - 3, s.trailAnkle.y - 2, 7, 3);
+  // Athletic Cricket Shoes with Cleat Studs
+  const drawShoe = (ankleX: number, ankleY: number) => {
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(ankleX - 3, ankleY - 2, 7, 3);
+    // Studs / sole
+    ctx.fillStyle = "#0284c7"; // Tournament sole accent
+    ctx.fillRect(ankleX - 3, ankleY + 1, 7, 1);
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(ankleX - 2, ankleY + 2, 1.5, 1);
+    ctx.fillRect(ankleX + 2, ankleY + 2, 1.5, 1);
+  };
+  drawShoe(s.trailAnkle.x, s.trailAnkle.y);
+  drawShoe(s.leadAnkle.x, s.leadAnkle.y);
 
-  // Outstretched Intercept Arm (reachArmAngleRad drives the FK chain)
+  // Torso (jersey block with athletic trim, rooted at FK pelvis)
+  ctx.save();
+  ctx.translate(s.pelvis.x, s.pelvis.y);
+  ctx.rotate(k.torsoAngleRad);
+  ctx.fillStyle = "#0f172a"; // Colored training jersey
+  ctx.strokeStyle = "#0284c7"; // Cyan athletic trim
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(-8, -12, 16, 16, 2.5);
+  ctx.fill();
+  ctx.stroke();
+  // Jersey stripe
+  ctx.fillStyle = "#38bdf8";
+  ctx.fillRect(-6, -11, 2.5, 14);
+  ctx.restore();
+
+  // Head (chained to neck joint; inherits torso movement)
+  ctx.save();
+  ctx.translate(s.headBase.x, s.headBase.y);
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Athletic cap peak & visor
+  ctx.fillStyle = "#0369a1";
+  ctx.fillRect(0, -3, 8, 3.2);
+  ctx.restore();
+
+  // Outstretched Lead Intercept Arm (reachArmAngleRad drives the FK chain)
   ctx.strokeStyle = "#0f172a";
   ctx.lineWidth = 3.5;
+  ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(s.shoulder.x, s.shoulder.y);
   ctx.lineTo(s.reachElbow.x, s.reachElbow.y);
   ctx.lineTo(s.reachHand.x, s.reachHand.y);
   ctx.stroke();
-  // Hand
+
+  // Lead Hand
   ctx.fillStyle = "#d4a373";
   ctx.beginPath();
-  ctx.arc(s.reachHand.x, s.reachHand.y, 3, 0, Math.PI * 2);
+  ctx.arc(s.reachHand.x, s.reachHand.y, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * High-fidelity athletic fielder renderer for broadcast Boundary scenarios.
+ * Supports multi-pose archetypes:
+ * - SPRINT: dynamic running stride with pumping arms
+ * - AIRBORNE: high leap with outstretched reaching arms and arched back
+ * - SLIDE: ground contact with trailing leg and extended cleats
+ * - RELAY_FLICK: aerial flick extension back towards field of play
+ * - PARTNER_GATHER: upright two-handed gather
+ */
+export function drawAthleticBoundaryFielder(
+  ctx: CanvasRenderingContext2D,
+  t: ActorTransform,
+  opts: {
+    pose: "SPRINT" | "AIRBORNE" | "SLIDE" | "RELAY_FLICK" | "PARTNER_GATHER";
+    torsoAngleRad?: number;
+    armReachProgress?: number; // 0 (tucked) to 1 (full extension)
+    elevationM?: number;
+    facing?: "LEFT" | "RIGHT";
+    jerseyColor?: string;
+  }
+) {
+  const scale = t.scale ?? 1.0;
+  const facingDir = (opts.facing ?? t.facing) === "LEFT" ? -1 : 1;
+  const jerseyColor = opts.jerseyColor ?? "#0f172a";
+  const torsoAngle = opts.torsoAngleRad ?? (opts.pose === "SLIDE" ? 1.1 : opts.pose === "AIRBORNE" ? -0.15 : 0.3);
+
+  ctx.save();
+  ctx.translate(t.x, t.y);
+  ctx.scale(scale * facingDir, scale);
+  if (t.rotationDeg) {
+    ctx.rotate((t.rotationDeg * Math.PI) / 180);
+  }
+
+  // Dynamic shadow
+  const elevation = opts.elevationM ?? 0;
+  const shadowOpacity = clamp(0.35 - elevation * 0.2, 0.08, 0.35);
+  const shadowRadius = opts.pose === "SLIDE" ? 42 : 22;
+  ctx.fillStyle = `rgba(0, 0, 0, ${shadowOpacity})`;
+  ctx.beginPath();
+  ctx.ellipse(0, 2 + elevation * 10, shadowRadius, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Compute athletic joints
+  const pelvisY = -14 - elevation * 25;
+  const shoulderX = Math.sin(torsoAngle) * 14;
+  const shoulderY = pelvisY - Math.cos(torsoAngle) * 14;
+  const headX = shoulderX + Math.sin(torsoAngle) * 6;
+  const headY = shoulderY - Math.cos(torsoAngle) * 6;
+
+  // Legs according to pose
+  let leadHipX = 4, leadKneeX = 8, leadKneeY = pelvisY + 12, leadFootX = 14, leadFootY = 0;
+  let trailHipX = -4, trailKneeX = -12, trailKneeY = pelvisY + 10, trailFootX = -20, trailFootY = 0;
+
+  if (opts.pose === "SLIDE") {
+    leadHipX = 5; leadKneeX = 16; leadKneeY = pelvisY + 6; leadFootX = 32; leadFootY = 1;
+    trailHipX = -4; trailKneeX = -16; trailKneeY = pelvisY + 4; trailFootX = -36; trailFootY = 1;
+  } else if (opts.pose === "AIRBORNE" || opts.pose === "RELAY_FLICK") {
+    leadHipX = 4; leadKneeX = 10; leadKneeY = pelvisY + 14; leadFootX = 16; leadFootY = pelvisY + 24;
+    trailHipX = -4; trailKneeX = -8; trailKneeY = pelvisY + 16; trailFootX = -14; trailFootY = pelvisY + 28;
+  } else if (opts.pose === "PARTNER_GATHER") {
+    leadHipX = 4; leadKneeX = 5; leadKneeY = pelvisY + 14; leadFootX = 6; leadFootY = 1;
+    trailHipX = -4; trailKneeX = -5; trailKneeY = pelvisY + 14; trailFootX = -6; trailFootY = 1;
+  }
+
+  // Draw Legs
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+
+  // Trail leg
+  ctx.beginPath();
+  ctx.moveTo(trailHipX, pelvisY + 2);
+  ctx.lineTo(trailKneeX, trailKneeY);
+  ctx.lineTo(trailFootX, trailFootY);
+  ctx.stroke();
+
+  // Lead leg
+  ctx.beginPath();
+  ctx.moveTo(leadHipX, pelvisY + 2);
+  ctx.lineTo(leadKneeX, leadKneeY);
+  ctx.lineTo(leadFootX, leadFootY);
+  ctx.stroke();
+
+  // Cleats / Shoes
+  const drawCleat = (fx: number, fy: number) => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(fx - 4, fy - 2, 8, 3.5);
+    ctx.fillStyle = "#0284c7";
+    ctx.fillRect(fx - 4, fy + 1.5, 8, 1);
+  };
+  drawCleat(trailFootX, trailFootY);
+  drawCleat(leadFootX, leadFootY);
+
+  // Torso
+  ctx.save();
+  ctx.translate(0, pelvisY);
+  ctx.rotate(torsoAngle);
+  ctx.fillStyle = jerseyColor;
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(-8, -14, 16, 17, 3);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Head
+  ctx.save();
+  ctx.translate(headX, headY);
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#0284c7";
+  ctx.fillRect(1, -3, 7, 3);
+  ctx.restore();
+
+  // Arms according to pose
+  let leadHandX = shoulderX + 22;
+  let leadHandY = shoulderY - 8;
+  let trailHandX = shoulderX + 16;
+  let trailHandY = shoulderY + 4;
+
+  if (opts.pose === "RELAY_FLICK") {
+    leadHandX = shoulderX - 18;
+    leadHandY = shoulderY - 24;
+    trailHandX = shoulderX - 10;
+    trailHandY = shoulderY - 14;
+  } else if (opts.pose === "AIRBORNE") {
+    leadHandX = shoulderX + 26;
+    leadHandY = shoulderY - 16;
+    trailHandX = shoulderX + 20;
+    trailHandY = shoulderY - 8;
+  } else if (opts.pose === "PARTNER_GATHER") {
+    leadHandX = shoulderX + 14;
+    leadHandY = shoulderY - 10;
+    trailHandX = shoulderX + 12;
+    trailHandY = shoulderY - 6;
+  }
+
+  // Draw Arms
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = "round";
+
+  // Trail Arm
+  ctx.beginPath();
+  ctx.moveTo(shoulderX, shoulderY);
+  ctx.lineTo((shoulderX + trailHandX) / 2 - 2, (shoulderY + trailHandY) / 2 + 4);
+  ctx.lineTo(trailHandX, trailHandY);
+  ctx.stroke();
+
+  // Lead Arm
+  ctx.beginPath();
+  ctx.moveTo(shoulderX, shoulderY);
+  ctx.lineTo((shoulderX + leadHandX) / 2 + 2, (shoulderY + leadHandY) / 2 - 4);
+  ctx.lineTo(leadHandX, leadHandY);
+  ctx.stroke();
+
+  // Hands
+  ctx.fillStyle = "#d4a373";
+  ctx.beginPath();
+  ctx.arc(trailHandX, trailHandY, 3, 0, Math.PI * 2);
+  ctx.arc(leadHandX, leadHandY, 3.2, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();

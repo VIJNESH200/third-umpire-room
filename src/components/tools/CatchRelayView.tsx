@@ -1,5 +1,15 @@
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import type { BoundaryData } from "../../types/scenario";
+import {
+  solveBoundaryReplayState,
+  projectWideRelayCoords,
+  resolveBoundaryArchetype,
+} from "../../engine/boundaryPhysics";
+import {
+  drawAthleticBoundaryFielder,
+  drawCricketBall,
+  clamp,
+} from "../instinct/actorRigs";
 
 interface CatchRelayViewProps {
   boundary: BoundaryData;
@@ -10,34 +20,232 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
   boundary,
   currentTimeMs,
 }) => {
-  const minTime = 800;
-  const maxTime = 2200;
-  const clampedTime = Math.max(minTime, Math.min(maxTime, currentTimeMs));
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Normalized timeline
-  const progress = (clampedTime - minTime) / (maxTime - minTime);
-
-  const contactTime = boundary.ropeContactFrameMs; // ~1400ms
-  const releaseTime = boundary.releaseFrameMs; // if boundary: contactTime + 80, if clean: contactTime - 80
-
-  const isRopeContact = clampedTime >= contactTime;
-  const isBallReleased = clampedTime >= releaseTime;
-
-  // Fielder running/sliding from outfield (X=120) towards boundary rope (X=350)
-  const fielderX = 120 + progress * 240;
-
-  // Ball in hand vs in air after relay flick
-  let ballX = fielderX + 15;
-  let ballY = 190;
-
-  if (isBallReleased) {
-    // Ball lobbed up and backward into the field of play
-    const airProgress = (clampedTime - releaseTime) / (maxTime - releaseTime);
-    ballX = fielderX - 10 - airProgress * 90;
-    ballY = 180 - Math.sin(airProgress * Math.PI) * 80;
-  }
+  const VIEW_W = 500;
+  const VIEW_H = 320;
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Solve canonical physical state
+    const state = solveBoundaryReplayState(boundary, currentTimeMs);
+    const archetype = resolveBoundaryArchetype(boundary);
+
+    // Clear
+    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+
+    // ─── Background: outfield turf ───
+    const turfGrad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    turfGrad.addColorStop(0, "#1a3827");
+    turfGrad.addColorStop(0.6, "#163020");
+    turfGrad.addColorStop(1, "#10251a");
+    ctx.fillStyle = turfGrad;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    // Mow stripes
+    ctx.globalAlpha = 0.05;
+    for (let sy = 0; sy < VIEW_H; sy += 20) {
+      ctx.fillStyle = sy % 40 === 0 ? "#2a5e38" : "#1a3d25";
+      ctx.fillRect(0, sy, VIEW_W, 20);
+    }
+    ctx.globalAlpha = 1.0;
+
+    // ─── Boundary rope/cushion area ───
+    // worldX = 0 (cushion front) maps to screenX ~ 350
+    const cushionScreenX = projectWideRelayCoords(0.0, 0.0, 0.0, VIEW_W, VIEW_H).screenX;
+
+    // Out-of-bounds zone behind rope
+    ctx.fillStyle = "#09140e";
+    ctx.fillRect(cushionScreenX + 12, 0, VIEW_W - cushionScreenX - 12, VIEW_H);
+
+    // Boundary foam cushion strip (vertical in wide cam)
+    const cushGrad = ctx.createLinearGradient(cushionScreenX, 0, cushionScreenX + 12, 0);
+    cushGrad.addColorStop(0, "#f59e0b");
+    cushGrad.addColorStop(0.5, "#d97706");
+    cushGrad.addColorStop(1, "#b45309");
+    ctx.fillStyle = cushGrad;
+    ctx.strokeStyle = "#78350f";
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.roundRect(cushionScreenX, 40, 12, VIEW_H - 80, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // White boundary line behind cushion
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cushionScreenX + 14, 40);
+    ctx.lineTo(cushionScreenX + 14, VIEW_H - 40);
+    ctx.stroke();
+
+    // Guide line (pursuit baseline)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, VIEW_H * 0.62);
+    ctx.lineTo(cushionScreenX, VIEW_H * 0.62);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // ─── Partner Fielder (relay scenarios) ───
+    if (state.partnerFielder) {
+      const partnerScreen = projectWideRelayCoords(
+        state.partnerFielder.x,
+        state.partnerFielder.y,
+        state.partnerFielder.z,
+        VIEW_W,
+        VIEW_H
+      );
+
+      drawAthleticBoundaryFielder(ctx, {
+        x: clamp(partnerScreen.screenX, 30, VIEW_W - 30),
+        y: clamp(partnerScreen.screenY, 30, VIEW_H - 30),
+        scale: 1.1,
+        facing: "RIGHT",
+      }, {
+        pose: state.partnerFielder.hasCaughtBall ? "PARTNER_GATHER" : "SPRINT",
+        elevationM: state.partnerFielder.z,
+        jerseyColor: "#1e3a5f",
+      });
+    }
+
+    // ─── Primary Fielder ───
+    const fielderScreen = projectWideRelayCoords(
+      state.primaryFielder.x,
+      0.0,
+      state.primaryFielder.z,
+      VIEW_W,
+      VIEW_H
+    );
+
+    // Determine pose
+    let pose: "SPRINT" | "AIRBORNE" | "SLIDE" | "RELAY_FLICK" | "PARTNER_GATHER" = "SPRINT";
+    if (state.phase === "ROPE_TRANSIT" || state.phase === "COMPLETION") {
+      pose = state.primaryFielder.isSliding ? "SLIDE" : "SPRINT";
+    } else if (state.phase === "RELAY_AIRBORNE") {
+      pose = "RELAY_FLICK";
+    } else if (state.phase === "INTERCEPTION" || state.phase === "CATCH_CONTROL") {
+      if (state.primaryFielder.isAirborne) {
+        pose = "AIRBORNE";
+      } else if (state.primaryFielder.isSliding) {
+        pose = "SLIDE";
+      }
+    }
+    if (archetype === "AIRBORNE_RELAY" && state.primaryFielder.isAirborne) {
+      pose = "AIRBORNE";
+    }
+
+    drawAthleticBoundaryFielder(ctx, {
+      x: clamp(fielderScreen.screenX, 30, VIEW_W - 30),
+      y: clamp(fielderScreen.screenY, 30, VIEW_H - 30),
+      scale: 1.3,
+      facing: "RIGHT",
+    }, {
+      pose,
+      torsoAngleRad: state.primaryFielder.torsoAngleRad,
+      elevationM: state.primaryFielder.z,
+    });
+
+    // ─── Cricket Ball ───
+    const ballScreen = projectWideRelayCoords(
+      state.ball.x,
+      state.ball.y,
+      state.ball.z,
+      VIEW_W,
+      VIEW_H
+    );
+
+    if (state.ball.x > -8.0) {
+      drawCricketBall(ctx,
+        clamp(ballScreen.screenX, 10, VIEW_W - 10),
+        clamp(ballScreen.screenY, 10, VIEW_H - 10),
+        {
+          radius: ballScreen.radiusPx,
+          seamAngleRad: currentTimeMs * 0.008,
+          motionTrail: state.ball.isInFlight,
+        }
+      );
+    }
+
+    // ─── Ball trajectory trace (relay toss arc) ───
+    if (state.ball.isRelayed && state.ball.isInFlight && state.partnerFielder) {
+      const startScreen = projectWideRelayCoords(
+        state.primaryFielder.handsPoint.x,
+        state.primaryFielder.handsPoint.y,
+        state.primaryFielder.handsPoint.z,
+        VIEW_W, VIEW_H
+      );
+      const endScreen = projectWideRelayCoords(
+        state.partnerFielder.handsPoint.x,
+        state.partnerFielder.handsPoint.y,
+        state.partnerFielder.handsPoint.z,
+        VIEW_W, VIEW_H
+      );
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(220, 38, 38, 0.2)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(startScreen.screenX, startScreen.screenY);
+      const midX = (startScreen.screenX + endScreen.screenX) / 2;
+      const midY = Math.min(startScreen.screenY, endScreen.screenY) - 30;
+      ctx.quadraticCurveTo(midX, midY, endScreen.screenX, endScreen.screenY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // ─── Cushion contact indicator ───
+    if (state.cushion.isContacted) {
+      ctx.save();
+      ctx.globalAlpha = 0.3 + 0.15 * Math.sin(currentTimeMs * 0.012);
+      ctx.fillStyle = "#FACC15";
+      ctx.beginPath();
+      ctx.arc(cushionScreenX + 6, fielderScreen.screenY, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(cushionScreenX + 6, fielderScreen.screenY, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+  }, [boundary, currentTimeMs]);
+
+  // Phase label for neutral telemetry overlay
+  const state = solveBoundaryReplayState(boundary, currentTimeMs);
+  const archetype = resolveBoundaryArchetype(boundary);
+
+  const phaseLabel = (() => {
+    switch (state.phase) {
+      case "PURSUIT": return "FIELDER PURSUIT";
+      case "INTERCEPTION": return "INTERCEPTION";
+      case "CATCH_CONTROL": return "CATCH GATHERING";
+      case "ROPE_TRANSIT": return "BOUNDARY PROXIMITY";
+      case "RELAY_AIRBORNE": return "AERIAL RELAY";
+      case "COMPLETION": return "SEQUENCE COMPLETE";
+      default: return "TRACKING";
+    }
+  })();
+
+  const archetypeLabel = (() => {
+    switch (archetype) {
+      case "SLIDING_CATCH": return "SLIDING BOUNDARY";
+      case "AIRBORNE_RELAY": return "AIRBORNE RELAY";
+      case "RUNNING_ROPE_CATCH": return "RUNNING BOUNDARY";
+      default: return "BOUNDARY";
+    }
+  })();
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
@@ -54,137 +262,26 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
         </div>
 
         <div className="text-[11px] text-slate-400">
-          TRACKING: <span className="text-cyan-300 font-bold">BOUNDARY INTERACTION</span>
+          TRACKING: <span className="text-cyan-300 font-bold">{archetypeLabel}</span>
         </div>
       </div>
 
-      {/* Main Viewport */}
-      <div className="relative flex-1 min-h-[230px] my-2 bg-gradient-to-b from-[#0e1a24] via-[#09121a] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
+      {/* Main Canvas Viewport */}
+      <div className="relative flex-1 min-h-0 mt-2 bg-gradient-to-b from-[#0e1a24] via-[#09121a] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
 
-        <svg viewBox="0 0 500 320" className="w-full h-full max-h-[340px] z-10">
-          <defs>
-            <linearGradient id="relayTurf" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#1a3827" />
-              <stop offset="100%" stopColor="#10251a" />
-            </linearGradient>
-            <linearGradient id="relayCushion" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#f59e0b" />
-              <stop offset="100%" stopColor="#d97706" />
-            </linearGradient>
-          </defs>
+        <canvas
+          ref={canvasRef}
+          width={VIEW_W}
+          height={VIEW_H}
+          className="w-full h-full object-contain z-10"
+          style={{ imageRendering: "auto" }}
+        />
 
-          {/* Outfield Grass Field */}
-          <rect x="0" y="0" width="360" height="320" fill="url(#relayTurf)" />
-
-          {/* Out of Bounds Perimeter Grass (Behind Rope) */}
-          <rect x="360" y="0" width="140" height="320" fill="#09140e" />
-
-          {/* Boundary LED Advertising Boards & Foam Cushion at X=360 */}
-          <rect
-            x="360"
-            y="60"
-            width="22"
-            height="230"
-            rx="3"
-            fill="url(#relayCushion)"
-            stroke="#78350f"
-            strokeWidth="1.2"
-          />
-          <text
-            x="372"
-            y="175"
-            fill="#FFFFFF"
-            fontSize="9"
-            fontFamily="monospace"
-            fontWeight="bold"
-            transform="rotate(90 372,175)"
-            textAnchor="middle"
-          >
-            BOUNDARY CUSHION
-          </text>
-
-          {/* White Boundary Line behind Cushion */}
-          <line x1="384" y1="60" x2="384" y2="290" stroke="#FFFFFF" strokeWidth="2.5" opacity="0.9" />
-
-          {/* Boundary Run-Up Guide */}
-          <line x1="0" y1="220" x2="360" y2="220" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 4" />
-
-          {/* Relay Partner Fielder inside play (waiting for lob in relay scenario) */}
-          {boundary.catchOrSave === "RELAY_CATCH" && (
-            <g transform="translate(160, 160)">
-              <circle cx="0" cy="-28" r="8" fill="#1e293b" />
-              <rect x="-6" y="-20" width="12" height="24" fill="#1e293b" rx="2" />
-              {/* Ready arms extended */}
-              <line x1="-6" y1="-14" x2="-14" y2="-2" stroke="#1e293b" strokeWidth="3" strokeLinecap="round" />
-              <line x1="6" y1="-14" x2="16" y2="-8" stroke="#1e293b" strokeWidth="3" strokeLinecap="round" />
-              <ellipse cx="0" cy="18" rx="14" ry="4" fill="rgba(0,0,0,0.3)" />
-              <text x="0" y="-34" fill="#94a3b8" fontSize="8" fontFamily="monospace" textAnchor="middle">
-                RELAY FIELDER
-              </text>
-            </g>
-          )}
-
-          {/* Diving Boundary Fielder Silhouette */}
-          <g transform={`translate(${fielderX}, 210)`}>
-            {/* Ground shadow */}
-            <ellipse cx="0" cy="10" rx="35" ry="5" fill="rgba(0,0,0,0.35)" />
-
-            {/* Horizontal Dive Body */}
-            <circle cx="35" cy="-8" r="9" fill="#0f172a" />
-            <ellipse cx="10" cy="0" rx="30" ry="10" fill="#1e293b" />
-
-            {/* Arms reaching/flicking */}
-            <line x1="20" y1="-4" x2="40" y2={isBallReleased ? "-24" : "4"} stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-
-            {/* Trailing Sliding Legs */}
-            <line x1="-15" y1="2" x2="-45" y2="4" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-            <line x1="-10" y1="6" x2="-40" y2="12" stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
-
-            {/* Fielder Boot (Checks if touching rope) */}
-            <ellipse cx="45" cy="4" rx="7" ry="4" fill="#334155" />
-          </g>
-
-          {/* Red Cricket Ball in Motion */}
-          <circle cx={ballX} cy={ballY} r="7" fill="#dc2626" stroke="#FFFFFF" strokeWidth="0.8" />
-
-          {/* Contact Laser Indicator */}
-          {isRopeContact && (
-            <g transform="translate(360, 210)">
-              <circle cx="0" cy="0" r="16" fill="#FACC15" opacity="0.45" className="animate-ping" />
-              <circle cx="0" cy="0" r="6" fill="#FFFFFF" />
-            </g>
-          )}
-        </svg>
-
-        {/* Real-time Status Overlay — neutral instrument state only */}
+        {/* Neutral phase telemetry overlay */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
           <div className="px-3 py-1.5 rounded-md text-xs font-bold border backdrop-blur-md shadow-lg bg-slate-950/90 border-slate-700 text-slate-300">
-            {isRopeContact
-              ? (!isBallReleased ? "BOUNDARY CONTACT ZONE (BALL IN HAND)" : "BOUNDARY CONTACT ZONE (BALL AIRBORNE)")
-              : "BOUNDARY PURSUIT IN PROGRESS"}
-          </div>
-        </div>
-      </div>
-
-      {/* Neutral Diagnostics Footer */}
-      <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">SENSOR FEED</div>
-          <div className="text-[11px] font-black text-cyan-300">
-            1080P 50FPS BROADCAST
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">BALL STATUS</div>
-          <div className="text-[11px] font-black text-slate-200">
-            {isBallReleased ? "RELEASED / IN AIR" : "HELD IN HAND"}
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">ROPE INTERACTION</div>
-          <div className="text-[11px] font-black text-amber-300">
-            {isRopeContact ? "AT BOUNDARY CUSHION" : "OUTFIELD PURSUIT"}
+            {phaseLabel}
           </div>
         </div>
       </div>

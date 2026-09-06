@@ -83,6 +83,8 @@ export interface CaughtBehindData {
   soundType: "WOODY_SNICK" | "DULL_THUD" | "CLATTER" | "SILENCE";
 }
 
+export type BoundaryArchetype = "SLIDING_CATCH" | "AIRBORNE_RELAY" | "RUNNING_ROPE_CATCH";
+
 export interface BoundaryData {
   ropeContactFrameMs: number;
   releaseFrameMs: number;
@@ -90,6 +92,16 @@ export interface BoundaryData {
   fielderTouchingRopeWhileInContact: boolean;
   marginMm: number;
   catchOrSave: "BOUNDARY_TOUCH" | "RELAY_CATCH" | "OVER_THE_ROPE";
+  // R1 Canonical Event-Anchor Engine fields
+  archetype?: BoundaryArchetype;
+  deliveryTimeMs?: number;
+  firstBallContactMs?: number;
+  catchControlMs?: number;
+  boundaryContactMs?: number;
+  boundaryReleaseMs?: number;
+  finalGroundContactMs?: number;
+  catchCompletionMs?: number;
+  hasPartnerRelay?: boolean;
 }
 
 export interface DRSRuleEvaluation {

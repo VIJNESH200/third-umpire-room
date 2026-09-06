@@ -1,6 +1,16 @@
-import React, { useState } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import type { BoundaryData } from "../../types/scenario";
 import { ZoomIn, Crosshair } from "lucide-react";
+import {
+  solveBoundaryReplayState,
+  projectMacroBoundaryCoords,
+  resolveBoundaryArchetype,
+} from "../../engine/boundaryPhysics";
+import {
+  drawAthleticBoundaryFielder,
+  drawCricketBall,
+  clamp,
+} from "../instinct/actorRigs";
 
 interface BoundaryZoomProps {
   boundary: BoundaryData;
@@ -12,41 +22,221 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
   boundary,
   currentTimeMs,
 }) => {
-  const [zoomLevel, setZoomLevel] = useState<number>(1.4);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [showGuide, setShowGuide] = useState<boolean>(true);
 
-  const minTime = 800;
-  const maxTime = 2200;
-  const clampedTime = Math.max(minTime, Math.min(maxTime, currentTimeMs));
-
-  // Normalized timeline progress: 0 to 1
-  const progress = (clampedTime - minTime) / (maxTime - minTime);
-
-  const contactTime = boundary.ropeContactFrameMs; // ~1400ms
-  const releaseTime = boundary.releaseFrameMs; // if boundary: 1480ms, if clean catch: 1320ms
-
-  const isRopeContact = clampedTime >= contactTime;
-  const isBallHeld = clampedTime < releaseTime;
-
-  // Fielder foot sliding horizontally towards cushion (cushion apex at X=240)
-  // Starts at X=120, slides to X=245 at contactTime, slides past to X=280
-  const footX = 110 + progress * 160;
-
-  // Ball position: in hand while held, tossed upward/away if released
-  let ballX = footX + 10;
-  let ballY = 115;
-
-  if (!isBallHeld) {
-    // Released / lobbed in air
-    const releaseProgress = Math.min(1, (clampedTime - releaseTime) / (maxTime - releaseTime));
-    ballX = footX - 10 - releaseProgress * 60;
-    ballY = 115 - Math.sin(releaseProgress * Math.PI) * 75;
-  }
-
-  // Cushion compression amount
-  const isCushionCompressed = footX >= 235;
+  const VIEW_W = 500;
+  const VIEW_H = 280;
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Solve canonical physical state
+    const state = solveBoundaryReplayState(boundary, currentTimeMs);
+    const archetype = resolveBoundaryArchetype(boundary);
+
+    // Clear
+    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+
+    // ─── Background: outfield turf gradient ───
+    const turfGrad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    turfGrad.addColorStop(0, "#1a3625");
+    turfGrad.addColorStop(0.55, "#163020");
+    turfGrad.addColorStop(1, "#0c1810");
+    ctx.fillStyle = turfGrad;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    // ─── Boundary Cushion (realistic foam wedge) ───
+    // Cushion front edge is at worldX = 0.0m → screenX = 250
+    const cushionFront = projectMacroBoundaryCoords(0.0, 0.0, VIEW_W, VIEW_H);
+    const cushionBackX = projectMacroBoundaryCoords(0.25, 0.0, VIEW_W, VIEW_H).screenX; // 250mm = 0.25m wide
+    const cushionTopY = projectMacroBoundaryCoords(0.0, 0.20, VIEW_W, VIEW_H).screenY; // 200mm = 0.20m high
+    const groundY = cushionFront.screenY;
+
+    // Ground line
+    ctx.strokeStyle = "#254a33";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, groundY);
+    ctx.lineTo(VIEW_W, groundY);
+    ctx.stroke();
+
+    // Mow stripe pattern
+    ctx.globalAlpha = 0.06;
+    for (let sx = 0; sx < VIEW_W; sx += 28) {
+      ctx.fillStyle = sx % 56 === 0 ? "#2a5e38" : "#1a3d25";
+      ctx.fillRect(sx, 0, 28, groundY);
+    }
+    ctx.globalAlpha = 1.0;
+
+    // Compression deformation
+    const compressionPx = state.cushion.compressionMm * 0.4; // 1mm = 0.4px
+
+    // Foam cushion body — trapezoidal wedge
+    const cushGrad = ctx.createLinearGradient(cushionFront.screenX, cushionTopY, cushionBackX, groundY);
+    cushGrad.addColorStop(0, "#f59e0b");
+    cushGrad.addColorStop(0.5, "#d97706");
+    cushGrad.addColorStop(1, "#b45309");
+    ctx.fillStyle = cushGrad;
+    ctx.strokeStyle = "#78350f";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    // Top face (slightly compressed inward)
+    ctx.moveTo(cushionFront.screenX + compressionPx, cushionTopY);
+    ctx.lineTo(cushionBackX, cushionTopY + 4);
+    // Right face (ground)
+    ctx.lineTo(cushionBackX + 8, groundY);
+    // Bottom
+    ctx.lineTo(cushionFront.screenX - 4, groundY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // White boundary line behind cushion
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cushionBackX + 10, groundY - 40);
+    ctx.lineTo(cushionBackX + 10, groundY + 30);
+    ctx.stroke();
+
+    // ─── Laser Guide Alignment Line ───
+    if (showGuide) {
+      ctx.strokeStyle = "#38BDF8";
+      ctx.lineWidth = 1.0;
+      ctx.setLineDash([4, 2]);
+      ctx.beginPath();
+      ctx.moveTo(cushionFront.screenX, 20);
+      ctx.lineTo(cushionFront.screenX, VIEW_H - 20);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // ─── Primary Fielder & Lead-Boot Anchor Contract (P1) ───
+    const bootScreen = projectMacroBoundaryCoords(
+      state.primaryFielder.bootPoint.x,
+      state.primaryFielder.bootPoint.z,
+      VIEW_W,
+      VIEW_H
+    );
+
+    // Determine pose from phase
+    let pose: "SPRINT" | "AIRBORNE" | "SLIDE" | "RELAY_FLICK" | "PARTNER_GATHER" = "SPRINT";
+    if (state.phase === "ROPE_TRANSIT" || state.phase === "COMPLETION") {
+      pose = state.primaryFielder.isSliding ? "SLIDE" : "SPRINT";
+    } else if (state.phase === "RELAY_AIRBORNE") {
+      pose = "RELAY_FLICK";
+    } else if (state.phase === "INTERCEPTION" || state.phase === "CATCH_CONTROL") {
+      if (state.primaryFielder.isAirborne) {
+        pose = "AIRBORNE";
+      } else if (state.primaryFielder.isSliding) {
+        pose = "SLIDE";
+      }
+    } else if (state.phase === "PURSUIT") {
+      pose = "SPRINT";
+    }
+    // Override: for AIRBORNE_RELAY archetype during aerial phase
+    if (archetype === "AIRBORNE_RELAY" && state.primaryFielder.isAirborne) {
+      pose = "AIRBORNE";
+    }
+
+    // Lead-boot anchor calibration: align athletic rig's rendered lead foot exactly with bootScreen
+    const leadFootRigOffset =
+      (pose === "SLIDE" ? 32 : pose === "AIRBORNE" || pose === "RELAY_FLICK" ? 16 : 14) * 1.6;
+    const rigScreenX = bootScreen.screenX - leadFootRigOffset;
+
+    drawAthleticBoundaryFielder(ctx, {
+      x: clamp(rigScreenX, -80, VIEW_W + 80),
+      y: clamp(bootScreen.screenY, 40, groundY),
+      scale: 1.6,
+      facing: "RIGHT",
+    }, {
+      pose,
+      torsoAngleRad: state.primaryFielder.torsoAngleRad,
+      elevationM: state.primaryFielder.z,
+    });
+
+    // ─── Cricket Ball ───
+    const ballScreen = projectMacroBoundaryCoords(
+      state.ball.x,
+      state.ball.z,
+      VIEW_W,
+      VIEW_H
+    );
+
+    // Only render ball if it's near the macro frame (not way out in outfield)
+    if (state.ball.x > -2.0) {
+      drawCricketBall(ctx, ballScreen.screenX, ballScreen.screenY, {
+        radius: 7,
+        seamAngleRad: currentTimeMs * 0.006,
+        shadowY: groundY,
+      });
+    }
+
+    // ─── Contact flash when cushion is contacted ───
+    if (state.cushion.isContacted) {
+      ctx.save();
+      ctx.globalAlpha = 0.35 + 0.15 * Math.sin(currentTimeMs * 0.015);
+      ctx.fillStyle = "#FACC15";
+      ctx.beginPath();
+      ctx.arc(cushionFront.screenX, groundY, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(cushionFront.screenX, groundY, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ─── Boot-to-cushion measurement line (neutral telemetry - P3) ───
+    if (state.phase !== "PURSUIT" && showGuide) {
+      ctx.save();
+      ctx.strokeStyle = "#38BDF8";
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      ctx.moveTo(bootScreen.screenX, bootScreen.screenY);
+      ctx.lineTo(cushionFront.screenX, bootScreen.screenY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Clearance measurement label (mm value only — neutral cyan, no verdict signaling)
+      const clearanceMm = state.primaryFielder.cushionClearanceMm;
+      const labelX = (bootScreen.screenX + cushionFront.screenX) / 2;
+      ctx.font = "bold 9px monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#38BDF8";
+      ctx.fillText(
+        `${clearanceMm >= 0 ? "+" : ""}${clearanceMm.toFixed(0)}mm`,
+        labelX,
+        bootScreen.screenY - 6
+      );
+      ctx.restore();
+    }
+
+  }, [boundary, currentTimeMs, zoomLevel, showGuide]);
+
+  // Determine current phase for neutral status display
+  const state = solveBoundaryReplayState(boundary, currentTimeMs);
+
+  const phaseLabel = (() => {
+    switch (state.phase) {
+      case "PURSUIT": return "FIELDER PURSUIT";
+      case "INTERCEPTION": return "INTERCEPTION";
+      case "CATCH_CONTROL": return "CATCH GATHERING";
+      case "ROPE_TRANSIT": return "BOUNDARY PROXIMITY";
+      case "RELAY_AIRBORNE": return "AERIAL RELAY";
+      case "COMPLETION": return "SEQUENCE COMPLETE";
+      default: return "TRACKING";
+    }
+  })();
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
@@ -58,7 +248,7 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
             CAM 05 • 4K ULTRA-HD BOUNDARY CUSHION ZOOM
           </span>
           <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-slate-300 font-semibold">
-            FRAME {currentFrame} • 4K 120FPS
+            FRAME {currentFrame} • 4K 50FPS
           </span>
         </div>
 
@@ -74,7 +264,7 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
           </button>
 
           <button
-            onClick={() => setZoomLevel(zoomLevel === 1.4 ? 1.9 : 1.4)}
+            onClick={() => setZoomLevel(zoomLevel === 1.0 ? 1.4 : 1.0)}
             className="tactical-btn px-2.5 py-1 rounded text-[11px] font-bold text-slate-300 flex items-center gap-1"
           >
             <ZoomIn size={12} className="text-amber-400" />
@@ -83,147 +273,26 @@ export const BoundaryZoom: React.FC<BoundaryZoomProps> = ({
         </div>
       </div>
 
-      {/* Main Visualizer */}
-      <div className="relative flex-1 min-h-[220px] my-2 bg-gradient-to-b from-[#09111c] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
+      {/* Main Canvas Viewport */}
+      <div className="relative flex-1 min-h-0 mt-2 bg-gradient-to-b from-[#09111c] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
 
-        <svg
-          viewBox="0 0 500 280"
-          className="w-full h-full max-h-[350px] transition-transform duration-150 z-10"
-          style={{ transform: `scale(${zoomLevel})` }}
-        >
-          <defs>
-            <linearGradient id="cushionTurf" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#1a3625" />
-              <stop offset="100%" stopColor="#102318" />
-            </linearGradient>
-            <linearGradient id="cushionFoam" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#f59e0b" />
-              <stop offset="50%" stopColor="#d97706" />
-              <stop offset="100%" stopColor="#b45309" />
-            </linearGradient>
-          </defs>
+        <canvas
+          ref={canvasRef}
+          width={VIEW_W}
+          height={VIEW_H}
+          className="w-full h-full object-contain transition-transform duration-150 z-10"
+          style={{
+            transform: `scale(${zoomLevel})`,
+            transformOrigin: "250px 70%",
+            imageRendering: "auto",
+          }}
+        />
 
-          {/* Outfield Grass Turf */}
-          <rect x="0" y="0" width="500" height="280" fill="url(#cushionTurf)" />
-          <line x1="0" y1="180" x2="500" y2="180" stroke="#254a33" strokeWidth="2" />
-
-          {/* Boundary Rope Foam Cushion (Triangular Wedge) at X=240 */}
-          <polygon
-            points={
-              isCushionCompressed
-                ? "180,180 320,180 335,210 165,210"
-                : "180,180 320,180 340,210 160,210"
-            }
-            fill="url(#cushionFoam)"
-            stroke="#78350f"
-            strokeWidth="1.5"
-            className="transition-colors duration-100"
-          />
-          <text x="250" y="198" fill="#FFFFFF" fontSize="9" fontFamily="monospace" fontWeight="900" textAnchor="middle">
-            BOUNDARY CUSHION
-          </text>
-
-          {/* White Boundary Line behind Cushion */}
-          <line x1="160" y1="210" x2="340" y2="210" stroke="#FFFFFF" strokeWidth="2.5" opacity="0.9" />
-
-          {/* Laser Guide Alignment Line */}
-          {showGuide && (
-            <line
-              x1="240"
-              y1="40"
-              x2="240"
-              y2="250"
-              stroke="#38BDF8"
-              strokeWidth="1.2"
-              strokeDasharray="4 2"
-            />
-          )}
-
-          {/* Sliding Fielder Silhouette (Spikes / Leg / Hand) */}
-          <g transform={`translate(${footX}, 180)`}>
-            {/* Ground contact shadow */}
-            <ellipse cx="-20" cy="2" rx="45" ry="5" fill="rgba(0,0,0,0.4)" />
-
-            {/* Sliding Knee / Thigh */}
-            <path
-              d="M -70,-20 L -30,0 L 0,0 L -15,-15 Z"
-              fill="#1e293b"
-              stroke="#0f172a"
-              strokeWidth="1"
-            />
-            {/* Fielder Boot Spikes */}
-            <ellipse cx="0" cy="0" rx="14" ry="6" fill="#0f172a" stroke="#334155" strokeWidth="0.8" />
-            <circle cx="10" cy="0" r="3" fill="#FFFFFF" />
-
-            {/* Fielder Hand / Arm (Reaching up with ball or releasing) */}
-            <path
-              d="M -40,-25 Q -10,-45 10,-60"
-              fill="none"
-              stroke="#1e293b"
-              strokeWidth="5"
-              strokeLinecap="round"
-            />
-            <circle cx="10" cy="-60" r="6" fill="#334155" />
-          </g>
-
-          {/* Red Cricket Ball in Hand / Air */}
-          <circle
-            cx={ballX}
-            cy={ballY}
-            r="9.5"
-            fill="#dc2626"
-            stroke="#991b1b"
-            strokeWidth="1"
-          />
-          {/* Ball Seam */}
-          <line
-            x1={ballX - 7}
-            y1={ballY}
-            x2={ballX + 7}
-            y2={ballY}
-            stroke="#FFFFFF"
-            strokeWidth="1.2"
-            strokeDasharray="2 1"
-          />
-
-          {/* Contact Spark Flash when cushion is reached */}
-          {isRopeContact && (
-            <g transform="translate(240, 180)">
-              <circle cx="0" cy="0" r="14" fill="#FACC15" opacity="0.45" className="animate-ping" />
-              <circle cx="0" cy="0" r="5" fill="#FFFFFF" />
-            </g>
-          )}
-        </svg>
-
-        {/* Live Contact Telemetry Overlay — neutral instrument state only */}
+        {/* Neutral phase telemetry overlay */}
         <div className="absolute top-2.5 left-2.5 z-20 flex flex-col gap-1.5 font-mono">
           <div className="px-3 py-1.5 rounded-md text-[11px] font-bold border backdrop-blur-md shadow-lg bg-slate-950/90 border-slate-700 text-slate-300">
-            {isRopeContact
-              ? (isBallHeld ? "CUSHION CONTACT ZONE (BALL IN HAND)" : "CUSHION CONTACT ZONE (BALL RELEASED)")
-              : "AERIAL PURSUIT / SLIDE IN PROGRESS"}
-          </div>
-        </div>
-      </div>
-
-      {/* Neutral Diagnostics Footer */}
-      <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">OPTICAL FEED</div>
-          <div className="text-[11px] font-black text-cyan-300">
-            4K 120 FPS HIGH-SPEED
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">BALL STATUS</div>
-          <div className="text-[11px] font-black text-slate-200">
-            {isBallHeld ? "HELD IN HAND" : "RELEASED / IN AIR"}
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">CUSHION CONTACT</div>
-          <div className="text-[11px] font-black text-amber-300">
-            {isRopeContact ? "FOOT AT CUSHION" : "APPROACHING"}
+            {phaseLabel}
           </div>
         </div>
       </div>
