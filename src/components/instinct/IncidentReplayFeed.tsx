@@ -21,8 +21,6 @@ import {
   solveCaughtBehindBatterKinematics,
   solveCaughtBehindKeeperKinematics,
   solveRunOutRunnerKinematics,
-  solveStumpingBatterKinematics,
-  solveStumpingKeeperKinematics,
   solveBoundaryFielderKinematics,
   drawArticulatedBatter,
   drawArticulatedRunner,
@@ -38,7 +36,7 @@ import {
   solveBoundaryReplayState,
   resolveBoundaryArchetype,
 } from "../../engine/boundaryPhysics";
-import { solveStumpingReplayState } from "../../engine/stumpingPhysics";
+import { renderCanonicalStumpingScene } from "../tools/stumpingScene";
 
 interface IncidentReplayFeedProps {
   scenario: Scenario;
@@ -99,8 +97,8 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
         renderLBWBroadcast(ctx, width, height, progress, scenario);
       } else if (scenario.incidentType === "RUN_OUT") {
         renderRunOutBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
-      } else if (scenario.incidentType === "STUMPING") {
-        renderStumpingBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
+      } else if (scenario.incidentType === "STUMPING" && scenario.stumping) {
+        renderCanonicalStumpingScene(ctx, width, height, scenario.stumping, canonicalTimeMs, progress);
       } else if (scenario.incidentType === "CAUGHT_BEHIND") {
         renderCaughtBehindBroadcast(ctx, width, height, progress, scenario, canonicalTimeMs);
       } else if (scenario.incidentType === "BOUNDARY") {
@@ -717,135 +715,6 @@ function renderRunOutBroadcast(
     { x: runnerX, y: stumpsBaseY + 12, scale: 1.12, facing: "LEFT" },
     runnerK
   );
-}
-
-/* ================================================================
-   3. STUMPING BROADCAST REPLAY RENDERER (SIDE-ON STUMPING CAM)
-   ================================================================ */
-function renderStumpingBroadcast(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  p: number,
-  scenario: Scenario,
-  canonicalTimeMs: number
-) {
-  const st = scenario.stumping;
-  const state = st ? solveStumpingReplayState(st, canonicalTimeMs) : null;
-
-  // --- 1. Outfield Grass ---
-  const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
-  gradGrass.addColorStop(0, "#132b1c");
-  gradGrass.addColorStop(0.5, "#183824");
-  gradGrass.addColorStop(1, "#0d1e13");
-  ctx.fillStyle = gradGrass;
-  ctx.fillRect(0, 0, w, h);
-
-  // --- 2. 22-Yard Pitch Strip ---
-  const pitchTopY = h * 0.52;
-  const pitchHeight = h * 0.48;
-
-  const gradPitch = ctx.createLinearGradient(0, pitchTopY, 0, h);
-  gradPitch.addColorStop(0, "#ba9c77");
-  gradPitch.addColorStop(0.5, "#a68862");
-  gradPitch.addColorStop(1, "#8a6d49");
-  ctx.fillStyle = gradPitch;
-  ctx.fillRect(0, pitchTopY, w, pitchHeight);
-
-  ctx.strokeStyle = "#4d3d29";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(0, pitchTopY);
-  ctx.lineTo(w, pitchTopY);
-  ctx.stroke();
-
-  // --- 3. Painted White Creases ---
-  const creaseX = w * 0.46;
-  const stumpsX = w * 0.28;
-  const stumpsBaseY = pitchTopY + 6;
-
-  // Bowling crease line
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(stumpsX, pitchTopY);
-  ctx.lineTo(stumpsX, h);
-  ctx.stroke();
-
-  // Popping crease line
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(creaseX - 2.5, pitchTopY, 5, pitchHeight);
-
-  ctx.save();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
-  ctx.font = "bold 8px monospace";
-  ctx.fillText("POPPING CREASE", creaseX + 6, pitchTopY + 18);
-  ctx.restore();
-
-  // --- 4. Striker Stumps & Zing Bails (Driven by canonical state.stumps) ---
-  const bailsBroke = state ? state.stumps.bailsSeparating : p >= 0.65;
-  const dislodgeProgress = state
-    ? clamp((canonicalTimeMs - state.timeline.bailsDislodgedMs) / 300, 0, 1)
-    : (bailsBroke ? (p - 0.65) / 0.35 : 0.0);
-
-  drawStumpsAndBails(ctx, stumpsX, stumpsBaseY, {
-    scale: 1.15,
-    bailsDislodged: bailsBroke,
-    dislodgeProgress,
-    isZing: true,
-  });
-
-  // --- 5. Wicketkeeper Rapid Stumping Whip ---
-  const keeperK = solveStumpingKeeperKinematics(p);
-  drawArticulatedWicketkeeper(
-    ctx,
-    { x: stumpsX - 22, y: stumpsBaseY + 4, scale: 1.15, facing: "RIGHT" },
-    keeperK
-  );
-
-  // --- 6. Batter Stationary Stance & Rear-Leg Pendulum Kinematics ---
-  const marginPx = state
-    ? (state.batter.isGrounded ? -10 : 10)
-    : (st ? (st.marginMs > 0 ? 10 : -10) : 0);
-  const stumpingResult = solveStumpingBatterKinematics(p, creaseX, marginPx);
-
-  drawArticulatedBatter(
-    ctx,
-    { x: stumpingResult.batterX, y: stumpsBaseY + 8, scale: 1.15, facing: "RIGHT" },
-    stumpingResult.batterK
-  );
-
-  // --- 7. Ball Flight Past Bat to Wicketkeeper & Break of Wicket ---
-  const ballInFlight = state ? state.ball.isInFlight : p < 0.52;
-  if (ballInFlight) {
-    const t = state ? state.ball.flightProgress : p / 0.52;
-    const originX = w * 0.88;
-    const originY = h * 0.32;
-    const targetX = stumpsX - 22 + keeperK.gloveX * 1.15;
-    const targetY = stumpsBaseY + 4 + keeperK.gloveY * 1.15;
-
-    const bX = originX + (targetX - originX) * t;
-    const bY = originY + (targetY - originY) * t;
-    const prevBX = originX + (targetX - originX) * Math.max(0, t - 0.05);
-    const prevBY = originY + (targetY - originY) * Math.max(0, t - 0.05);
-
-    drawCricketBall(ctx, bX, bY, {
-      radius: 5.0,
-      seamAngleRad: p * Math.PI * 6,
-      motionTrail: t > 0.15,
-      prevX: prevBX,
-      prevY: prevBY,
-    });
-  } else {
-    // Ball secured in keeper's gloves throughout stump break and appeal
-    const gloveBallX = stumpsX - 22 + keeperK.gloveX * 1.15;
-    const gloveBallY = stumpsBaseY + 4 + keeperK.gloveY * 1.15;
-    drawCricketBall(ctx, gloveBallX, gloveBallY, {
-      radius: 4.5,
-      seamAngleRad: 0.2,
-      motionTrail: false,
-    });
-  }
 }
 
 /* ================================================================
