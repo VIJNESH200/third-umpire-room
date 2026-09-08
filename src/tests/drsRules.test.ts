@@ -88,7 +88,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HotSpotIRView } from "../components/tools/HotSpotIRView";
 import {
   StumpingEvidenceReview,
-  STUMPING_FRAMING_CONFIGS,
+  TIGHT_CREASE_FRAMING,
+  KEEPER_WICKET_FRAMING,
 } from "../components/tools/StumpingEvidenceReview";
 import type {
   LBWData,
@@ -3688,39 +3689,17 @@ function runAllDRSTests() {
   }
 
   // ==============================================================
-  // GROUP 40 — STUMPING PHASE 2 CAM 02 VISUAL DESIGN PROTOTYPE SELECTOR
+  // GROUP 40 — STUMPING PHASE 2 SYNCHRONIZED FORENSIC VIEWPORTS
   // ==============================================================
-  console.log("\n--- GROUP 40: STUMPING PHASE 2 CAM 02 PROTOTYPE SELECTOR & 3 OPTICAL FRAMINGS ---");
+  console.log("\n--- GROUP 40: STUMPING PHASE 2 SYNCHRONIZED FORENSIC VIEWPORTS ---");
   {
-    // T40.1: All three framing configurations exist and satisfy optical zoom ranges (R2)
-    const optA = STUMPING_FRAMING_CONFIGS.A;
-    const optB = STUMPING_FRAMING_CONFIGS.B;
-    const optC = STUMPING_FRAMING_CONFIGS.C;
+    // T40.1: Window B permanent Option B tight crease optical framing invariants
+    assert(TIGHT_CREASE_FRAMING.zoom === 3.3, "T40.1: Option B tight crease zoom is exactly 3.3x");
+    assert(TIGHT_CREASE_FRAMING.targetX === 342 && TIGHT_CREASE_FRAMING.targetY === 225, "T40.1: Option B targets popping crease and rear boot (342, 225)");
 
-    assert(optA !== undefined, "T40.1: Option A configuration exists");
-    assert(optB !== undefined, "T40.1: Option B configuration exists");
-    assert(optC !== undefined, "T40.1: Option C configuration exists");
-
-    // Option A: 2.5x - 3.0x zoom
-    assert(optA.zoom >= 2.5 && optA.zoom <= 3.0, "T40.1: Option A zoom is within 2.5x - 3.0x broadcast optical zoom range");
-    assert(optA.label.includes("A — BROADCAST ZOOM"), "T40.1: Option A label matches requirement");
-    assert(optA.buttonText === "[ A — BROADCAST ZOOM ]", "T40.1: Option A buttonText matches requirement");
-
-    // Option B: 3.0x - 3.5x zoom
-    assert(optB.zoom >= 3.0 && optB.zoom <= 3.5, "T40.1: Option B zoom is within 3.0x - 3.5x tight crease zoom range");
-    assert(optB.label.includes("B — TIGHT CREASE"), "T40.1: Option B label matches requirement");
-    assert(optB.buttonText === "[ B — TIGHT CREASE ]", "T40.1: Option B buttonText matches requirement");
-
-    // Option C: 2.0x - 2.4x zoom
-    assert(optC.zoom >= 2.0 && optC.zoom <= 2.4, "T40.1: Option C zoom is within 2.0x - 2.4x high-speed camera range");
-    assert(optC.label.includes("C — HIGH-SPEED CAMERA"), "T40.1: Option C label matches requirement");
-    assert(optC.buttonText === "[ C — HIGH-SPEED CAMERA ]", "T40.1: Option C buttonText matches requirement");
-
-    // T40.2: Clear visual distinction between Option A, Option B, and Option C
-    assert(optA.zoom !== optB.zoom && optB.zoom !== optC.zoom && optA.zoom !== optC.zoom, "T40.2: Distinct zoom levels across A, B, and C");
-    assert(optA.targetX !== optB.targetX || optA.targetY !== optB.targetY, "T40.2: Distinct camera framing center between A and B");
-    assert(optB.targetX !== optC.targetX || optB.targetY !== optC.targetY, "T40.2: Distinct camera framing center between B and C");
-    assert(optA.targetX !== optC.targetX || optA.targetY !== optC.targetY, "T40.2: Distinct camera framing center between A and C");
+    // T40.2: Window A keeper/wicket optical framing invariants
+    assert(KEEPER_WICKET_FRAMING.zoom === 3.0, "T40.2: Window A keeper zoom is 3.0x");
+    assert(KEEPER_WICKET_FRAMING.targetX === 224 && KEEPER_WICKET_FRAMING.targetY === 195, "T40.2: Window A targets striker stumps and bails (224, 195)");
 
     // T40.3: Render StumpingEvidenceReview markup and verify permanent clean broadcast presentation
     const sc = generateScenario(42, "STUMPING");
@@ -3745,10 +3724,6 @@ function runAllDRSTests() {
     assert(!windowBHtml.includes("caliper"), "T40.4: Window B contains no caliper CAD overlays");
     assert(!windowBHtml.includes("mm scale"), "T40.4: Window B contains no mm scale overlays");
     assert(windowBHtml.includes("PURE OPTICAL EVIDENCE"), "T40.4: Window B pure optical evidence badge maintained");
-
-    // T40.5: Window B permanent configuration satisfies Option B specifications
-    assert(optB.zoom === 3.3, "T40.5: Option B permanent zoom is exactly 3.3x");
-    assert(optB.targetX === 342 && optB.targetY === 225, "T40.5: Option B target coordinates are (342, 225)");
   }
 
   console.log("=================================================");

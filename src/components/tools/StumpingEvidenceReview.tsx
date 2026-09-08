@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import type { StumpingData } from "../../types/scenario";
 import { solveStumpingReplayState } from "../../engine/stumpingPhysics";
 import {
@@ -11,68 +11,19 @@ import {
   clamp,
 } from "../instinct/actorRigs";
 
-export type StumpingDesignOption = "A" | "B" | "C";
+// Option B — Tight Crease Camera: permanent 3.3x optical crop centered on popping crease & rear boot
+export const TIGHT_CREASE_FRAMING = {
+  zoom: 3.3,
+  targetX: 342,
+  targetY: 225,
+} as const;
 
-export interface StumpingFramingConfig {
-  id: StumpingDesignOption;
-  label: string;
-  buttonText: string;
-  name: string;
-  zoom: number;
-  zoomText: string;
-  targetX: number;
-  targetY: number;
-  badge: string;
-  description: string;
-}
-
-/**
- * Three distinct optical framings of the unified canonical Phase 1 cricket scene (R2):
- * - Option A: Broadcast Optical Zoom (2.8×) — TV camera moved closer to striker's end.
- * - Option B: Tight Crease Camera (3.3×) — Macro crop on popping crease & rear boot.
- * - Option C: High-Speed Camera (2.2×) — Dedicated 500 FPS wider perspective.
- */
-export const STUMPING_FRAMING_CONFIGS: Record<StumpingDesignOption, StumpingFramingConfig> = {
-  A: {
-    id: "A",
-    label: "A — BROADCAST ZOOM",
-    buttonText: "[ A — BROADCAST ZOOM ]",
-    name: "Broadcast Optical Zoom",
-    zoom: 2.8,
-    zoomText: "2.8×",
-    targetX: 320,
-    targetY: 212,
-    badge: "CAM 02 • OPTION A: BROADCAST ZOOM (2.8×)",
-    description:
-      "2.8× broadcast optical zoom capturing batter lower body, hip, pad, rear boot, popping crease, striker stumps, and turf.",
-  },
-  B: {
-    id: "B",
-    label: "B — TIGHT CREASE",
-    buttonText: "[ B — TIGHT CREASE ]",
-    name: "Tight Crease Camera",
-    zoom: 3.3,
-    zoomText: "3.3×",
-    targetX: 342,
-    targetY: 225,
-    badge: "CAM 02 • OPTION B: TIGHT CREASE (3.3×)",
-    description:
-      "3.3× macro crease clearance crop sharply centered on popping crease & rear boot with connected hip/pad, retaining stumps in left context.",
-  },
-  C: {
-    id: "C",
-    label: "C — HIGH-SPEED CAMERA",
-    buttonText: "[ C — HIGH-SPEED CAMERA ]",
-    name: "High-Speed Camera",
-    zoom: 2.2,
-    zoomText: "2.2×",
-    targetX: 295,
-    targetY: 210,
-    badge: "CAM 02 • OPTION C: HIGH-SPEED CAMERA (2.2×)",
-    description:
-      "2.2× dedicated 500 FPS camera perspective providing wide broadcast context: wicketkeeper in stance, striker stumps, full crease line, lower batter & turf.",
-  },
-};
+// Keeper / Wicket: 3.0x optical crop centered on striker stumps and keeper gloves
+export const KEEPER_WICKET_FRAMING = {
+  zoom: 3.0,
+  targetX: 224,
+  targetY: 195,
+} as const;
 
 interface StumpingEvidenceReviewProps {
   stumping: StumpingData;
@@ -220,9 +171,6 @@ export const StumpingEvidenceReview: React.FC<StumpingEvidenceReviewProps> = ({
   const windowACanvasRef = useRef<HTMLCanvasElement | null>(null);
   const windowBCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Permanent Camera Framing for Window B: Option B — Tight Crease Camera (3.3x)
-  const activeFraming = STUMPING_FRAMING_CONFIGS.B;
-
   // Canonical physical replay state (shared between both windows)
   const state = solveStumpingReplayState(stumping, currentTimeMs);
 
@@ -251,8 +199,8 @@ export const StumpingEvidenceReview: React.FC<StumpingEvidenceReviewProps> = ({
         ctxA.clearRect(0, 0, W, H);
         ctxA.save();
         ctxA.translate(W / 2, H / 2);
-        ctxA.scale(3.0, 3.0);
-        ctxA.translate(-224, -195);
+        ctxA.scale(KEEPER_WICKET_FRAMING.zoom, KEEPER_WICKET_FRAMING.zoom);
+        ctxA.translate(-KEEPER_WICKET_FRAMING.targetX, -KEEPER_WICKET_FRAMING.targetY);
         renderCanonicalStumpingScene(ctxA, W, H, stumping, currentTimeMs);
         ctxA.restore();
       }
@@ -268,13 +216,13 @@ export const StumpingEvidenceReview: React.FC<StumpingEvidenceReviewProps> = ({
         ctxB.clearRect(0, 0, W, H);
         ctxB.save();
         ctxB.translate(W / 2, H / 2);
-        ctxB.scale(activeFraming.zoom, activeFraming.zoom);
-        ctxB.translate(-activeFraming.targetX, -activeFraming.targetY);
+        ctxB.scale(TIGHT_CREASE_FRAMING.zoom, TIGHT_CREASE_FRAMING.zoom);
+        ctxB.translate(-TIGHT_CREASE_FRAMING.targetX, -TIGHT_CREASE_FRAMING.targetY);
         renderCanonicalStumpingScene(ctxB, W, H, stumping, currentTimeMs);
         ctxB.restore();
       }
     }
-  }, [stumping, currentTimeMs, activeFraming]);
+  }, [stumping, currentTimeMs]);
 
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-1.5 select-none font-mono text-slate-200">
