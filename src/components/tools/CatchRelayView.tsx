@@ -248,9 +248,9 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
   })();
 
   return (
-    <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
+    <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-1.5 select-none font-mono text-slate-200">
       {/* Top Header */}
-      <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
+      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
         <div className="flex items-center space-x-2.5">
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
           <span className="text-xs font-bold tracking-wider text-slate-100 font-display">
@@ -267,7 +267,7 @@ export const CatchRelayView: React.FC<CatchRelayViewProps> = ({
       </div>
 
       {/* Main Canvas Viewport */}
-      <div className="relative flex-1 min-h-0 mt-2 bg-gradient-to-b from-[#0e1a24] via-[#09121a] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
+      <div className="relative flex-1 min-h-0 mt-1 bg-gradient-to-b from-[#0e1a24] via-[#09121a] to-[#040810] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
 
         <canvas

@@ -70,6 +70,21 @@ export interface RunOutData {
   keeperOrBowler: string;
 }
 
+export interface StumpingData {
+  bailsDislodgedFrameMs: number; // ms from start when keeper breaks wicket
+  groundedFrameMs: number; // ms when batter's rear foot/toe grounds behind crease line
+  marginMs: number; // groundedFrameMs - bailsDislodgedFrameMs (negative = safe, positive = out)
+  creaseMarginMm: number; // distance from popping crease at instant of dislodgement (+ inside/behind, - short/out)
+  footGrounded: boolean; // whether rear foot is grounded at wicket break
+  heelRaised: boolean; // whether rear heel is raised
+  toeAirborneAtBreak: boolean; // whether rear toe is in the air when bails break
+  ballArrivalMs: number; // delivery arrives at keeper gloves (~1040ms)
+  keeperGatherMs: number; // keeper secures ball (~1160ms)
+  keeperWhipMs: number; // keeper begins whipping into stumps (~1350ms)
+  batterStanceCreaseX: number; // canvas stance anchor
+  keeperOrBowler: string; // "Wicketkeeper"
+}
+
 export interface CaughtBehindData {
   hasEdge: boolean;
   waveformSpikeTimeMs: number | null;
@@ -170,10 +185,18 @@ export interface BoundaryInitialEvidence {
   visualAmbiguityScore: number;
 }
 
+export interface StumpingInitialEvidence {
+  visualClearanceMm: number;
+  apparentBailIgnitionTiming: "BEFORE_GROUNDING" | "AFTER_GROUNDING" | "SIMULTANEOUS_CRITICAL";
+  cameraOcclusionLevel: "CLEAR_VIEW" | "BATTER_PAD_OCCLUDING" | "KEEPER_GLOVES_OCCLUDING";
+  visualAmbiguityScore: number;
+}
+
 export interface ScenarioInitialEvidence {
   lbw?: LBWInitialEvidence;
   caughtBehind?: CaughtBehindInitialEvidence;
   runOut?: RunOutInitialEvidence;
+  stumping?: StumpingInitialEvidence;
   boundary?: BoundaryInitialEvidence;
   broadcastCameraDescription: string;
   onFieldUmpireViewpoint: string;
@@ -185,6 +208,7 @@ export interface Scenario {
   matchContext: MatchContext;
   lbw?: LBWData;
   runOut?: RunOutData;
+  stumping?: StumpingData;
   caughtBehind?: CaughtBehindData;
   boundary?: BoundaryData;
   initialEvidence?: ScenarioInitialEvidence;

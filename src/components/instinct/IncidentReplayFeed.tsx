@@ -38,6 +38,7 @@ import {
   solveBoundaryReplayState,
   resolveBoundaryArchetype,
 } from "../../engine/boundaryPhysics";
+import { solveStumpingReplayState } from "../../engine/stumpingPhysics";
 
 interface IncidentReplayFeedProps {
   scenario: Scenario;
@@ -729,8 +730,8 @@ function renderStumpingBroadcast(
   scenario: Scenario,
   canonicalTimeMs: number
 ) {
-  const ro = scenario.runOut;
-  const state = ro ? solveRunOutReplayState(ro, canonicalTimeMs) : null;
+  const st = scenario.stumping;
+  const state = st ? solveStumpingReplayState(st, canonicalTimeMs) : null;
 
   // --- 1. Outfield Grass ---
   const gradGrass = ctx.createLinearGradient(0, 0, 0, h);
@@ -802,24 +803,26 @@ function renderStumpingBroadcast(
     keeperK
   );
 
-  // --- 6. Batter Advance & Back-Foot Drag ---
-  const marginPx = state ? Math.round(state.bat.marginFromCreaseMm * 0.45) : (ro ? Math.round(ro.creaseMarginMm * 0.45) : 0);
+  // --- 6. Batter Stationary Stance & Rear-Leg Pendulum Kinematics ---
+  const marginPx = state
+    ? (state.batter.isGrounded ? -10 : 10)
+    : (st ? (st.marginMs > 0 ? 10 : -10) : 0);
   const stumpingResult = solveStumpingBatterKinematics(p, creaseX, marginPx);
 
   drawArticulatedBatter(
     ctx,
-    { x: stumpingResult.batterX, y: stumpsBaseY + 8, scale: 1.15, facing: "LEFT" },
+    { x: stumpingResult.batterX, y: stumpsBaseY + 8, scale: 1.15, facing: "RIGHT" },
     stumpingResult.batterK
   );
 
-  // --- 7. Ball Flight Past Bat to Wicketkeeper ---
+  // --- 7. Ball Flight Past Bat to Wicketkeeper & Break of Wicket ---
   const ballInFlight = state ? state.ball.isInFlight : p < 0.52;
   if (ballInFlight) {
-    const t = state ? state.ball.throwProgress : p / 0.52;
+    const t = state ? state.ball.flightProgress : p / 0.52;
     const originX = w * 0.88;
     const originY = h * 0.32;
-    const targetX = stumpsX + 16;
-    const targetY = stumpsBaseY - 20;
+    const targetX = stumpsX - 22 + keeperK.gloveX * 1.15;
+    const targetY = stumpsBaseY + 4 + keeperK.gloveY * 1.15;
 
     const bX = originX + (targetX - originX) * t;
     const bY = originY + (targetY - originY) * t;
@@ -832,6 +835,15 @@ function renderStumpingBroadcast(
       motionTrail: t > 0.15,
       prevX: prevBX,
       prevY: prevBY,
+    });
+  } else {
+    // Ball secured in keeper's gloves throughout stump break and appeal
+    const gloveBallX = stumpsX - 22 + keeperK.gloveX * 1.15;
+    const gloveBallY = stumpsBaseY + 4 + keeperK.gloveY * 1.15;
+    drawCricketBall(ctx, gloveBallX, gloveBallY, {
+      radius: 4.5,
+      seamAngleRad: 0.2,
+      motionTrail: false,
     });
   }
 }

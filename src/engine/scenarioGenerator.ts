@@ -5,6 +5,7 @@ import type {
   Scenario,
   LBWData,
   RunOutData,
+  StumpingData,
   CaughtBehindData,
   BoundaryData,
   BoundaryArchetype,
@@ -17,11 +18,13 @@ import type {
   LBWInitialEvidence,
   CaughtBehindInitialEvidence,
   RunOutInitialEvidence,
+  StumpingInitialEvidence,
   BoundaryInitialEvidence,
 } from "../types/scenario";
 import {
   evaluateDRSLBW,
   evaluateRunOut,
+  evaluateStumping,
   evaluateCaughtBehind,
   evaluateBoundary,
 } from "./drsRules";
@@ -164,11 +167,13 @@ export function generateScenario(
 
   let lbwData: LBWData | undefined;
   let runOutData: RunOutData | undefined;
+  let stumpingData: StumpingData | undefined;
   let caughtBehindData: CaughtBehindData | undefined;
   let boundaryData: BoundaryData | undefined;
 
   let lbwEvidence: LBWInitialEvidence | undefined;
   let runOutEvidence: RunOutInitialEvidence | undefined;
+  let stumpingEvidence: StumpingInitialEvidence | undefined;
   let caughtBehindEvidence: CaughtBehindInitialEvidence | undefined;
   let boundaryEvidence: BoundaryInitialEvidence | undefined;
 
@@ -372,7 +377,7 @@ export function generateScenario(
 
     incidentTitle = `LBW Review — ${bowlerObj.name} to ${batterObj.name}`;
     description = `Appeal for LBW against ${batterObj.name} off the bowling of ${bowlerObj.name} (${ballSpeedKph} km/h). Review initiated.`;
-  } else if (incidentType === "RUN_OUT" || incidentType === "STUMPING") {
+  } else if (incidentType === "RUN_OUT") {
     let marginMs = 0;
     let batBounced = false;
     let batGrounded = true;
@@ -414,7 +419,7 @@ export function generateScenario(
       diveType,
       creaseMarginMm,
       fielderThrow: `${bowlerObj.name} direct hit from mid-on`,
-      keeperOrBowler: incidentType === "STUMPING" ? "Wicketkeeper" : "Bowler's End",
+      keeperOrBowler: "Bowler's End",
     };
 
     // Phase 1 Initial Evidence Synthesis
@@ -428,8 +433,55 @@ export function generateScenario(
       visualAmbiguityScore: difficultyTier === "CLEAR" ? 0.15 : difficultyTier === "MARGINAL" ? 0.88 : 0.40,
     };
 
-    incidentTitle = `${incidentType === "STUMPING" ? "Stumping" : "Run-Out"} Referral — ${batterObj.name}`;
-    description = `${incidentType === "STUMPING" ? "Stumping appeal against" : "Close run-out appeal involving"} ${batterObj.name} at the striker's end. Referred to TV umpire.`;
+    incidentTitle = `Run-Out Referral — ${batterObj.name}`;
+    description = `Close run-out appeal involving ${batterObj.name} at the striker's end. Referred to TV umpire.`;
+  } else if (incidentType === "STUMPING") {
+    let marginMs = 0;
+
+    if (difficultyTier === "CLEAR") {
+      const isOut = rng.boolean(0.5);
+      marginMs = isOut ? rng.rangeInt(50, 100) : rng.rangeInt(-100, -50);
+      onFieldSignal = "REFERRED";
+    } else if (difficultyTier === "MARGINAL") {
+      // Enforce minimum 6 frames (>= 12ms at 500 FPS, using [18, 45]ms)
+      marginMs = rng.boolean(0.5) ? rng.rangeInt(18, 45) : rng.rangeInt(-45, -18);
+      onFieldSignal = "REFERRED";
+    } else {
+      marginMs = rng.boolean(0.5) ? rng.rangeInt(40, 80) : rng.rangeInt(-80, -40);
+      onFieldSignal = marginMs > 0 ? "NOT_OUT" : "OUT";
+    }
+
+    const bailsDislodgedFrameMs = 1500;
+    const groundedFrameMs = bailsDislodgedFrameMs + marginMs;
+    // creaseMarginMm: positive when rear foot grounded safely behind crease, negative when in front/outside
+    const creaseMarginMm = Math.round(marginMs * -4.2);
+    const toeAirborneAtBreak = marginMs > 0;
+    const footGrounded = !toeAirborneAtBreak;
+
+    stumpingData = {
+      bailsDislodgedFrameMs,
+      groundedFrameMs,
+      marginMs,
+      creaseMarginMm,
+      footGrounded,
+      heelRaised: true,
+      toeAirborneAtBreak,
+      ballArrivalMs: 1040,
+      keeperGatherMs: 1160,
+      keeperWhipMs: 1350,
+      batterStanceCreaseX: 300,
+      keeperOrBowler: "Wicketkeeper",
+    };
+
+    stumpingEvidence = {
+      visualClearanceMm: Math.abs(creaseMarginMm),
+      apparentBailIgnitionTiming: marginMs > 30 ? "BEFORE_GROUNDING" : marginMs < -30 ? "AFTER_GROUNDING" : "SIMULTANEOUS_CRITICAL",
+      cameraOcclusionLevel: difficultyTier === "MARGINAL" ? rng.pick(["BATTER_PAD_OCCLUDING", "KEEPER_GLOVES_OCCLUDING"]) : "CLEAR_VIEW",
+      visualAmbiguityScore: difficultyTier === "CLEAR" ? 0.15 : difficultyTier === "MARGINAL" ? 0.85 : 0.40,
+    };
+
+    incidentTitle = `Stumping Referral — ${batterObj.name}`;
+    description = `Stumping appeal against ${batterObj.name} at the striker's end. Referred to TV umpire.`;
   } else if (incidentType === "CAUGHT_BEHIND") {
     let hasEdge = false;
     let distractorNoise = false;
@@ -567,8 +619,10 @@ export function generateScenario(
     onFieldSignal
   );
 
-  if (incidentType === "RUN_OUT" || incidentType === "STUMPING") {
+  if (incidentType === "RUN_OUT") {
     drsEvaluation = evaluateRunOut(runOutData!, onFieldSignal);
+  } else if (incidentType === "STUMPING") {
+    drsEvaluation = evaluateStumping(stumpingData!, onFieldSignal);
   } else if (incidentType === "CAUGHT_BEHIND") {
     drsEvaluation = evaluateCaughtBehind(caughtBehindData!, onFieldSignal);
   } else if (incidentType === "BOUNDARY") {
@@ -586,8 +640,10 @@ export function generateScenario(
     commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Checking front-on broadcast view. Looking at the delivery stride and line of the ball." });
   } else if (incidentType === "CAUGHT_BEHIND") {
     commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Rolling the slip camera replay through the corridor of uncertainty." });
-  } else if (incidentType === "RUN_OUT" || incidentType === "STUMPING") {
+  } else if (incidentType === "RUN_OUT") {
     commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Bring up the side-on broadcast angle looking across the popping crease." });
+  } else if (incidentType === "STUMPING") {
+    commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Bring up the side-on camera at the striker's end. Let's check the wicketkeeper's gloves and the batter's rear foot." });
   } else if (incidentType === "BOUNDARY") {
     commsDialogue.push({ speaker: "TV_UMPIRE" as const, text: "Let's see the tracking camera around the boundary cushion area." });
   }
@@ -596,6 +652,7 @@ export function generateScenario(
     lbw: lbwEvidence,
     caughtBehind: caughtBehindEvidence,
     runOut: runOutEvidence,
+    stumping: stumpingEvidence,
     boundary: boundaryEvidence,
     broadcastCameraDescription: `Live broadcast tracking feed from primary review angle`,
     onFieldUmpireViewpoint: `On-field umpire standing in position at ${incidentType === "LBW" ? "bowler's end" : "square leg"}`,
@@ -607,6 +664,7 @@ export function generateScenario(
     matchContext,
     lbw: lbwData,
     runOut: runOutData,
+    stumping: stumpingData,
     caughtBehind: caughtBehindData,
     boundary: boundaryData,
     initialEvidence,

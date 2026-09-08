@@ -2,6 +2,8 @@ import React from "react";
 import type { MatchContext, DifficultyTier } from "../../types/scenario";
 import { Volume2, VolumeX } from "lucide-react";
 
+type PhaseIndicator = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
+
 interface MatchLogBarProps {
   matchContext: MatchContext;
   difficultyTier: DifficultyTier;
@@ -9,94 +11,116 @@ interface MatchLogBarProps {
   totalIncidents: number;
   isMuted: boolean;
   isBlinded?: boolean;
+  phase?: PhaseIndicator;
   onToggleMute: () => void;
 }
 
 export const MatchLogBar: React.FC<MatchLogBarProps> = ({
   matchContext,
-  difficultyTier,
+  difficultyTier: _difficultyTier,
   incidentIndex,
   totalIncidents,
   isMuted,
   isBlinded = false,
+  phase,
   onToggleMute,
 }) => {
   const displaySignal = isBlinded ? "REFERRED" : matchContext.onFieldSignal;
 
   return (
-    <header className="bg-console-900 border-b border-console-750 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 select-none font-mono">
-      {/* Left: Broadcast Brand & Incident Counter */}
+    <header className="broadcast-scorebug px-3 py-1.5 flex items-center justify-between gap-3 select-none text-neutral-200 font-sans overflow-hidden whitespace-nowrap bg-[#121213]">
+      {/* Left: TV Broadcast Identity & Case Progress */}
       <div className="flex items-center space-x-3">
-        <div className="flex items-center space-x-1.5 bg-console-950 px-2.5 py-1 rounded border border-console-800">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-xs font-black tracking-wider text-slate-100 font-display">
-            3RD UMPIRE ROOM
+        <div className="flex items-center space-x-2">
+          <span className="w-2 h-2 rounded-full bg-red-600 shrink-0" />
+          <span className="text-xs font-bold tracking-wider uppercase text-neutral-200">
+            3RD UMPIRE DRS
           </span>
-          <span className="text-[10px] text-cyan-400 font-bold bg-cyan-950/60 px-1.5 py-0.2 rounded border border-cyan-500/30">
-            DRS CONSOLE
-          </span>
-        </div>
-
-        {/* Incident Shift Counter */}
-        <div className="flex items-center space-x-1 text-xs text-slate-300">
-          <span className="text-slate-500 text-[11px]">INCIDENT:</span>
-          <span className="font-bold text-cyan-400 bg-console-850 px-2 py-0.5 rounded border border-console-750">
-            {incidentIndex + 1} / {totalIncidents}
+          <span className="text-[10px] font-mono uppercase text-neutral-400 tracking-wider">
+            LIVE
           </span>
         </div>
 
-        {/* Difficulty Badge */}
-        <div className="hidden sm:flex items-center">
-          <span
-            className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${
-              difficultyTier === "CLEAR"
-                ? "bg-emerald-950/50 text-emerald-400 border-emerald-600/40"
-                : difficultyTier === "MARGINAL"
-                ? "bg-amber-950/50 text-amber-400 border-amber-600/40"
-                : "bg-rose-950/50 text-rose-400 border-rose-600/40 animate-pulse"
-            }`}
-          >
-            {difficultyTier} TIER
+        <span className="text-neutral-700 select-none">•</span>
+
+        {/* Case Progress */}
+        <div className="flex items-center space-x-1.5 text-xs">
+          <span className="text-neutral-400 uppercase tracking-wider text-[11px]">CASE</span>
+          <span className="font-mono font-semibold text-neutral-200">
+            {incidentIndex + 1}/{totalIncidents}
           </span>
         </div>
+
+        {/* Phase Indicator */}
+        {phase && (
+          <>
+            <span className="text-neutral-700 select-none">•</span>
+            <div className="flex items-center space-x-1.5">
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  phase === "SOFT_SIGNAL"
+                    ? "bg-amber-400"
+                    : phase === "REVIEW"
+                    ? "bg-red-500"
+                    : "bg-emerald-400"
+                }`}
+              />
+              <span className="text-[11px] font-mono uppercase text-neutral-400">
+                {phase === "SOFT_SIGNAL" ? "PHASE 1" : phase === "REVIEW" ? "PHASE 2" : "PHASE 3"}
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Center: Live Match Context Scorecard */}
-      <div className="flex items-center space-x-3 text-xs bg-console-950/80 px-3 py-1 rounded border border-console-800">
-        <div className="flex items-center space-x-2">
-          <span className="font-bold text-slate-200">{matchContext.battingTeam}</span>
-          <span className="text-cyan-400 font-black text-sm">{matchContext.battingTeamScore}</span>
-          <span className="text-slate-400 text-[11px]">({matchContext.over}.{matchContext.ballInOver} ov)</span>
-        </div>
-
-        <span className="text-slate-600">|</span>
-
-        {/* Batter & Bowler */}
-        <div className="hidden md:flex items-center space-x-3 text-[11px]">
-          <div>
-            <span className="text-slate-500">BAT: </span>
-            <span className="text-slate-200 font-medium">{matchContext.batter}</span>
-            <span className="text-cyan-400 font-bold ml-1">[{matchContext.batterScore}]</span>
-          </div>
-          <div>
-            <span className="text-slate-500">BOWL: </span>
-            <span className="text-slate-200 font-medium">{matchContext.bowler}</span>
-            <span className="text-amber-400 font-bold ml-1">[{matchContext.bowlerFigures}]</span>
-          </div>
-        </div>
-
-        <span className="text-slate-600">|</span>
-
-        {/* On-Field Signal */}
+      {/* Center: Clean Typographical Scorebug Strip */}
+      <div className="flex items-center space-x-3 text-xs text-neutral-300">
+        {/* Team Score */}
         <div className="flex items-center space-x-1.5">
-          <span className="text-slate-500 text-[10px]">ON-FIELD:</span>
+          <span className="font-bold tracking-wide uppercase text-white">
+            {matchContext.battingTeam}
+          </span>
+          <span className="text-white font-bold font-mono tabular-nums">
+            {matchContext.battingTeamScore}
+          </span>
+          <span className="text-neutral-400 text-[11px] font-mono">
+            ({matchContext.over}.{matchContext.ballInOver} ov)
+          </span>
+        </div>
+
+        <span className="text-neutral-700 select-none">•</span>
+
+        {/* Batter & Bowler Figures */}
+        <div className="hidden md:flex items-center space-x-3 text-[11px]">
+          <div className="flex items-center space-x-1.5">
+            <span className="text-neutral-400 font-medium">BAT:</span>
+            <span className="text-neutral-200 font-semibold">{matchContext.batter}</span>
+            <span className="text-neutral-300 font-mono">
+              {matchContext.batterScore}
+            </span>
+          </div>
+          <span className="text-neutral-700 select-none">•</span>
+          <div className="flex items-center space-x-1.5">
+            <span className="text-neutral-400 font-medium">BOWL:</span>
+            <span className="text-neutral-200 font-semibold">{matchContext.bowler}</span>
+            <span className="text-neutral-300 font-mono">
+              {matchContext.bowlerFigures}
+            </span>
+          </div>
+        </div>
+
+        <span className="text-neutral-700 select-none">•</span>
+
+        {/* Original On-Field Signal */}
+        <div className="flex items-center space-x-1.5">
+          <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-wider">ON-FIELD:</span>
           <span
-            className={`font-bold px-2 py-0.5 rounded text-[11px] border ${
+            className={`font-bold px-1.5 py-0.5 rounded-sm text-[10.5px] font-mono tracking-wider border ${
               displaySignal === "OUT"
-                ? "bg-rose-950/80 border-rose-500/80 text-rose-300"
+                ? "bg-red-950/60 border-red-700/60 text-red-300"
                 : displaySignal === "NOT_OUT"
-                ? "bg-emerald-950/80 border-emerald-500/80 text-emerald-300"
-                : "bg-amber-950/80 border-amber-500/80 text-amber-300"
+                ? "bg-emerald-950/60 border-emerald-700/60 text-emerald-300"
+                : "bg-amber-950/60 border-amber-700/60 text-amber-300"
             }`}
           >
             {displaySignal}
@@ -104,21 +128,22 @@ export const MatchLogBar: React.FC<MatchLogBarProps> = ({
         </div>
       </div>
 
-      {/* Right: Audio Control & Tournament Tag */}
-      <div className="flex items-center space-x-2">
+      {/* Right: Venue Tag & Audio Control */}
+      <div className="flex items-center space-x-3">
         <div className="hidden lg:block text-right">
-          <div className="text-[10px] text-slate-400 truncate max-w-[200px]">
+          <div className="text-[11px] text-neutral-400 truncate max-w-[220px]">
             {matchContext.tournament}
           </div>
         </div>
 
-        {/* Mute SFX button */}
+        {/* Audio Mute Button */}
         <button
+          type="button"
           onClick={onToggleMute}
-          className="p-1.5 rounded bg-console-850 hover:bg-console-750 text-slate-300 border border-console-750 transition-colors"
-          title={isMuted ? "Unmute sound effects" : "Mute sound effects"}
+          className="p-1 rounded-sm bg-[#1a1a1b] hover:bg-[#27272a] text-neutral-300 border border-[#27272a] transition-colors cursor-pointer"
+          title={isMuted ? "Unmute audio" : "Mute audio"}
         >
-          {isMuted ? <VolumeX size={14} className="text-rose-400" /> : <Volume2 size={14} className="text-emerald-400" />}
+          {isMuted ? <VolumeX size={13} className="text-red-400" /> : <Volume2 size={13} className="text-neutral-300" />}
         </button>
       </div>
     </header>

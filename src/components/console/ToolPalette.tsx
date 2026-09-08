@@ -7,9 +7,6 @@ import {
   Layers,
   ZoomIn,
   Flame,
-  Sliders,
-  Tv,
-  Video,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
@@ -36,30 +33,32 @@ export const ToolPalette: React.FC<ToolPaletteProps> = ({
     switch (incidentType) {
       case "LBW":
         return [
-          { id: "BROADCAST_FRONT", camCode: "CAM 01", label: "Impact Replay", icon: <Camera size={14} /> },
-          { id: "PITCH_MAP", camCode: "CAM 03", label: "Hawk-Eye 3D", icon: <Crosshair size={14} />, badge: "PITCH MAP" },
+          { id: "BROADCAST_FRONT", camCode: "CAM 01", label: "Impact Replay", icon: <Camera size={13} /> },
+          { id: "PITCH_MAP", camCode: "CAM 03", label: "Hawk-Eye 3D", icon: <Crosshair size={13} /> },
         ];
       case "RUN_OUT":
+        return [
+          { id: "CREASE_ZOOM", camCode: "CAM 02", label: "Crease 500fps", icon: <ZoomIn size={13} /> },
+          { id: "SIDE_ON_POP", camCode: "CAM 01", label: "Side-On Wide", icon: <Camera size={13} /> },
+          { id: "OVERHEAD", camCode: "CAM 07", label: "Overhead", icon: <Layers size={13} /> },
+        ];
       case "STUMPING":
         return [
-          { id: "CREASE_ZOOM", camCode: "CAM 02", label: "Crease 500fps", icon: <ZoomIn size={14} />, badge: "ZING BAIL" },
-          { id: "SIDE_ON_POP", camCode: "CAM 01", label: "Side-On Wide", icon: <Camera size={14} /> },
-          { id: "OVERHEAD", camCode: "CAM 07", label: "Overhead Crease", icon: <Layers size={14} /> },
-          { id: "STUMP_CAM", camCode: "CAM 10", label: "Stump Cam", icon: <Video size={14} />, badge: "LOW ANGLE" },
+          { id: "CREASE_ZOOM", camCode: "CAM 02", label: "Crease 500fps", icon: <ZoomIn size={13} /> },
+          { id: "SIDE_ON_POP", camCode: "CAM 01", label: "Side-On Keeper", icon: <Camera size={13} /> },
         ];
       case "CAUGHT_BEHIND":
         return [
-          { id: "ULTRAEDGE", camCode: "CAM 04", label: "UltraEdge Wave", icon: <Activity size={14} />, badge: "MIC SNICKO" },
-          { id: "HOTSPOT", camCode: "CAM 08", label: "HotSpot IR", icon: <Flame size={14} />, badge: "THERMAL" },
-          { id: "SUPER_SLOW", camCode: "CAM 02", label: "Super Slow-Mo", icon: <Camera size={14} /> },
+          { id: "BROADCAST_SLIP", camCode: "CAM 01", label: "Slip Cam", icon: <Camera size={13} /> },
+          { id: "ULTRAEDGE", camCode: "CAM 04", label: "UltraEdge", icon: <Activity size={13} /> },
         ];
       case "BOUNDARY":
         return [
-          { id: "BOUNDARY_ZOOM", camCode: "CAM 05", label: "Rope Cushion", icon: <ZoomIn size={14} />, badge: "4K ROPE" },
-          { id: "RELAY_CAM", camCode: "CAM 09", label: "Catch Relay Cam", icon: <Camera size={14} /> },
+          { id: "BOUNDARY_ZOOM", camCode: "CAM 05", label: "Rope Cushion", icon: <ZoomIn size={13} /> },
+          { id: "RELAY_CAM", camCode: "CAM 09", label: "Catch Relay", icon: <Camera size={13} /> },
         ];
       default:
-        return [{ id: "DEFAULT", camCode: "CAM 01", label: "Replay Vision", icon: <Camera size={14} /> }];
+        return [{ id: "DEFAULT", camCode: "CAM 01", label: "Replay", icon: <Camera size={13} /> }];
     }
   };
 
@@ -71,59 +70,27 @@ export const ToolPalette: React.FC<ToolPaletteProps> = ({
   };
 
   return (
-    <div className="hardware-panel rounded-xl p-3 font-mono select-none flex flex-col gap-2.5 shadow-lg">
-      <div className="flex items-center justify-between text-xs text-slate-400 border-b border-console-800 pb-2">
-        <span className="flex items-center gap-1.5 font-bold text-slate-200">
-          <Sliders size={13} className="text-cyan-400" />
-          CAMERA MATRIX
-        </span>
-        <span className="text-[10px] bg-console-950 px-2 py-0.5 rounded border border-console-800 text-slate-400">
-          {incidentType} FEEDS
-        </span>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        {tools.map((tool) => {
-          const isActive = activeTool === tool.id;
-          return (
-            <button
-              key={tool.id}
-              onClick={() => handleToolClick(tool.id)}
-              className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all border shadow-sm active:scale-98 ${
-                isActive
-                  ? "bg-gradient-to-r from-cyan-950 to-console-900 border-cyan-500/80 text-cyan-200 shadow-cyan-500/20 font-bold ring-1 ring-cyan-500/40"
-                  : "tactical-btn text-slate-300 hover:text-white"
-              }`}
-            >
-              <div className="flex items-center space-x-2.5">
-                <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${
-                  isActive ? "bg-cyan-500 text-slate-950 border-cyan-400" : "bg-console-950 text-slate-400 border-console-800"
-                }`}>
-                  {tool.camCode}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className={isActive ? "text-cyan-400" : "text-slate-400"}>
-                    {tool.icon}
-                  </span>
-                  <span>{tool.label}</span>
-                </span>
-              </div>
-
-              {tool.badge && (
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
-                    isActive
-                      ? "bg-cyan-400/20 text-cyan-300 border border-cyan-500/40"
-                      : "bg-console-950 text-slate-500 border border-console-800"
-                  }`}
-                >
-                  {tool.badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+    <div className="flex flex-wrap gap-1.5 select-none font-sans">
+      {tools.map((tool) => {
+        const isActive = activeTool === tool.id;
+        return (
+          <button
+            key={tool.id}
+            type="button"
+            onClick={() => handleToolClick(tool.id)}
+            title={`${tool.camCode} \u2014 ${tool.label}`}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] transition-all border cursor-pointer active:scale-95 ${
+              isActive
+                ? "bg-[#182232] border-slate-500/70 text-white font-bold shadow-sm"
+                : "bg-[#111722] hover:bg-[#182130] border-[#1E293B] text-slate-400 hover:text-white hover:border-[#2D3D58]"
+            }`}
+          >
+            {isActive && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
+            <span className={isActive ? "text-slate-200" : "text-slate-500"}>{tool.icon}</span>
+            <span className="font-semibold">{tool.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 };

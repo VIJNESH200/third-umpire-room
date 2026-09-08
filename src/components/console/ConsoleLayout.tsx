@@ -7,14 +7,14 @@ import type {
 import { MatchLogBar } from "./MatchLogBar";
 import { ReplayViewport } from "./ReplayViewport";
 import { ScrubBar, KeyframeMarker } from "./ScrubBar";
-import { ToolPalette } from "./ToolPalette";
+import { CameraSwitcherAngles } from "./CameraSwitcherAngles";
 import { SoftSignalBar } from "./SoftSignalBar";
 import { VerdictPanel } from "./VerdictPanel";
 import { ResultReveal } from "./ResultReveal";
 import { IncidentReplayFeed } from "../instinct/IncidentReplayFeed";
 import { sounds } from "../../engine/audioSynth";
 import { isTextEntryTarget, resolveReplayShortcut } from "../../engine/replayKeyboard";
-import { Tv, Radio, Crosshair, Clock } from "lucide-react";
+import { Radio, Crosshair, ChevronDown, ChevronUp, Zap } from "lucide-react";
 
 export type ConsolePhase = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
 
@@ -97,7 +97,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isRockAndRoll, setIsRockAndRoll] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(0.5);
-  const [scanlinesEnabled, setScanlinesEnabled] = useState<boolean>(true);
+  const [scanlinesEnabled] = useState<boolean>(true);
   // Mirror of the last committed canonical time. Used to re-assert a known-good
   // timestamp whenever the transport halts (see pauseTransport below).
   const currentTimeMsRef = useRef<number>(1200);
@@ -107,8 +107,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
   // Derive logical frame rate from active camera feed
   const getActiveCameraFps = (tool: string): number => {
-    if (tool === "CREASE_ZOOM" || tool === "STUMP_CAM") return 500; // 500 FPS High Speed Camera (1 frame = 2ms)
-    if (tool === "SUPER_SLOW_MO") return 1000; // 1000 FPS Ultra Motion (1 frame = 1ms)
+    if (scenario.incidentType === "STUMPING") return 500; // 500 FPS Virtual High Speed Forensic Suite (1 frame = 2ms)
+    if (tool === "CREASE_ZOOM" || tool === "HOTSPOT") return 500; // 500 FPS High Speed Camera (1 frame = 2ms)
     if (tool === "BOUNDARY_ZOOM") return 120; // 120 FPS High Speed (1 frame = 8.33ms)
     return 50; // Standard 50 FPS broadcast (1 frame = 20ms)
   };
@@ -154,6 +154,9 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
 
   // Determine key focal event timestamp for Rock & Roll shuttle looping
   const getFocalEventTimeMs = (): number => {
+    if (scenario.incidentType === "STUMPING" && scenario.stumping) {
+      return scenario.stumping.bailsDislodgedFrameMs;
+    }
     if (scenario.incidentType === "RUN_OUT" && scenario.runOut) {
       return scenario.runOut.bailsDislodgedFrameMs;
     }
@@ -393,16 +396,11 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
       return markers;
     }
     if (scenario.incidentType === "CAUGHT_BEHIND" && scenario.caughtBehind) {
-      const markers: KeyframeMarker[] = [
-        { label: "Ball Passing Bat", timeMs: scenario.caughtBehind.ballPassesBatFrameMs, color: "#00E5FF" },
+      const transitMs = scenario.caughtBehind.ballPassesBatFrameMs;
+      const frameNum = Math.round((transitMs / 1000) * currentFps);
+      return [
+        { label: `Bat-Plane Transit (F${frameNum})`, timeMs: transitMs, color: "#38BDF8" },
       ];
-      if (scenario.caughtBehind.waveformSpikeTimeMs) {
-        markers.push({ label: "UltraEdge Spike", timeMs: scenario.caughtBehind.waveformSpikeTimeMs, color: "#EC4899" });
-      }
-      if (scenario.caughtBehind.distractorTimeMs) {
-        markers.push({ label: "Pad Sound", timeMs: scenario.caughtBehind.distractorTimeMs, color: "#F59E0B" });
-      }
-      return markers;
     }
     if (scenario.incidentType === "BOUNDARY" && scenario.boundary) {
       return [
@@ -413,22 +411,12 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     return [];
   };
 
-  const getIncidentLabel = () => {
-    switch (scenario.incidentType) {
-      case "LBW": return "LBW APPEAL";
-      case "RUN_OUT": return "RUN OUT REFERRAL";
-      case "STUMPING": return "STUMPING REFERRAL";
-      case "CAUGHT_BEHIND": return "CAUGHT BEHIND APPEAL";
-      case "BOUNDARY": return "BOUNDARY CHECK";
-      default: return "REVIEW";
-    }
-  };
 
   return (
-    <div className="relative flex flex-col h-screen w-screen bg-[#05070B] text-slate-100 overflow-hidden font-mono select-none console-chassis">
+    <div className="relative flex flex-col min-h-screen lg:h-screen w-screen bg-[#121213] text-neutral-200 overflow-y-auto lg:overflow-hidden font-sans select-none console-chassis">
       {/* Optional CRT Scanline Overlay */}
       {scanlinesEnabled && (
-        <div className="pointer-events-none absolute inset-0 z-50 scanlines-overlay opacity-25 mix-blend-overlay" />
+        <div className="pointer-events-none absolute inset-0 z-50 scanlines-overlay opacity-20 mix-blend-overlay" />
       )}
 
       {/* Top Match Log Bar (Blinded during Phase 1) */}
@@ -439,115 +427,97 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
         totalIncidents={totalIncidents}
         isMuted={isMuted}
         isBlinded={phase === "SOFT_SIGNAL"}
+        phase={phase}
         onToggleMute={onToggleMute}
       />
 
-      {/* Physical Workstation Tally Strip */}
-      <div className="hardware-panel border-b border-slate-800/80 px-4 py-2 flex items-center justify-between text-xs text-slate-400 shrink-0">
-        <div className="flex items-center space-x-3">
-          {/* Hex Bolt */}
-          <div className="hex-screw" />
-
-          {/* Active Broadcast Tally Lamp */}
-          <div className="flex items-center space-x-2 bg-slate-950/80 px-2.5 py-1 rounded border border-slate-800">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                phase === "SOFT_SIGNAL"
-                  ? "tally-lamp-amber animate-ping"
-                  : phase === "REVIEW"
-                  ? "tally-lamp-red animate-pulse"
-                  : "tally-lamp-green"
-              }`}
-            />
-            <span className="font-bold text-[11px] text-slate-200 tracking-wider font-display">
-              {phase === "SOFT_SIGNAL"
-                ? "PHASE 1: INITIAL REVIEW"
-                : phase === "REVIEW"
-                ? "PHASE 2: ON-AIR REVIEW ACTIVE"
-                : "PHASE 3: VERDICT TRANSMITTED"}
-            </span>
+      {/* Main Review Room Workstation Console */}
+      {phase === "SOFT_SIGNAL" ? (
+        /* PHASE 1: Full-width cinematic broadcast experience */
+        <div className="flex-1 flex flex-col gap-2.5 p-3 overflow-y-auto min-h-0">
+          <div className="flex-1 min-h-[280px]">
+            <IncidentReplayFeed scenario={scenario} />
           </div>
-
-          <span className="text-slate-600">|</span>
-
-          <span className="text-slate-300 font-bold truncate max-w-[320px] sm:max-w-lg">
-            {scenario.incidentTitle}
-          </span>
+          <SoftSignalBar
+            timeLimitSeconds={15}
+            onDecision={onSoftSignalSubmit}
+          />
         </div>
-
-        {/* Workstation CRT & Lighting Tools */}
-        <div className="flex items-center space-x-2.5">
-          <button
-            onClick={() => setScanlinesEnabled(!scanlinesEnabled)}
-            className={`tactical-btn px-2.5 py-1 rounded text-[10px] font-bold flex items-center gap-1.5 transition-colors ${
-              scanlinesEnabled
-                ? "bg-cyan-950/60 border-cyan-500/60 text-cyan-300"
-                : "text-slate-500"
-            }`}
-          >
-            <Tv size={11} />
-            <span>CRT SCANLINES</span>
-          </button>
-
-          {/* Hex Bolt */}
-          <div className="hex-screw" />
-        </div>
-      </div>
-
-      {/* Main Review Room Workstation Console (Split View) */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 p-3 overflow-y-auto min-h-0">
-        {/* Left Column (8 Cols): Replay Viewport / Soft Signal / Result */}
-        <div className="lg:col-span-8 flex flex-col gap-2.5 min-h-0">
-          {phase === "SOFT_SIGNAL" ? (
-            /* PHASE 1: INSTINCT / INITIAL REVIEW */
-            <div className="flex flex-col flex-1 gap-3 min-h-0">
-              <div className="flex-1 min-h-[280px]">
-                <IncidentReplayFeed scenario={scenario} />
-              </div>
-              <SoftSignalBar
-                timeLimitSeconds={15}
-                onDecision={onSoftSignalSubmit}
+      ) : phase === "REVIEW" ? (
+        /* PHASE 2: Full-Width Stacked Forensic Workstation */
+        <div className="flex-1 flex flex-col gap-1.5 p-2 overflow-hidden min-h-0">
+          {/* Top Unit: Dominant Forensic Viewport + Transport Chassis */}
+          <div className="flex-1 flex flex-col min-h-0 rounded-sm overflow-hidden border border-[#27272a] bg-black">
+            {/* Dynamic Camera Feed Viewport */}
+            <div className="flex-1 min-h-0 relative">
+              <ReplayViewport
+                scenario={scenario}
+                activeTool={activeTool}
+                currentTimeMs={currentTimeMs}
+                onTimeChange={handleTimeChange}
+                onStageChange={handleStageChange}
+                trainingMode={trainingMode}
               />
             </div>
-          ) : phase === "REVIEW" ? (
-            /* PHASE 2: FORENSIC REVIEW */
-            <div className="flex flex-col flex-1 gap-2.5 min-h-0">
-              {/* Dynamic Camera Feed Viewport */}
-              <div className="flex-1 min-h-[280px]">
-                <ReplayViewport
-                  scenario={scenario}
-                  activeTool={activeTool}
+
+            {/* Seamless Lower Transport Chassis (Active for video replay feeds; hidden for Hawk-Eye 3D) */}
+            {activeTool !== "PITCH_MAP" && (
+              <div className="shrink-0 border-t border-[#27272a] bg-[#121213]">
+                <ScrubBar
                   currentTimeMs={currentTimeMs}
+                  minTimeMs={minTimeMs}
+                  maxTimeMs={maxTimeMs}
+                  isPlaying={isPlaying}
+                  isRockAndRoll={isRockAndRoll}
+                  playbackSpeed={playbackSpeed}
                   onTimeChange={handleTimeChange}
-                  onStageChange={handleStageChange}
-                  trainingMode={trainingMode}
+                  onTogglePlay={togglePlay}
+                  onToggleRockAndRoll={toggleRockAndRoll}
+                  onSpeedChange={setPlaybackSpeed}
+                  onStep={handleStep}
+                  keyFrameMarkers={getKeyframeMarkers()}
+                  fps={currentFps}
+                  frameStepMs={frameStepMs}
                 />
               </div>
+            )}
+          </div>
 
-              {/* Forensic Timing Marker Deck (Player observations for Run-Out / Stumping) */}
-              {(scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") && (
-                <div className="hardware-panel p-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2.5 font-mono text-xs border border-slate-700/60 shadow-md">
-                  <div className="flex items-center gap-2">
-                    <Crosshair size={14} className="text-cyan-400" />
-                    <span className="text-[11px] font-bold text-slate-300 font-display">FORENSIC TIMING MARKERS</span>
-                  </div>
+          {/* Bottom Control Rack: Single unified surface divided by 1px vertical borders */}
+          <div className="bg-[#121213] border border-[#27272a] rounded-sm p-2 sm:p-2.5 grid grid-cols-1 lg:grid-cols-12 gap-2 lg:gap-0 lg:divide-x divide-[#27272a] shrink-0">
+            {/* Camera Switcher (5 cols) & Key Frames (3 cols) */}
+            <CameraSwitcherAngles
+              scenario={scenario}
+              activeTool={activeTool}
+              onSelectTool={handleToolSelect}
+              currentTimeMs={currentTimeMs}
+              onTimeChange={handleTimeChange}
+              fps={currentFps}
+              playerBatGroundedMs={playerBatGroundedMs}
+              playerBailsDislodgedMs={playerBailsDislodgedMs}
+              timingTelemetrySlot={
+                (scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") ? (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#27272a] text-xs font-sans">
+                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-[#1a1a1b] border border-[#27272a] text-[9px] font-bold text-neutral-400 uppercase font-mono shrink-0">
+                      <span>TIMING</span>
+                    </div>
 
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Mark Bat Grounded Button & Display */}
-                    <div className="flex items-center gap-1.5">
+                    {/* Mark Bat Grounded */}
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => {
                           setPlayerBatGroundedMs(currentTimeMs);
                           sounds.playClick(900);
                         }}
-                        className={`px-2.5 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 border ${
+                        className={`px-2 py-0.5 rounded-sm text-[10px] font-semibold uppercase tracking-tight transition-colors flex items-center gap-1 border cursor-pointer ${
                           playerBatGroundedMs !== null
-                            ? "bg-cyan-950/80 border-cyan-500 text-cyan-200"
-                            : "bg-slate-900 border-slate-700 hover:border-cyan-500 text-slate-300"
+                            ? "bg-emerald-950/50 border-emerald-500 text-emerald-300"
+                            : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] text-neutral-300"
                         }`}
                       >
-                        <span>MARK BAT GROUNDED</span>
+                        <Crosshair size={11} className={playerBatGroundedMs !== null ? "text-emerald-400" : "text-neutral-400"} />
+                        <span>{scenario.incidentType === "STUMPING" ? "BAT / FOOT GROUNDED" : "BAT GROUNDED"}</span>
                       </button>
                       {playerBatGroundedMs !== null ? (
                         <button
@@ -557,30 +527,33 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                             sounds.playClick(800);
                           }}
                           title="Click to jump to marked frame"
-                          className="text-[10px] text-cyan-300 bg-cyan-950/90 border border-cyan-500/50 px-2 py-1 rounded font-bold hover:underline"
+                          className="text-[10px] font-mono font-bold text-emerald-300 bg-emerald-950/60 border border-emerald-500/60 px-1 py-0.5 rounded-sm hover:underline cursor-pointer"
                         >
-                          FRAME {Math.round((playerBatGroundedMs / 1000) * currentFps)} ({playerBatGroundedMs}ms)
+                          F{Math.round((playerBatGroundedMs / 1000) * currentFps)}
                         </button>
                       ) : (
-                        <span className="text-[10px] text-slate-500 italic px-1">[NOT MARKED]</span>
+                        <span className="text-[9px] font-mono text-neutral-500 bg-[#161618] border border-[#27272a] px-1 py-0.5 rounded-sm">
+                          NOT SET
+                        </span>
                       )}
                     </div>
 
-                    {/* Mark Bails Dislodged Button & Display */}
-                    <div className="flex items-center gap-1.5">
+                    {/* Mark Bails Dislodged */}
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => {
                           setPlayerBailsDislodgedMs(currentTimeMs);
                           sounds.playClick(950);
                         }}
-                        className={`px-2.5 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 border ${
+                        className={`px-2 py-0.5 rounded-sm text-[10px] font-semibold uppercase tracking-tight transition-colors flex items-center gap-1 border cursor-pointer ${
                           playerBailsDislodgedMs !== null
-                            ? "bg-amber-950/80 border-amber-500 text-amber-200"
-                            : "bg-slate-900 border-slate-700 hover:border-amber-500 text-slate-300"
+                            ? "bg-amber-950/50 border-amber-500 text-amber-300"
+                            : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] text-neutral-300"
                         }`}
                       >
-                        <span>MARK BAILS DISLODGED</span>
+                        <Zap size={11} className={playerBailsDislodgedMs !== null ? "text-amber-400" : "text-neutral-400"} />
+                        <span>BAILS DISLODGED</span>
                       </button>
                       {playerBailsDislodgedMs !== null ? (
                         <button
@@ -590,39 +563,150 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                             sounds.playClick(800);
                           }}
                           title="Click to jump to marked frame"
-                          className="text-[10px] text-amber-300 bg-amber-950/90 border border-amber-500/50 px-2 py-1 rounded font-bold hover:underline"
+                          className="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-500/60 px-1 py-0.5 rounded-sm hover:underline cursor-pointer"
                         >
-                          FRAME {Math.round((playerBailsDislodgedMs / 1000) * currentFps)} ({playerBailsDislodgedMs}ms)
+                          F{Math.round((playerBailsDislodgedMs / 1000) * currentFps)}
                         </button>
                       ) : (
-                        <span className="text-[10px] text-slate-500 italic px-1">[NOT MARKED]</span>
+                        <span className="text-[9px] font-mono text-neutral-500 bg-[#161618] border border-[#27272a] px-1 py-0.5 rounded-sm">
+                          NOT SET
+                        </span>
                       )}
                     </div>
-                  </div>
-                </div>
-              )}
 
-              {/* Central Replay Transport Scrub Bar */}
-              <ScrubBar
-                currentTimeMs={currentTimeMs}
-                minTimeMs={minTimeMs}
-                maxTimeMs={maxTimeMs}
-                isPlaying={isPlaying}
-                isRockAndRoll={isRockAndRoll}
-                playbackSpeed={playbackSpeed}
-                onTimeChange={handleTimeChange}
-                onTogglePlay={togglePlay}
-                onToggleRockAndRoll={toggleRockAndRoll}
-                onSpeedChange={setPlaybackSpeed}
-                onStep={handleStep}
-                keyFrameMarkers={getKeyframeMarkers()}
-                fps={currentFps}
-                frameStepMs={frameStepMs}
+                    {/* Live Timing Delta Readout if both set */}
+                    {playerBatGroundedMs !== null && playerBailsDislodgedMs !== null && (
+                      <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-[#161618] border border-[#27272a] font-mono text-[10px] font-bold text-neutral-300 shrink-0">
+                        <span className="text-neutral-500">Δ</span>
+                        <span className={playerBatGroundedMs < playerBailsDislodgedMs ? "text-emerald-400" : "text-red-400"}>
+                          {Math.abs(Math.round(((playerBailsDislodgedMs - playerBatGroundedMs) / 1000) * currentFps))}F
+                        </span>
+                        <span className="text-neutral-500 text-[9px]">
+                          ({Math.abs(playerBailsDislodgedMs - playerBatGroundedMs)}ms)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            />
+
+            {/* Column 3: TV Umpire Decision Station */}
+            <div className="lg:col-span-4 flex flex-col justify-between pl-0 lg:pl-2.5 font-sans">
+              <VerdictPanel
+                incidentType={scenario.incidentType}
+                onFieldSignal={scenario.onFieldSignal}
+                playerBatGroundedMs={playerBatGroundedMs}
+                playerBailsDislodgedMs={playerBailsDislodgedMs}
+                onVerdictSubmit={onFinalVerdictSubmit}
+                trainingMode={trainingMode}
+                reviewChecklist={
+                  scenario.incidentType === "LBW"
+                    ? { replay: replayReviewed, trackStage: trackStageReached }
+                    : undefined
+                }
               />
             </div>
-          ) : (
-            /* PHASE 3: RESULT REVEAL */
-            currentResult && (
+          </div>
+
+          {/* Full-width Commentary Ticker */}
+          <div className="w-full shrink-0">
+            <CommsTickerWidget commsDialogue={scenario.commsDialogue} />
+          </div>
+        </div>
+      ) : (
+        /* PHASE 3: RESULT REVEAL (Editorial Broadcast Atmosphere) */
+        currentResult && (
+          <div className="flex-1 flex flex-col relative w-full h-full overflow-hidden bg-[#06080e] select-none">
+            {/* 1. Cinematic Night Stadium Atmosphere Backdrop */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+              {/* Radial Stadium Darkness Vignette */}
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_15%,#111824_0%,#06080e_75%)]" />
+
+              {/* Upper Left Floodlight Bank & Atmospheric Bloom */}
+              <div className="absolute -top-16 -left-16 w-[600px] h-[500px] bg-[radial-gradient(circle,rgba(240,246,255,0.22)_0%,rgba(180,210,255,0.08)_35%,transparent_65%)] blur-2xl pointer-events-none" />
+              <svg className="absolute top-3 left-4 w-40 h-32 opacity-90" viewBox="0 0 160 128" fill="none">
+                <g transform="rotate(14 80 64)">
+                  {/* Light Tower Frame */}
+                  <path d="M 24,96 L 56,24 L 104,24 L 136,96" stroke="#2a384e" strokeWidth="2" strokeDasharray="3,3" />
+                  <rect x="46" y="16" width="68" height="48" rx="4" fill="#0d1420" stroke="#384f70" strokeWidth="1.5" />
+                  {/* Floodlight Bulbs Grid */}
+                  {[0, 1, 2].map((row) =>
+                    [0, 1, 2, 3].map((col) => (
+                      <g key={`l-${row}-${col}`}>
+                        <circle cx={54 + col * 17} cy={26 + row * 14} r={5} fill="#ffffff" />
+                        <circle cx={54 + col * 17} cy={26 + row * 14} r={8} fill="#e0f2fe" opacity="0.45" />
+                      </g>
+                    ))
+                  )}
+                  {/* Atmospheric Downward Beam */}
+                  <polygon points="46,64 114,64 160,128 0,128" fill="url(#beamLeft)" opacity="0.14" />
+                </g>
+                <defs>
+                  <linearGradient id="beamLeft" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
+                    <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+              </svg>
+
+              {/* Upper Right Floodlight Bank & Bloom */}
+              <div className="absolute -top-16 -right-16 w-[600px] h-[500px] bg-[radial-gradient(circle,rgba(240,246,255,0.18)_0%,rgba(180,210,255,0.06)_35%,transparent_65%)] blur-2xl pointer-events-none" />
+              <svg className="absolute top-3 right-4 w-40 h-32 opacity-85" viewBox="0 0 160 128" fill="none">
+                <g transform="rotate(-14 80 64)">
+                  {/* Light Tower Frame */}
+                  <path d="M 136,96 L 104,24 L 56,24 L 24,96" stroke="#2a384e" strokeWidth="2" strokeDasharray="3,3" />
+                  <rect x="46" y="16" width="68" height="48" rx="4" fill="#0d1420" stroke="#384f70" strokeWidth="1.5" />
+                  {/* Floodlight Bulbs Grid */}
+                  {[0, 1, 2].map((row) =>
+                    [0, 1, 2, 3].map((col) => (
+                      <g key={`r-${row}-${col}`}>
+                        <circle cx={54 + col * 17} cy={26 + row * 14} r={5} fill="#ffffff" />
+                        <circle cx={54 + col * 17} cy={26 + row * 14} r={8} fill="#e0f2fe" opacity="0.45" />
+                      </g>
+                    ))
+                  )}
+                </g>
+              </svg>
+
+              {/* Bottom Turf Ground Gradient */}
+              <div className="absolute bottom-0 inset-x-0 h-48 bg-[linear-gradient(to_top,rgba(8,26,17,0.75)_0%,rgba(6,15,11,0.45)_50%,transparent_100%)] pointer-events-none" />
+
+              {/* Realistic Red Cricket Ball on Turf (Bottom-Right Corner) */}
+              <div className="absolute -bottom-20 -right-12 pointer-events-none w-72 h-72 select-none opacity-95 hidden sm:block">
+                <svg className="w-full h-full drop-shadow-[0_25px_30px_rgba(0,0,0,0.95)]" viewBox="0 0 200 200" fill="none">
+                  <defs>
+                    <radialGradient id="ballShade" cx="36%" cy="30%" r="68%">
+                      <stop offset="0%" stopColor="#f87171" />
+                      <stop offset="25%" stopColor="#dc2626" />
+                      <stop offset="55%" stopColor="#991b1b" />
+                      <stop offset="85%" stopColor="#581010" />
+                      <stop offset="100%" stopColor="#2c0808" />
+                    </radialGradient>
+                    <radialGradient id="turfShadow" cx="50%" cy="50%" r="50%">
+                      <stop offset="0%" stopColor="#010402" stopOpacity="0.9" />
+                      <stop offset="100%" stopColor="#010402" stopOpacity="0" />
+                    </radialGradient>
+                  </defs>
+                  {/* Soft turf cast shadow */}
+                  <ellipse cx="100" cy="180" rx="90" ry="22" fill="url(#turfShadow)" />
+                  {/* Leather Sphere */}
+                  <circle cx="100" cy="100" r="82" fill="url(#ballShade)" />
+                  {/* Gloss Specular Arc */}
+                  <ellipse cx="68" cy="62" rx="32" ry="20" fill="#fecaca" opacity="0.22" transform="rotate(-28 68 62)" />
+                  {/* Leather Raised Seam Band */}
+                  <path d="M 40,40 Q 100,100 160,160" stroke="#3b0808" strokeWidth="8" opacity="0.75" />
+                  {/* Double Parallel Stitched Seam with Diagonal White Thread */}
+                  <path d="M 43,39 Q 103,99 163,159" stroke="#ffffff" strokeWidth="2.2" strokeDasharray="3.5,3" opacity="0.9" />
+                  <path d="M 37,45 Q 97,105 157,165" stroke="#ffffff" strokeWidth="2.2" strokeDasharray="3.5,3" opacity="0.9" />
+                  {/* Subtle Secondary Highlight */}
+                  <path d="M 35,85 A 75 75 0 0 1 125,30" stroke="#ffffff" strokeWidth="1" opacity="0.15" />
+                </svg>
+              </div>
+            </div>
+
+            {/* 2. Main Centered Review Console */}
+            <div className="flex-1 flex flex-col max-w-7xl mx-auto w-full p-2 md:p-4 overflow-y-auto min-h-0 my-auto justify-center z-10 relative">
               <ResultReveal
                 scenario={scenario}
                 result={currentResult}
@@ -630,113 +714,77 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 totalIncidents={totalIncidents}
                 onNextIncident={onNextIncident}
               />
-            )
-          )}
-        </div>
+            </div>
 
-        {/* Right Column (4 Cols): Camera Matrix, Verdict Panel, Comms */}
-        <div className="lg:col-span-4 flex flex-col gap-3 min-h-0 overflow-y-auto">
-          {phase === "SOFT_SIGNAL" ? (
-            /* Phase 1 Right Column */
-            <>
-              <div className="hardware-panel rounded-xl p-3.5 text-xs space-y-2.5 shadow-lg">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
-                    <span className="font-bold text-amber-300 tracking-wider text-[11px]">
-                      INCIDENT ALERT
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
-                    {getIncidentLabel()}
+            {/* 3. Official ICC Broadcast Footer Bar */}
+            <footer className="w-full py-2.5 px-6 border-t border-[#18202c] bg-[#07090e]/95 backdrop-blur-md flex items-center justify-between text-[11px] font-sans text-neutral-400 select-none shrink-0 z-20">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 font-bold tracking-wider text-neutral-300">
+                  <span className="w-4 h-4 rounded-full border border-neutral-400 flex items-center justify-center text-[7px] font-bold text-neutral-300 font-mono">
+                    ICC
                   </span>
+                  <span>ICC THIRD UMPIRE SYSTEM</span>
                 </div>
-
-                <p className="text-slate-200 text-[11px] leading-relaxed">
-                  {scenario.description}
-                </p>
-
-                <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 space-y-1.5">
-                  <div className="text-[10px] text-slate-500 font-bold">MATCH SITUATION</div>
-                  <div className="text-[11px] text-slate-200 font-medium leading-relaxed">
-                    {scenario.matchContext.matchSituation}
-                  </div>
-                </div>
-
-                <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 space-y-1.5">
-                  <div className="text-[10px] text-slate-500 font-bold">ON-FIELD SIGNAL</div>
-                  <div className="text-[11px] text-amber-300 font-black">
-                    REFERRED TO TV UMPIRE
-                  </div>
+                <span className="text-neutral-600 select-none">|</span>
+                <div className="flex items-center gap-2 text-neutral-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
+                  <span>All decisions subject to ICC regulations</span>
                 </div>
               </div>
-
-              {/* Broadcast Radio Comms Log */}
-              <div className="hardware-panel rounded-xl p-3 text-xs space-y-2 shadow-lg">
-                <div className="flex items-center space-x-1.5 text-slate-400 text-[10px] border-b border-slate-800 pb-1.5">
-                  <Radio size={12} className="text-cyan-400 animate-pulse" />
-                  <span className="font-bold text-slate-200 tracking-wider">OFFICIAL RADIO COMMS LOG</span>
-                </div>
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 text-[11px]">
-                  {scenario.commsDialogue.map((msg, i) => (
-                    <div key={i} className="flex flex-col bg-slate-950/80 p-1.5 rounded border border-slate-800">
-                      <span className="text-[9px] font-bold text-cyan-400">
-                        [{msg.speaker.replace("_", " ")}]
-                      </span>
-                      <span className="text-slate-300">{msg.text}</span>
-                    </div>
-                  ))}
-                </div>
+              <div className="font-mono text-[10px] tracking-[0.2em] text-neutral-400 flex items-center gap-3">
+                <span>ACCURACY</span>
+                <span className="text-neutral-600 select-none">|</span>
+                <span>INTEGRITY</span>
+                <span className="text-neutral-600 select-none">|</span>
+                <span>FAIR PLAY</span>
               </div>
-            </>
-          ) : (
-            /* Phase 2 & 3 Right Column */
-            <>
-              {/* Context-Sensitive Camera Matrix */}
-              <ToolPalette
-                incidentType={scenario.incidentType}
-                activeTool={activeTool}
-                onSelectTool={handleToolSelect}
-              />
+            </footer>
+          </div>
+        )
+      )}
+    </div>
+  );
+};
 
-              {/* TV Umpire Verdict Transmitter */}
-              {phase === "REVIEW" && (
-                <VerdictPanel
-                  incidentType={scenario.incidentType}
-                  onFieldSignal={scenario.onFieldSignal}
-                  playerBatGroundedMs={playerBatGroundedMs}
-                  playerBailsDislodgedMs={playerBailsDislodgedMs}
-                  onVerdictSubmit={onFinalVerdictSubmit}
-                  trainingMode={trainingMode}
-                  reviewChecklist={
-                    scenario.incidentType === "LBW"
-                      ? { replay: replayReviewed, trackStage: trackStageReached }
-                      : undefined
-                  }
-                />
-              )}
+/** Collapsible radio comms ticker — shows latest message, expandable. */
+const CommsTickerWidget: React.FC<{ commsDialogue: Array<{ speaker: string; text: string }> }> = ({ commsDialogue }) => {
+  const [expanded, setExpanded] = React.useState(false);
+  const latest = commsDialogue[commsDialogue.length - 1];
+  if (!latest) return null;
 
-              {/* Broadcast Radio Comms Log */}
-              <div className="hardware-panel rounded-xl p-3 text-xs space-y-2 shadow-lg">
-                <div className="flex items-center space-x-1.5 text-slate-400 text-[10px] border-b border-slate-800 pb-1.5">
-                  <Radio size={12} className="text-cyan-400 animate-pulse" />
-                  <span className="font-bold text-slate-200 tracking-wider">OFFICIAL RADIO COMMS LOG</span>
-                </div>
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 text-[11px]">
-                  {scenario.commsDialogue.map((msg, i) => (
-                    <div key={i} className="flex flex-col bg-slate-950/80 p-1.5 rounded border border-slate-800">
-                      <span className="text-[9px] font-bold text-cyan-400">
-                        [{msg.speaker.replace("_", " ")}]
-                      </span>
-                      <span className="text-slate-300">{msg.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
+  return (
+    <div className="text-xs font-sans">
+      {/* Ticker header — always visible */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between gap-2 px-2.5 py-1 bg-[#121213] rounded-sm border border-[#27272a] hover:border-[#3f3f46] transition-colors cursor-pointer"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Radio size={12} className="text-neutral-400 shrink-0" />
+          <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider shrink-0">COMMS</span>
+          <span className="text-xs text-neutral-300 truncate font-normal">
+            <span className="text-neutral-200 font-semibold">{latest.speaker.replace("_", " ")}</span>
+            {" — "}
+            {latest.text}
+          </span>
         </div>
-      </div>
+        {expanded ? <ChevronUp size={13} className="text-neutral-400 shrink-0" /> : <ChevronDown size={13} className="text-neutral-400 shrink-0" />}
+      </button>
+
+      {/* Expanded log */}
+      {expanded && (
+        <div className="mt-0.5 space-y-0.5 max-h-32 overflow-y-auto px-1 bg-[#121213] border border-[#27272a] rounded-sm">
+          {commsDialogue.map((msg, i) => (
+            <div key={i} className="flex gap-2 px-2 py-0.5 text-[11px]">
+              <span className="text-neutral-400 font-semibold uppercase shrink-0 text-[10px]">
+                {msg.speaker.replace("_", " ")}
+              </span>
+              <span className="text-neutral-300">{msg.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

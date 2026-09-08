@@ -1,6 +1,7 @@
 import type {
   LBWData,
   RunOutData,
+  StumpingData,
   CaughtBehindData,
   BoundaryData,
   OnFieldSignal,
@@ -228,6 +229,42 @@ export function evaluateRunOut(
     failedGate: "NONE",
     explanation,
     ruleCitation: isOut ? "Law 29 / 38 - Batter Short of Crease" : "Law 29 / 38 - Batter Grounded Behind Crease",
+  };
+}
+
+/**
+ * Evaluates Stumping timing strictly according to Law 39 (Stumped).
+ * Batter is OUT if no part of their foot/bat is grounded behind the popping crease when the bails are removed.
+ */
+export function evaluateStumping(
+  data: StumpingData,
+  onFieldSignal: OnFieldSignal = "REFERRED"
+): DRSRuleEvaluation {
+  const isOut = data.marginMs > 0 || data.toeAirborneAtBreak || !data.footGrounded;
+  const correctVerdict: DecisionVerdict = isOut ? "OUT" : "NOT_OUT";
+  const overturnRequired = onFieldSignal !== "REFERRED" && onFieldSignal !== correctVerdict;
+
+  let explanation = "";
+  if (isOut) {
+    explanation = data.toeAirborneAtBreak
+      ? `Batter's rear foot was airborne with no part grounded behind the popping crease when the wicket was broken by the wicketkeeper (${Math.abs(data.marginMs)}ms delta). OUT.`
+      : `Zing bails completely dislodged ${data.marginMs}ms BEFORE the batter grounded rear foot behind the popping crease. OUT.`;
+  } else {
+    explanation = `Batter safely grounded rear foot behind the popping crease line ${Math.abs(data.marginMs)}ms BEFORE the bails were dislodged. NOT OUT.`;
+  }
+
+  return {
+    gate0FairDelivery: true,
+    gate0NoPriorBat: true,
+    pitchingValid: true,
+    impactValid: true,
+    wicketsHitting: true,
+    isUmpiresCall: false,
+    overturnRequired,
+    correctFinalVerdict: correctVerdict,
+    failedGate: "NONE",
+    explanation,
+    ruleCitation: isOut ? "Law 39 - Stumped" : "Law 39 - Batter In Ground",
   };
 }
 

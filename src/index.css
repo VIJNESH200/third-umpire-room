@@ -4,137 +4,121 @@
 
 @layer base {
   body {
-    background-color: #05070B;
-    color: #F1F5F9;
-    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #121213;
+    color: #E2E8F0;
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
     user-select: none;
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
   }
 
-  /* Industrial Workstation Custom Scrollbars */
+  /* Sleek Precision Scrollbars */
   ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
   }
   ::-webkit-scrollbar-track {
-    background: #080C14;
+    background: #121213;
   }
   ::-webkit-scrollbar-thumb {
-    background: #192336;
+    background: #27272a;
     border-radius: 2px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #253654;
+    background: #3f3f46;
   }
 }
 
-/* Hardware & Console Bezel Styles */
+/* Modern Sports Television Console Surfaces */
 .console-chassis {
-  background: radial-gradient(circle at 50% 0%, #111A2B 0%, #080C14 70%, #04060A 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(0, 0, 0, 0.8);
+  background: #121213;
+  border-top: 1px solid #27272a;
 }
 
 .monitor-frame {
-  background: #0A0E17;
-  box-shadow: 
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-    inset 0 2px 4px rgba(0, 0, 0, 0.6),
-    0 4px 12px rgba(0, 0, 0, 0.5);
+  background: #000000;
+  border: 1px solid #27272a;
 }
 
 .hardware-panel {
-  background: linear-gradient(180deg, #101623 0%, #0B0F18 100%);
-  border: 1px solid #1C273B;
-  box-shadow: 
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 2px 6px rgba(0, 0, 0, 0.4);
+  background: #121213;
+  border: 1px solid #27272a;
 }
 
-/* Metallic Hex Screw */
-.hex-screw {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #475569 25%, #1e293b 80%, #0f172a 100%);
-  border: 1px solid #0f172a;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 1px 1px rgba(0,0,0,0.8);
-  position: relative;
-}
-.hex-screw::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 4px;
-  height: 1px;
-  background: #0f172a;
-  transform: translate(-50%, -50%) rotate(45deg);
+.broadcast-scorebug {
+  background: #121213;
+  border-bottom: 1px solid #27272a;
 }
 
-/* Broadcast Monitor Phosphor Scanlines */
+/* Subtle Phosphor Scanlines Overlay (Toggleable) */
 .scanlines-overlay {
   background: linear-gradient(
     rgba(18, 16, 16, 0) 50%, 
-    rgba(0, 0, 0, 0.28) 50%
-  ), linear-gradient(
-    90deg,
-    rgba(255, 0, 0, 0.03),
-    rgba(0, 255, 0, 0.01),
-    rgba(0, 0, 255, 0.03)
+    rgba(0, 0, 0, 0.22) 50%
   );
-  background-size: 100% 4px, 6px 100%;
+  background-size: 100% 3px;
 }
 
 .crt-vignette {
   background: radial-gradient(
     circle at center,
-    transparent 55%,
-    rgba(0, 0, 0, 0.45) 85%,
+    transparent 65%,
+    rgba(0, 0, 0, 0.4) 90%,
     rgba(0, 0, 0, 0.75) 100%
   );
 }
 
-/* Illuminated Tally Lamps */
+/* Tally Indicators (Restrained solid broadcast lights - zero neon glow) */
 .tally-lamp-red {
-  background-color: #FF2E4C;
-  box-shadow: 0 0 10px #FF2E4C, 0 0 20px rgba(255, 46, 76, 0.6);
+  background-color: #dc2626;
 }
 .tally-lamp-amber {
-  background-color: #FFB300;
-  box-shadow: 0 0 10px #FFB300, 0 0 20px rgba(255, 179, 0, 0.6);
+  background-color: #d97706;
 }
 .tally-lamp-green {
-  background-color: #00E676;
-  box-shadow: 0 0 10px #00E676, 0 0 20px rgba(0, 230, 118, 0.6);
+  background-color: #16a34a;
 }
-.tally-lamp-cyan {
-  background-color: #00E5FF;
-  box-shadow: 0 0 10px #00E5FF, 0 0 20px rgba(0, 229, 255, 0.6);
+.tally-lamp-blue {
+  background-color: #2563eb;
+}
+
+/* Broadcast Replay Transport Buttons */
+.transport-btn {
+  background: #1a1a1b;
+  border: 1px solid #27272a;
+  color: #a1a1aa;
+  transition: all 0.1s ease-in-out;
+}
+.transport-btn:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #FFFFFF;
+}
+.transport-btn:active {
+  transform: translateY(1px);
+  background: #121213;
 }
 
 /* Tactical Shutter Buttons */
 .tactical-btn {
-  background: linear-gradient(180deg, #1A2436 0%, #0F1622 100%);
-  border: 1px solid #283852;
-  box-shadow: 
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 2px 4px rgba(0, 0, 0, 0.5);
-  transition: all 0.15s ease-in-out;
+  background: #1a1a1b;
+  border: 1px solid #27272a;
+  color: #a1a1aa;
+  transition: all 0.1s ease-in-out;
 }
 .tactical-btn:hover {
-  background: linear-gradient(180deg, #223047 0%, #141C2B 100%);
-  border-color: #3B5278;
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #FFFFFF;
 }
 .tactical-btn:active {
   transform: translateY(1px);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8);
 }
 
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(3px);
   }
   to {
     opacity: 1;
@@ -143,5 +127,5 @@
 }
 
 .animate-fadeIn {
-  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

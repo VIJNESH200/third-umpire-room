@@ -72,9 +72,9 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
   const currentFrameNumber = Math.round(currentTimeMs / frameStepMs);
 
   return (
-    <div className="hardware-panel rounded-xl p-3 font-mono select-none text-slate-200 space-y-2.5">
+    <div className="px-3 py-1 select-none text-neutral-200 space-y-0.5 bg-[#121213]">
       {/* Timeline Scrubber Track with Clickable Keyframe Diamond Markers */}
-      <div className="relative w-full pt-1 pb-1">
+      <div className="relative w-full h-3 flex items-center">
         <input
           type="range"
           min={minTimeMs}
@@ -82,71 +82,55 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
           step={frameStepMs}
           value={currentTimeMs}
           onChange={handleSliderChange}
-          className="w-full h-2.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800 focus:outline-none"
+          className="w-full h-1 bg-[#27272a] rounded-none appearance-none cursor-pointer accent-white focus:outline-none z-10"
         />
 
-        {/* Keyframe Interactive Marker Layer */}
-        <div className="relative w-full h-8 mt-0.5">
-          {keyFrameMarkers.map((marker, i) => {
-            const markerPos =
-              ((marker.timeMs - minTimeMs) / (maxTimeMs - minTimeMs)) * 100;
-            if (markerPos < 0 || markerPos > 100) return null;
+        {/* Keyframe Interactive Marker Layer — clickable diamond pips overlaid directly on track */}
+        {keyFrameMarkers.map((marker, i) => {
+          const markerPos =
+            ((marker.timeMs - minTimeMs) / (maxTimeMs - minTimeMs)) * 100;
+          if (markerPos < 0 || markerPos > 100) return null;
 
-            const isNearCurrent = Math.abs(currentTimeMs - marker.timeMs) <= Math.max(30, frameStepMs * 2);
-            const isStaggered = i % 2 === 1;
+          const isNearCurrent = Math.abs(currentTimeMs - marker.timeMs) <= Math.max(30, frameStepMs * 2);
 
-            return (
-              <button
-                key={i}
-                type="button"
-                onClick={() => handleMarkerClick(marker.timeMs)}
-                title={`Seek to ${marker.label} (${marker.timeMs}ms)`}
-                className="absolute top-0 flex flex-col items-center -translate-x-1/2 group cursor-pointer pointer-events-auto transition-transform hover:scale-110 focus:outline-none z-10"
-                style={{ left: `${markerPos}%` }}
-              >
-                {/* Diamond Marker Pin */}
-                <div
-                  className={`w-3.5 h-3.5 rotate-45 border transition-all duration-150 ${
-                    isNearCurrent
-                      ? "ring-2 ring-white scale-125 shadow-lg"
-                      : "opacity-80 group-hover:opacity-100 group-hover:scale-110"
-                  }`}
-                  style={{
-                    backgroundColor: marker.color,
-                    borderColor: isNearCurrent ? "#FFFFFF" : "rgba(0,0,0,0.6)",
-                  }}
-                />
-
-                {/* Staggered Label Badge to prevent overlapping tags */}
-                <span
-                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap transition-all duration-150 ${
-                    isStaggered ? "mt-3" : "mt-0.5"
-                  } ${
-                    isNearCurrent
-                      ? "bg-slate-900 text-cyan-300 border-cyan-400 font-black shadow-md scale-105"
-                      : "bg-slate-950/90 text-slate-400 border-slate-800 group-hover:text-slate-200 group-hover:border-slate-600"
-                  }`}
-                >
-                  {marker.label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => handleMarkerClick(marker.timeMs)}
+              title={`Seek to ${marker.label} (${marker.timeMs}ms)`}
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group cursor-pointer pointer-events-auto transition-transform hover:scale-125 focus:outline-none z-20"
+              style={{ left: `${markerPos}%` }}
+            >
+              {/* Diamond Marker Pin */}
+              <div
+                className={`w-2 h-2 rotate-45 border transition-all duration-100 ${
+                  isNearCurrent
+                    ? "ring-1 ring-white scale-110"
+                    : "opacity-75 group-hover:opacity-100"
+                }`}
+                style={{
+                  backgroundColor: marker.color,
+                  borderColor: isNearCurrent ? "#FFFFFF" : "rgba(0,0,0,0.8)",
+                }}
+              />
+            </button>
+          );
+        })}
       </div>
 
       {/* Main Transport Control Ribbon */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800/80">
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#27272a]">
         {/* Left: Frame Steppers & Shuttle Controls */}
-        <div className="flex items-center space-x-1.5">
+        <div className="flex items-center space-x-1">
           {/* -5 Frames */}
           <button
             type="button"
             onClick={() => onStep(-5)}
             title={`Step back 5 frames (${5 * frameStepMs}ms)`}
-            className="transport-btn px-2 py-1.5 rounded flex items-center gap-0.5 text-xs font-bold"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1"
           >
-            <ChevronsLeft size={14} />
+            <ChevronsLeft size={12} />
             <span>-5F</span>
           </button>
 
@@ -155,24 +139,24 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(-1)}
             title={`Step back 1 frame (${frameStepMs}ms)`}
-            className="transport-btn px-2 py-1.5 rounded flex items-center gap-0.5 text-xs font-bold"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-300 hover:text-white flex items-center gap-1"
           >
-            <ChevronLeft size={14} />
+            <ChevronLeft size={12} />
             <span>-1F</span>
           </button>
 
-          {/* PLAY / PAUSE Button */}
+          {/* PLAY / PAUSE Button (Prominent Wordle Tile) */}
           <button
             type="button"
             onClick={onTogglePlay}
             title={isPlaying ? "Pause Replay" : "Play Replay"}
-            className={`px-3 py-1.5 rounded flex items-center gap-1.5 text-xs font-bold tracking-wider transition-all duration-150 ${
+            className={`px-3.5 py-0.5 rounded-sm text-xs font-bold tracking-wider transition-all uppercase cursor-pointer flex items-center gap-1.5 ${
               isPlaying
-                ? "bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)] font-black"
-                : "transport-btn text-cyan-400"
+                ? "bg-white text-black hover:bg-neutral-200"
+                : "bg-white text-black hover:bg-neutral-200"
             }`}
           >
-            {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+            {isPlaying ? <Pause size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
             <span>{isPlaying ? "PAUSE" : "PLAY"}</span>
           </button>
 
@@ -181,10 +165,10 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(1)}
             title={`Step forward 1 frame (${frameStepMs}ms)`}
-            className="transport-btn px-2 py-1.5 rounded flex items-center gap-0.5 text-xs font-bold"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-300 hover:text-white flex items-center gap-1"
           >
             <span>+1F</span>
-            <ChevronRight size={14} />
+            <ChevronRight size={12} />
           </button>
 
           {/* +5 Frames */}
@@ -192,10 +176,10 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(5)}
             title={`Step forward 5 frames (${5 * frameStepMs}ms)`}
-            className="transport-btn px-2 py-1.5 rounded flex items-center gap-0.5 text-xs font-bold"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1"
           >
             <span>+5F</span>
-            <ChevronsRight size={14} />
+            <ChevronsRight size={12} />
           </button>
 
           {/* ROCK & ROLL Shuttle Button */}
@@ -203,13 +187,13 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={onToggleRockAndRoll}
             title="Rock & Roll: Continuously shuttle-loop around decisive impact/bail frame"
-            className={`px-2.5 py-1.5 rounded flex items-center gap-1.5 text-xs font-bold transition-all duration-150 ${
+            className={`px-2.5 py-0.5 rounded-sm text-xs font-semibold tracking-wide transition-colors uppercase cursor-pointer flex items-center gap-1.5 border ${
               isRockAndRoll
-                ? "bg-amber-500 text-slate-950 shadow-[0_0_15px_rgba(245,158,11,0.6)] font-black animate-pulse"
-                : "transport-btn text-amber-400 hover:text-amber-300"
+                ? "bg-amber-600 border-amber-500 text-white font-bold"
+                : "bg-[#1a1a1b] hover:bg-[#27272a] border-[#27272a] text-amber-400 hover:text-amber-300"
             }`}
           >
-            <Repeat size={13} className={isRockAndRoll ? "animate-spin" : ""} />
+            <Repeat size={12} />
             <span>ROCK & ROLL</span>
           </button>
         </div>
@@ -217,8 +201,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
         {/* Right: Variable Playback Speeds, Frame Counter & Live Virtual Timecode */}
         <div className="flex items-center space-x-3 text-xs">
           {/* Speed Selector Buttons */}
-          <div className="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
-            <span className="text-[10px] text-slate-500 font-bold px-1 uppercase tracking-wider">
+          <div className="flex items-center space-x-1">
+            <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider">
               SPEED:
             </span>
             {speeds.map((spd) => (
@@ -226,10 +210,10 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
                 key={spd}
                 type="button"
                 onClick={() => onSpeedChange(spd)}
-                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                className={`px-1.5 py-0.5 rounded-sm text-xs font-mono transition-colors cursor-pointer ${
                   playbackSpeed === spd
-                    ? "bg-cyan-950 border border-cyan-500/70 text-cyan-300 shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
+                    ? "bg-[#27272a] text-white font-bold border border-[#3f3f46]"
+                    : "text-neutral-400 hover:text-neutral-200"
                 }`}
               >
                 {spd}x
@@ -237,18 +221,20 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             ))}
           </div>
 
+          <span className="text-neutral-700 select-none">•</span>
+
           {/* Frame Counter Indicator */}
-          <div className="flex items-center space-x-1.5 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
-            <Crosshair size={12} className="text-cyan-400" />
-            <span className="text-[11px] text-slate-400 font-bold">FRAME:</span>
-            <span className="text-cyan-300 font-black tabular-nums">{currentFrameNumber}</span>
+          <div className="flex items-center space-x-1 font-mono">
+            <span className="text-[10px] text-neutral-500 font-sans uppercase">FRAME:</span>
+            <span className="text-neutral-200 font-bold text-xs tabular-nums">{currentFrameNumber}</span>
           </div>
 
+          <span className="text-neutral-700 select-none">•</span>
+
           {/* Virtual Broadcast Timecode */}
-          <div className="flex items-center space-x-1.5 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
-            <Clock size={12} className="text-amber-400" />
-            <span className="text-[10px] text-slate-500 font-bold">TIMECODE:</span>
-            <span className="text-amber-300 font-black tabular-nums">{timecode}</span>
+          <div className="flex items-center space-x-1 font-mono">
+            <span className="text-[10px] text-neutral-500 font-sans uppercase">TC:</span>
+            <span className="text-neutral-300 text-xs tabular-nums">{timecode}</span>
           </div>
         </div>
       </div>

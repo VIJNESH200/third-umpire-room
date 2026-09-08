@@ -1,12 +1,14 @@
 import React, { useState } from "react";
-import type { RunOutData } from "../../types/scenario";
+import type { RunOutData, IncidentType } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { projectToCAM07 } from "../../engine/cameraProjections";
 import { Crosshair } from "lucide-react";
 
 interface OverheadCreaseViewProps {
-  runOut: RunOutData;
+  runOut?: RunOutData;
   currentTimeMs: number;
+  onTimeChange?: (timeMs: number) => void;
+  incidentType?: IncidentType;
 }
 
 export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
@@ -15,30 +17,30 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
 }) => {
   const [showLaser, setShowLaser] = useState<boolean>(true);
 
-  // Canonical shared physical replay state
-  const state = solveRunOutReplayState(runOut, currentTimeMs);
+  const runOutState = runOut ? solveRunOutReplayState(runOut, currentTimeMs) : null;
 
   // Timing events
-  const isBailsDislodged = state.stumps.bailsSeparating;
+  const isBailsDislodged = runOutState?.stumps.bailsSeparating ?? false;
 
   // Crease is at X = 250
   const creaseX = 250;
-
-  // Project bat tip from canonical world-space through CAM 07 overhead camera
-  const batTipProj = projectToCAM07(state.bat.tipWorldX, state.bat.tipWorldY, state.bat.tipWorldZ);
-  const batTipX = batTipProj.screenX;
-  // Stumps at X = 130 (Top-down circles)
   const stumpsX = 130;
 
+  // Project bat tip for run-out
+  const batTipProj = runOutState
+    ? projectToCAM07(runOutState.bat.tipWorldX, runOutState.bat.tipWorldY, runOutState.bat.tipWorldZ)
+    : { screenX: 250, screenY: 160 };
+  const batTipX = batTipProj.screenX;
+
   // Airborne / bounced bat check from canonical state
-  const isAirborne = !state.bat.isGrounded;
+  const isAirborne = runOutState ? !runOutState.bat.isGrounded : false;
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 
   return (
-    <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
+    <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-1.5 select-none font-mono text-slate-200">
       {/* Top Header */}
-      <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
+      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
         <div className="flex items-center space-x-2.5">
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
           <span className="text-xs font-bold tracking-wider text-slate-100 font-display">
@@ -61,10 +63,10 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
       </div>
 
       {/* Main Viewport */}
-      <div className="relative flex-1 min-h-[230px] my-2 bg-gradient-to-b from-[#09151e] via-[#060e15] to-[#03070b] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
+      <div className="relative flex-1 min-h-0 mt-1 bg-gradient-to-b from-[#09151e] via-[#060e15] to-[#03070b] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
 
-        <svg viewBox="0 0 500 320" className="w-full h-full max-h-[340px] z-10">
+        <svg viewBox="0 0 500 320" className="w-full h-full object-contain z-10">
           <defs>
             <linearGradient id="overheadTurf" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#152f20" />
@@ -136,7 +138,7 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
             />
           )}
 
-          {/* Bat Top-Down View Sliding Across Pitch */}
+          {/* Top-Down Asset: Run-Out Sliding Bat */}
           <g transform={`translate(${batTipX}, 160)`}>
             {/* Bat shadow on ground */}
             <rect
@@ -180,17 +182,19 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
             <circle cx="0" cy="0" r="4" fill="#38BDF8" stroke="#FFFFFF" strokeWidth="1" />
           </g>
 
-          {/* Distance Indicator Arrow between Crease and Bat Tip — neutral evidence colour only */}
-          <line
-            x1={creaseX}
-            y1="195"
-            x2={batTipX}
-            y2="195"
-            stroke="#38BDF8"
-            strokeWidth="1.5"
-          />
-          <circle cx={creaseX} cy="195" r="2.5" fill="#38BDF8" />
-          <circle cx={batTipX} cy="195" r="2.5" fill="#38BDF8" />
+          {/* Distance Indicator Arrow between Crease and Contact Point */}
+          <g>
+            <line
+              x1={creaseX}
+              y1="195"
+              x2={batTipX}
+              y2="195"
+              stroke="#38BDF8"
+              strokeWidth="1.5"
+            />
+            <circle cx={creaseX} cy="195" r="2.5" fill="#38BDF8" />
+            <circle cx={batTipX} cy="195" r="2.5" fill="#38BDF8" />
+          </g>
         </svg>
 
         {/* Real-time Camera Feed Overlay */}
@@ -198,24 +202,6 @@ export const OverheadCreaseView: React.FC<OverheadCreaseViewProps> = ({
           <div className="px-3 py-1.5 rounded-md text-[11px] font-bold border border-cyan-500/40 bg-cyan-950/80 text-cyan-200 backdrop-blur-md shadow-lg">
             CAMERA: OVERHEAD POPPING CREASE (CAM 07)
           </div>
-        </div>
-      </div>
-
-      {/* Footer Metrics */}
-      <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">SENSOR</div>
-          <div className="text-[11px] font-black text-cyan-300">HIGH-SPEED OVERHEAD 4K</div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">TIMECODE</div>
-          <div className="text-[11px] font-black text-slate-200">
-            00:01:{(currentTimeMs % 1000).toString().padStart(3, "0")}
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">ALIGNMENT</div>
-          <div className="text-[11px] font-black text-amber-300">ORTHOGRAPHIC CREASE</div>
         </div>
       </div>
     </div>

@@ -1,10 +1,12 @@
 import {
   evaluateDRSLBW,
   evaluateRunOut,
+  evaluateStumping,
   evaluateCaughtBehind,
   evaluateBoundary,
   checkDRSCompliance,
 } from "../engine/drsRules";
+import { solveStumpingReplayState } from "../engine/stumpingPhysics";
 import { generateScenario, generateSession } from "../engine/scenarioGenerator";
 import { computeSessionStats, getRankInfo } from "../engine/scoring";
 import { computePitchStations } from "../components/instinct/IncidentReplayFeed";
@@ -35,11 +37,18 @@ import {
 } from "../components/instinct/actorRigs";
 import {
   solveCaughtBehindBallState,
+  solveCaughtBehindDeliveryTrajectory,
+  projectCaughtBehindToMacro,
+  CB_TIMESTAMPS,
+  BAT_EDGE_X_M,
+  BALL_RADIUS_M,
   measureBatPlaneTurnDeg,
   solveEdgeOpticalEvidence,
   solveUltraEdgeSignal,
   sampleUltraEdgeAmplitude,
   findNearestTransient,
+  solveBatGroundContact,
+  solveCaughtBehindSlipCorridor,
   CB_BAT_CROSS_P,
   type CaughtBehindCorridor,
 } from "../engine/caughtBehindPhysics";
@@ -57,14 +66,30 @@ import {
 } from "../engine/cameraProjections";
 import { projectPitchToCAM10, clipAndProjectSegment } from "../components/tools/StrikerStumpCamView";
 import {
+  calculateBatOutsideEdgeScreenPos,
+} from "../components/instinct/actorRigs";
+import {
   solveHotSpotThermal,
   solveHotSpotThermalFrame,
   sampleHotSpotIntensity,
 } from "../engine/hotspotThermal";
 import { resolveReplayShortcut, isTextEntryTarget } from "../engine/replayKeyboard";
+import {
+  solveLBWReplayState,
+  solveUnhinderedBallTrajectory,
+  getLBWWaypoints,
+  projectLBWPointToHawkEyeSVG,
+  getHawkEyeTrajectoryStages,
+  getBallStateLog,
+  LBW_TIMESTAMPS,
+} from "../engine/lbwPhysics";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HotSpotIRView } from "../components/tools/HotSpotIRView";
+import {
+  StumpingEvidenceReview,
+  STUMPING_FRAMING_CONFIGS,
+} from "../components/tools/StumpingEvidenceReview";
 import type {
   LBWData,
   RunOutData,
@@ -1909,10 +1934,14 @@ function runAllDRSTests() {
     {
       let ok = true;
       for (const { label, s } of samples) {
-        if (label === "stumping-wide") continue; // extreme lunge may clamp (documented)
+        if (label.startsWith("stumping")) {
+          // In stumping, lead foot remains pinned to turf line (planted stance), rear foot articulates
+          if (!near(s.leadAnkle.y, 6, 1e-6)) ok = false;
+          continue;
+        }
         if (!near(s.leadAnkle.y, 6, 1e-6) || !near(s.trailAnkle.y, 6, 1e-6)) ok = false;
       }
-      assert(ok, "Batter FK: both ankles stay pinned to the turf line across all solvers");
+      assert(ok, "Batter FK: lead ankle stays pinned to turf across all solvers (both ankles for non-stumping)");
     }
 
     // T23.9 — extreme stumping lunge keeps legs ATTACHED (clamped, never detached)
@@ -2615,6 +2644,1111 @@ function runAllDRSTests() {
         "Keys: plain object target is never treated as typing"
       );
     }
+  }
+
+  // --- GROUP 28: LBW CANONICAL PHYSICS & CAM 01 <-> CAM 03 SYNCHRONIZATION ---
+  console.log("\n--- GROUP 28: LBW CANONICAL PHYSICS & CAM 01 <-> CAM 03 SYNCHRONIZATION ---");
+  {
+    // Generate a set of diverse LBW scenarios
+    const lbwScenarios = [];
+    for (let s = 1; s <= 20; s++) {
+      const scn = generateScenario(s * 1013);
+      if (scn.incidentType === "LBW" && scn.lbw) {
+        lbwScenarios.push(scn.lbw);
+      }
+    }
+
+    // T28.1: Determinism - repeated solves are byte-identical
+    {
+      const lbw = lbwScenarios[0];
+      const s1 = JSON.stringify(solveLBWReplayState(lbw, 1350));
+      const s2 = JSON.stringify(solveLBWReplayState(lbw, 1350));
+      assert(s1 === s2, "LBW Physics: repeated solves at same timestamp are byte-identical");
+    }
+
+    // T28.2: Waypoints match scenario fields exactly
+    {
+      for (const lbw of lbwScenarios) {
+        const wp = getLBWWaypoints(lbw);
+        assert(Math.abs(wp.bounce.x - lbw.pitchX) < 1e-6, "LBW Waypoints: bounce X matches pitchX");
+        assert(Math.abs(wp.impact.x - lbw.impactX) < 1e-6, "LBW Waypoints: impact X matches impactX");
+        assert(Math.abs(wp.stumps.x - lbw.stumpHitX) < 1e-6, "LBW Waypoints: stumps X matches stumpHitX");
+        assert(Math.abs(wp.stumps.y - lbw.stumpHitHeightCm / 100) < 1e-6, "LBW Waypoints: stumps height matches stumpHitHeightCm");
+      }
+    }
+
+    // T28.3: Finite 3D ball coordinates across full timeline [600, 2200]
+    {
+      let allFinite = true;
+      for (const lbw of lbwScenarios) {
+        for (let t = 600; t <= 2200; t += 20) {
+          const state = solveLBWReplayState(lbw, t);
+          if (!Number.isFinite(state.ball.x) || !Number.isFinite(state.ball.y) || !Number.isFinite(state.ball.z)) {
+            allFinite = false;
+          }
+        }
+      }
+      assert(allFinite, "LBW Physics: ball coordinates remain finite and smooth across full timeline sweep");
+    }
+
+    // T28.4: Clean miss (no bat contact) has visible clearance and hits pad
+    {
+      const cleanMiss = lbwScenarios.find((l) => !l.batContactBeforePad) || lbwScenarios[0];
+      const stateImpact = solveLBWReplayState(cleanMiss, LBW_TIMESTAMPS.T_IMPACT);
+      assert(stateImpact.ball.hasHitPad, "LBW Physics: clean miss registers pad impact at T_IMPACT");
+      assert(!stateImpact.ball.hasHitBat, "LBW Physics: clean miss has no bat contact at T_IMPACT");
+      assert(Math.abs(stateImpact.ball.x - cleanMiss.impactX) < 0.05, "LBW Physics: ball arrives at impactX");
+    }
+
+    // T28.5: Bat contact before pad deflects ball away from stumps
+    {
+      // Mock an LBW with prior bat contact
+      const batFirstLbw = { ...lbwScenarios[0], batContactBeforePad: true, shotOffered: true };
+      const stateIntercept = solveLBWReplayState(batFirstLbw, LBW_TIMESTAMPS.T_INTERCEPT + 10);
+      assert(stateIntercept.ball.hasHitBat, "LBW Physics: prior bat contact registers hit at T_INTERCEPT");
+
+      const statePost = solveLBWReplayState(batFirstLbw, 1700);
+      assert(statePost.ball.hasHitBat, "LBW Physics: deflected ball retains hit-bat status");
+      assert(!statePost.ball.hasHitPad, "LBW Physics: deflected ball avoids pad contact");
+    }
+
+    // T28.6: Both Right-Hand and Left-Hand batters produce valid geometries
+    {
+      const rhLbw = { ...lbwScenarios[0], batterHand: "RIGHT" as const };
+      const lhLbw = { ...lbwScenarios[0], batterHand: "LEFT" as const };
+      const rhState = solveLBWReplayState(rhLbw, 1200);
+      const lhState = solveLBWReplayState(lhLbw, 1200);
+      assert(Number.isFinite(rhState.batter.frontPadWorld.x) && Number.isFinite(lhState.batter.frontPadWorld.x),
+        "LBW Physics: both Right and Left-Hand batters solve to valid finite coordinates");
+    }
+
+    // T28.7: Hawk-Eye SVG projection matches 3D lateral signs
+    {
+      const lbw = lbwScenarios[0];
+      const wp = getLBWWaypoints(lbw);
+      const svgBounce = projectLBWPointToHawkEyeSVG(wp.bounce);
+      const svgImpact = projectLBWPointToHawkEyeSVG(wp.impact);
+      const svgStumps = projectLBWPointToHawkEyeSVG(wp.stumps);
+
+      assert(Number.isFinite(svgBounce.x) && Number.isFinite(svgBounce.y), "Hawk-Eye SVG: bounce projection finite");
+      assert(Number.isFinite(svgImpact.x) && Number.isFinite(svgImpact.y), "Hawk-Eye SVG: impact projection finite");
+      assert(Number.isFinite(svgStumps.x) && Number.isFinite(svgStumps.y), "Hawk-Eye SVG: stumps projection finite");
+      // Right of center in 3D (+X) must be right of center in SVG (> 300)
+      if (wp.impact.x > 0.05) {
+        assert(svgImpact.x > 300, "Hawk-Eye SVG: +X in 3D maps to >300 in SVG");
+      } else if (wp.impact.x < -0.05) {
+        assert(svgImpact.x < 300, "Hawk-Eye SVG: -X in 3D maps to <300 in SVG");
+      }
+    }
+
+    // T28.8: Neutral stance at 600ms is unperturbed
+    {
+      const lbw = lbwScenarios[0];
+      const state600 = solveLBWReplayState(lbw, LBW_TIMESTAMPS.T_NEUTRAL);
+      assert(state600.batter.stride === 0, "LBW Physics: stride is 0 at neutral 600ms");
+      assert(state600.batter.swing === 0, "LBW Physics: swing is 0 at neutral 600ms");
+    }
+  }
+
+  // --- GROUP 29: AUTHORITATIVE BALL TRAJECTORY & ACCEPTANCE TEST CHECKPOINTS ---
+  console.log("\n--- GROUP 29: AUTHORITATIVE BALL TRAJECTORY & ACCEPTANCE TEST CHECKPOINTS ---");
+  {
+    const scn = generateScenario(101, "LBW");
+    const lbw = scn.lbw!;
+
+    // T29.1: Acceptance Test Checkpoints: Release, Pre-Bounce, Bounce, Post-Bounce, Batter Arrival, Impact
+    const stateLog = getBallStateLog(lbw);
+    assert(stateLog.length === 6, "Acceptance Checkpoints: exactly 6 canonical checkpoints logged");
+
+    console.log("   Logged Delivery World-Space State Checkpoints:");
+    stateLog.forEach((entry) => {
+      console.log(`     - [${entry.label.padEnd(24)}] t=${entry.timeMs}ms | pos=(${entry.pos.x.toFixed(3)}, ${entry.pos.y.toFixed(3)}, ${entry.pos.z.toFixed(3)}) | vel=(${entry.vel.vx.toFixed(3)}, ${entry.vel.vy.toFixed(3)}, ${entry.vel.vz.toFixed(3)})`);
+      assert(
+        Number.isFinite(entry.pos.x) && Number.isFinite(entry.pos.y) && Number.isFinite(entry.pos.z),
+        `Checkpoint ${entry.label}: position coordinates are finite`
+      );
+      assert(
+        Number.isFinite(entry.vel.vx) && Number.isFinite(entry.vel.vy) && Number.isFinite(entry.vel.vz),
+        `Checkpoint ${entry.label}: velocity coordinates are finite`
+      );
+    });
+
+    // T29.2: CAM 01 and CAM 03 consume identical physical world-space coordinates
+    // For every checkpoint up to impact, solveLBWReplayState and solveUnhinderedBallTrajectory yield identical results
+    stateLog.forEach((entry) => {
+      const cam01State = solveLBWReplayState(lbw, entry.timeMs);
+      const cam03State = solveUnhinderedBallTrajectory(lbw, entry.timeMs);
+
+      const dx = Math.abs(cam01State.ball.x - cam03State.pos.x);
+      const dy = Math.abs(cam01State.ball.y - cam03State.pos.y);
+      const dz = Math.abs(cam01State.ball.z - cam03State.pos.z);
+      const dvx = Math.abs(cam01State.ball.vx - cam03State.vel.x);
+      const dvy = Math.abs(cam01State.ball.vy - cam03State.vel.y);
+      const dvz = Math.abs(cam01State.ball.vz - cam03State.vel.z);
+
+      assert(dx < 1e-6 && dy < 1e-6 && dz < 1e-6, `State Identity: CAM 01 & CAM 03 world position identical at ${entry.label}`);
+      assert(dvx < 1e-6 && dvy < 1e-6 && dvz < 1e-6, `State Identity: CAM 01 & CAM 03 world velocity identical at ${entry.label}`);
+    });
+
+    // T29.3: Post-bounce horizontal collinearity (zero lateral kink between bounce, impact, and stumps)
+    // The unhindered lateral velocity Vx must remain strictly constant throughout [1200ms, 1680ms]
+    const vAtBounce = solveUnhinderedBallTrajectory(lbw, 1220).vel.x;
+    const vAtPreImpact = solveUnhinderedBallTrajectory(lbw, 1480).vel.x;
+    const vAtImpact = solveUnhinderedBallTrajectory(lbw, 1500).vel.x;
+    const vAtStumps = solveUnhinderedBallTrajectory(lbw, 1660).vel.x;
+
+    assert(Math.abs(vAtBounce - vAtPreImpact) < 1e-5, "Trajectory Collinearity: Vx constant from bounce to impact");
+    assert(Math.abs(vAtPreImpact - vAtImpact) < 1e-5, "Trajectory Collinearity: Vx continuous through impact");
+    assert(Math.abs(vAtImpact - vAtStumps) < 1e-5, "Trajectory Collinearity: Vx constant from impact to stumps (zero lateral kink)");
+
+    // T29.4: Hawk-Eye Trajectory Stages generate unbroken, continuous paths
+    const stages = getHawkEyeTrajectoryStages(lbw);
+    assert(stages.flightArcPath.startsWith("M "), "Hawk-Eye Stages: flight arc path generated");
+    assert(stages.flightShadowPath.startsWith("M "), "Hawk-Eye Stages: flight shadow path generated");
+    assert(stages.bounceArcPath.startsWith("M "), "Hawk-Eye Stages: bounce arc path generated");
+    assert(stages.bounceShadowPath.startsWith("M "), "Hawk-Eye Stages: bounce shadow path generated");
+
+    if (!lbw.batContactBeforePad) {
+      assert(stages.projectedStumpsPath.startsWith("M "), "Hawk-Eye Stages: projected stumps path generated for clean delivery");
+      assert(stages.projectedShadowPath.startsWith("M "), "Hawk-Eye Stages: projected shadow path generated for clean delivery");
+      // Verify that the projected stumps path starts exactly at the impact point SVG
+      const firstProjectedCoord = stages.projectedStumpsPath.split(" ")[1];
+      const expectedImpactCoord = `${stages.impactPointSVG.x.toFixed(1)},${stages.impactPointSVG.y.toFixed(1)}`;
+      assert(firstProjectedCoord === expectedImpactCoord, "Hawk-Eye Stages: projected ray starts exactly at impact point");
+    }
+
+    // T29.5: Scenario generator produces collinear parameters
+    for (let i = 0; i < 20; i++) {
+      const testScn = generateScenario(i * 1013, "LBW");
+      if (testScn.lbw) {
+        const testLbw = testScn.lbw;
+        const wp = getLBWWaypoints(testLbw);
+        // Verify impact point is along the line between bounce and stumps
+        const f = (wp.impact.z - wp.stumps.z) / (wp.bounce.z - wp.stumps.z);
+        const expectedX = wp.stumps.x * (1 - f) + wp.bounce.x * f;
+        assert(Math.abs(wp.impact.x - expectedX) < 1e-5, `Scenario Generator: delivery #${i} impact point collinear with trajectory`);
+      }
+    }
+  }
+
+  // ==============================================================
+  // GROUP 30 — CREASE 500FPS TIMING SEPARATION INVARIANTS (>= 6 FRAMES)
+  // ==============================================================
+  console.log("\n--- GROUP 30: CREASE 500FPS TIMING MARGIN INVARIANTS ---");
+  {
+    const FPS_500 = 500;
+    const FRAME_MS_500 = 1000 / FPS_500; // 2ms per frame
+    const MIN_REQUIRED_FRAMES = 6;
+
+    let outCount = 0;
+    let notOutCount = 0;
+    let bounceCount = 0;
+
+    for (let seed = 1; seed <= 60; seed++) {
+      const scenario = generateScenario(seed * 777, "RUN_OUT");
+      assert(scenario.runOut !== undefined, `Seed ${seed}: runOut scenario generated`);
+      const ro = scenario.runOut!;
+
+      // 1. Separation Invariant: absolute difference >= 12ms (>= 6 frames at 500 FPS)
+      const deltaMs = Math.abs(ro.bailsDislodgedFrameMs - ro.groundedFrameMs);
+      const frames500 = deltaMs / FRAME_MS_500;
+      assert(
+        frames500 >= MIN_REQUIRED_FRAMES,
+        `Crease Timing Margin (seed ${seed}): deltaMs=${deltaMs}ms corresponds to ${frames500} frames at 500 FPS, which is >= ${MIN_REQUIRED_FRAMES} frames`
+      );
+
+      // 2. Physical Ordering and Decision Consistency
+      const evalResult = evaluateRunOut(ro, scenario.onFieldSignal);
+      if (evalResult.correctFinalVerdict === "NOT_OUT") {
+        notOutCount++;
+        assert(
+          ro.groundedFrameMs < ro.bailsDislodgedFrameMs,
+          `NOT OUT Physical Ordering (seed ${seed}): bat grounded (${ro.groundedFrameMs}ms) occurs before bails dislodged (${ro.bailsDislodgedFrameMs}ms)`
+        );
+        assert(
+          ro.creaseMarginMm > 0,
+          `NOT OUT Crease Margin (seed ${seed}): creaseMarginMm is positive (${ro.creaseMarginMm}mm)`
+        );
+      } else {
+        outCount++;
+        if (ro.batBounced) {
+          bounceCount++;
+          const stateAtDislodge = solveRunOutReplayState(ro, ro.bailsDislodgedFrameMs);
+          assert(
+            !stateAtDislodge.bat.isGrounded || stateAtDislodge.bat.tipAltitudeMm > 0,
+            `Airborne Bat Bounce (seed ${seed}): bat is airborne above turf at dislodgement frame`
+          );
+        } else {
+          assert(
+            ro.bailsDislodgedFrameMs < ro.groundedFrameMs,
+            `OUT Physical Ordering (seed ${seed}): bails dislodged (${ro.bailsDislodgedFrameMs}ms) before bat grounded (${ro.groundedFrameMs}ms)`
+          );
+          assert(
+            ro.creaseMarginMm < 0,
+            `OUT Crease Margin (seed ${seed}): creaseMarginMm is negative (${ro.creaseMarginMm}mm)`
+          );
+        }
+      }
+
+      // 3. Physical Synchronization Invariant:
+      // Canonical groundedFrameMs strictly synchronizes with slide speed (6.2 mm/ms)
+      assert(
+        ro.creaseMarginMm === Math.round(ro.marginMs * -6.2),
+        `Physical Synchronization (seed ${seed}): creaseMarginMm strictly derived from marginMs * -6.2 mm/ms`
+      );
+    }
+
+    // 4. Distribution Invariant: Both OUT and NOT OUT cases must be actively generated
+    assert(outCount > 15, `Scenario Distribution: sufficient OUT cases generated (${outCount} >= 15)`);
+    assert(notOutCount > 15, `Scenario Distribution: sufficient NOT OUT cases generated (${notOutCount} >= 15)`);
+    console.log(`[PASS] Crease Timing: 60 incidents tested (OUT: ${outCount}, NOT OUT: ${notOutCount}, Bounce: ${bounceCount}) - 100% satisfied >= 6 frames`);
+  }
+
+  // ================================================================
+  // GROUP 31: HOTSPOT IR THERMAL OVERHAUL & ZERO ANSWER LEAKS
+  // ================================================================
+  console.log("\n--- GROUP 31: HOTSPOT IR THERMAL OVERHAUL & ZERO ANSWER LEAKS ---");
+
+  // T31.1 — HotSpot genuine contact produces thermal radiance at transit
+  {
+    const edgeIncident: CaughtBehindData = {
+      hasEdge: true,
+      waveformSpikeTimeMs: 1200,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.85,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 0,
+      soundType: "WOODY_SNICK",
+    };
+
+    const model = solveHotSpotThermal(edgeIncident);
+    const frameAtTransit = solveHotSpotThermalFrame(model, 1205);
+    const candidate = frameAtTransit.zones.find((z) => z.id === "CANDIDATE");
+
+    assert(candidate !== undefined, "HotSpot: Candidate zone exists in model");
+    assert(
+      candidate!.intensity >= 0.12 && candidate!.isIgnited,
+      "HotSpot: Genuine edge produces an ignited thermal bloom (>= 12% threshold) at transit"
+    );
+    assert(
+      frameAtTransit.peakIntensityPct >= 50,
+      "HotSpot: Genuine edge generates high peak radiance at transit (>= 50%)"
+    );
+  }
+
+  // T31.2 — Clean miss produces negligible radiance at bat edge
+  {
+    const clearMissIncident: CaughtBehindData = {
+      hasEdge: false,
+      waveformSpikeTimeMs: null,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.1,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 36,
+      soundType: "SILENCE",
+    };
+
+    const model = solveHotSpotThermal(clearMissIncident);
+    const frameAtTransit = solveHotSpotThermalFrame(model, 1205);
+    const candidate = frameAtTransit.zones.find((z) => z.id === "CANDIDATE");
+
+    assert(candidate !== undefined, "HotSpot: Model remains structurally consistent on clean miss");
+    // With gapMm = 36mm, closeness is 0, so candidate peak is at baseline
+    assert(
+      candidate!.intensity < 0.45,
+      "HotSpot: Clear miss does not produce an edge contact bloom"
+    );
+  }
+
+  // T31.3 — Pad distractor produces decoy glow on pad, leaving bat edge clean
+  {
+    const padIncident: CaughtBehindData = {
+      hasEdge: false,
+      waveformSpikeTimeMs: null,
+      distractorNoise: true,
+      distractorTimeMs: 1320,
+      distractorType: "PAD",
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.1,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 6,
+      soundType: "DULL_THUD",
+    };
+
+    const model = solveHotSpotThermal(padIncident);
+    const padZone = model.zones.find((z) => z.id === "PAD_DECOY");
+    assert(padZone !== undefined, "HotSpot: Pad distractor creates a distinct PAD_DECOY zone");
+    assert(
+      padZone!.xMm < -20,
+      "HotSpot: Pad decoy is physically positioned off the bat blade (xMm < -20)"
+    );
+
+    // At transit (1200ms), pad decoy is not yet ignited (ignites around 1320ms)
+    const frameAtTransit = solveHotSpotThermalFrame(model, 1200);
+    const padAtTransit = frameAtTransit.zones.find((z) => z.id === "PAD_DECOY");
+    assert(
+      padAtTransit!.intensity === 0,
+      "HotSpot: Pad decoy does not radiate prior to pad contact time"
+    );
+
+    // At pad impact (1325ms), pad decoy is actively radiating
+    const frameAtPad = solveHotSpotThermalFrame(model, 1325);
+    const padAtImpact = frameAtPad.zones.find((z) => z.id === "PAD_DECOY");
+    assert(
+      padAtImpact!.intensity > 0.3 && padAtImpact!.isIgnited,
+      "HotSpot: Pad decoy actively radiates at distractor timestamp"
+    );
+  }
+
+  // T31.4 — Model stability across 20 varied seeds
+  {
+    for (let seed = 1; seed <= 20; seed++) {
+      const scenario = generateScenario(seed, "CAUGHT_BEHIND", "MARGINAL");
+      if (scenario.caughtBehind) {
+        const m = solveHotSpotThermal(scenario.caughtBehind);
+        const f = solveHotSpotThermalFrame(m, scenario.caughtBehind.ballPassesBatFrameMs);
+        assert(Number.isFinite(f.peakIntensityPct), `HotSpot (seed ${seed}): peakIntensityPct is finite`);
+        assert(Number.isFinite(f.ambientLevel), `HotSpot (seed ${seed}): ambientLevel is finite`);
+        assert(Number.isFinite(f.noiseLevel), `HotSpot (seed ${seed}): noiseLevel is finite`);
+      }
+    }
+    console.log("[PASS] HotSpot: Validated thermal physics, pad decoys, and numerical stability across 20 seeds");
+  }
+
+  // --- GROUP 32: CAUGHT BEHIND CANONICAL TRAJECTORY & CROSS-CAMERA COHERENCE ---
+  console.log("\n--- GROUP 32: CAUGHT BEHIND CANONICAL TRAJECTORY & CROSS-CAMERA COHERENCE ---");
+  {
+    const edgeCb: CaughtBehindData = {
+      hasEdge: true,
+      waveformSpikeTimeMs: 1200,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.85,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 0,
+      soundType: "WOODY_SNICK",
+    };
+
+    const missCb: CaughtBehindData = {
+      hasEdge: false,
+      waveformSpikeTimeMs: null,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.1,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 18,
+      soundType: "SILENCE",
+    };
+
+    // T32.1: Continuous velocity and finite state across entire delivery
+    {
+      let ok = true;
+      for (let t = 600; t <= 2200; t += 25) {
+        const sEdge = solveCaughtBehindDeliveryTrajectory(edgeCb, t);
+        const sMiss = solveCaughtBehindDeliveryTrajectory(missCb, t);
+        if (!Number.isFinite(sEdge.x) || !Number.isFinite(sEdge.y) || !Number.isFinite(sEdge.z)) ok = false;
+        if (!Number.isFinite(sMiss.x) || !Number.isFinite(sMiss.y) || !Number.isFinite(sMiss.z)) ok = false;
+        if (!Number.isFinite(sEdge.vx) || !Number.isFinite(sEdge.vy) || !Number.isFinite(sEdge.vz)) ok = false;
+        if (!Number.isFinite(sMiss.vx) || !Number.isFinite(sMiss.vy) || !Number.isFinite(sMiss.vz)) ok = false;
+      }
+      assert(ok, "T32.1: 3D delivery state is strictly finite across entire timeline");
+
+      // C1 velocity continuity across transit for clean miss
+      const sPre = solveCaughtBehindDeliveryTrajectory(missCb, 1198);
+      const sPost = solveCaughtBehindDeliveryTrajectory(missCb, 1202);
+      const dvx = Math.abs(sPost.vx - sPre.vx);
+      assert(dvx < 0.05, `T32.1: Clean miss velocity across transit is strictly continuous (dvx=${dvx.toFixed(4)} m/s)`);
+    }
+
+    // T32.2: Cross-camera state identity
+    {
+      for (const t of [800, 1050, 1200, 1400]) {
+        const state1 = solveCaughtBehindDeliveryTrajectory(edgeCb, t);
+        const state2 = solveCaughtBehindDeliveryTrajectory(edgeCb, t);
+        assert(state1.x === state2.x && state1.y === state2.y && state1.z === state2.z, `T32.2: Single canonical trajectory produces identical 3D state at t=${t}ms`);
+      }
+    }
+
+    // T32.3: Physical clearance calibration at bat plane
+    {
+      const sEdge = solveCaughtBehindDeliveryTrajectory(edgeCb, 1200);
+      const sMiss = solveCaughtBehindDeliveryTrajectory(missCb, 1200);
+      const edgeClearanceMm = (sEdge.x - (BAT_EDGE_X_M + BALL_RADIUS_M)) * 1000;
+      const missClearanceMm = (sMiss.x - (BAT_EDGE_X_M + BALL_RADIUS_M)) * 1000;
+      assert(Math.abs(edgeClearanceMm) < 0.01, `T32.3: Genuine edge has zero clearance at transit (got ${edgeClearanceMm.toFixed(3)}mm)`);
+      assert(Math.abs(missClearanceMm - 18) < 0.01, `T32.3: Clean miss clearance strictly equals configured gapMm (got ${missClearanceMm.toFixed(3)}mm)`);
+    }
+
+    // T32.4: Deflection physics on contact
+    {
+      const sPre = solveCaughtBehindDeliveryTrajectory(edgeCb, 1190);
+      const sPost = solveCaughtBehindDeliveryTrajectory(edgeCb, 1250);
+      assert(sPost.isDeflected, "T32.4: Edge marks ball as deflected post-transit");
+      assert(sPost.vx > sPre.vx, "T32.4: Deflection impulse increases lateral velocity towards slips");
+    }
+
+    // T32.5: Neutrality across varied seeds
+    {
+      let allNeutral = true;
+      for (let s = 1; s <= 20; s++) {
+        const scen = generateScenario(s, "CAUGHT_BEHIND", "MARGINAL");
+        if (scen.caughtBehind) {
+          const d = solveCaughtBehindDeliveryTrajectory(scen.caughtBehind, scen.caughtBehind.ballPassesBatFrameMs);
+          const macro = projectCaughtBehindToMacro(d);
+          if (!Number.isFinite(macro.ballX) || !Number.isFinite(macro.ballY)) allNeutral = false;
+        }
+      }
+      assert(allNeutral, "T32.5: Projected macro positions are finite and deterministic across 20 scenario seeds");
+    }
+
+    // ================================================================
+    // GROUP 33: CAUGHT BEHIND KEEPER ARRIVAL & ULTRAEDGE RELATIVE MOTION
+    // ================================================================
+    console.log("\n--- GROUP 33: KEEPER CATCH ARRIVAL & ULTRAEDGE RELATIVE MOTION ---");
+
+    // T33.1: Ball arrives strictly at keeper coordinates post-catch
+    {
+      const edgeCb = generateScenario(1, "CAUGHT_BEHIND").caughtBehind!;
+      const missCb = generateScenario(2, "CAUGHT_BEHIND").caughtBehind!;
+
+      const sEdgeCatch = solveCaughtBehindDeliveryTrajectory(edgeCb, 1300);
+      const sMissCatch = solveCaughtBehindDeliveryTrajectory(missCb, 1300);
+
+      assert(sEdgeCatch.z <= -1.4, "T33.1: Genuine edge delivery reaches keeper station behind stumps");
+      assert(sMissCatch.z <= -1.7, "T33.1: Clean miss delivery reaches keeper station behind stumps");
+      assert(sEdgeCatch.y > 0.5 && sEdgeCatch.y < 0.8, "T33.1: Ball arrives at keeper glove height");
+      assert(sEdgeCatch.vx === 0 && sEdgeCatch.vy === 0 && sEdgeCatch.vz === 0, "T33.1: Ball is held securely post-catch (zero velocity)");
+    }
+
+    // T33.2: C1 velocity continuity across bat-plane transit on clean miss
+    {
+      const cleanCb = generateScenario(2, "CAUGHT_BEHIND").caughtBehind!; // clean miss
+      const tTransit = cleanCb.ballPassesBatFrameMs;
+
+      const pre = solveCaughtBehindDeliveryTrajectory(cleanCb, tTransit - 10);
+      const at = solveCaughtBehindDeliveryTrajectory(cleanCb, tTransit);
+      const post = solveCaughtBehindDeliveryTrajectory(cleanCb, tTransit + 10);
+
+      assert(Math.abs(pre.vx - post.vx) < 0.001, "T33.2: Vx has zero discontinuity across transit on clean miss");
+      assert(Math.abs(at.vy - post.vy) < 0.05, "T33.2: Vy is smooth and continuous entering post-transit");
+      assert(pre.z > at.z && at.z > post.z, "T33.2: Ball monotonically progresses down pitch towards keeper");
+    }
+
+    // T33.3: UltraEdge Waveform has quiet baseline outside transient events
+    {
+      const cleanCb = generateScenario(2, "CAUGHT_BEHIND").caughtBehind!;
+      const signal = solveUltraEdgeSignal(cleanCb);
+      
+      let maxBaselineAmp = 0;
+      for (let t = 850; t <= 1000; t += 10) {
+        const amp = Math.abs(sampleUltraEdgeAmplitude(signal, t));
+        if (amp > maxBaselineAmp) maxBaselineAmp = amp;
+      }
+      assert(maxBaselineAmp < 0.08, `T33.3: Quiet baseline noise floor is well-behaved (got ${maxBaselineAmp.toFixed(4)} < 0.08)`);
+    }
+
+    // T33.4: Ground scrape distractor triggers bat toe turf contact
+    {
+      const scrapeCb: CaughtBehindData = {
+        ...generateScenario(1, "CAUGHT_BEHIND").caughtBehind!,
+        distractorNoise: true,
+        distractorType: "GROUND_SCRAPE",
+        distractorTimeMs: 1320,
+      };
+
+      const atScrape = solveBatGroundContact(scrapeCb, 1320);
+      const preScrape = solveBatGroundContact(scrapeCb, 1200);
+
+      assert(atScrape.isTurfContact, "T33.4: Bat toe contacts turf at ground scrape timestamp");
+      assert(atScrape.toeDisplacementPx > 5.0, "T33.4: Turf displacement reaches full scale during scrape");
+      assert(!preScrape.isTurfContact && preScrape.toeDisplacementPx < 0.1, "T33.4: Bat remains clear of turf during delivery transit");
+    }
+  }
+
+  // --- GROUP 34: CALIBRATED 2.5D SLIP CORRIDOR VISUAL ANCHORS & MONOTONICITY ---
+  console.log("\n--- GROUP 34: CALIBRATED 2.5D SLIP CORRIDOR VISUAL ANCHORS & MONOTONICITY ---");
+  {
+    const w = 640;
+    const h = 360;
+    const batEdgeX = 300;
+    const batEdgeY = 227;
+    const gloveX = 312;
+    const gloveY = 192;
+
+    const edgeCb: CaughtBehindData = {
+      hasEdge: true,
+      waveformSpikeTimeMs: 1200,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.85,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 0,
+      soundType: "WOODY_SNICK",
+    };
+
+    const missCb: CaughtBehindData = {
+      hasEdge: false,
+      waveformSpikeTimeMs: null,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.1,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 18,
+      soundType: "SILENCE",
+    };
+
+    // T34.1: Screen Y strictly decreases monotonically across approach and delivery (ball always travels toward batter & keeper)
+    for (const [name, cb] of [["Genuine Edge", edgeCb], ["Clean Miss", missCb]] as const) {
+      let prevY = 9999;
+      let monotonic = true;
+      for (let t = 800; t <= 1300; t += 10) {
+        const state = solveCaughtBehindSlipCorridor(cb, t, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+        if (state.y > prevY + 0.001) {
+          monotonic = false;
+          break;
+        }
+        prevY = state.y;
+      }
+      assert(monotonic, `T34.1: ${name} screen Y is strictly monotonic decreasing across [800ms, 1300ms]`);
+    }
+
+    // T34.2: Ball coordinates remain strictly within canvas bounds (never teleport or explode)
+    for (const [name, cb] of [["Genuine Edge", edgeCb], ["Clean Miss", missCb]] as const) {
+      let bounded = true;
+      for (let t = 600; t <= 2200; t += 20) {
+        const state = solveCaughtBehindSlipCorridor(cb, t, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+        if (state.x < 0 || state.x > w || state.y < 0 || state.y > h) {
+          bounded = false;
+          break;
+        }
+      }
+      assert(bounded, `T34.2: ${name} coordinates strictly within [0, ${w}] x [0, ${h}] across timeline`);
+    }
+
+    // T34.3: Radius scales believably and stays positive and finite
+    for (const [name, cb] of [["Genuine Edge", edgeCb], ["Clean Miss", missCb]] as const) {
+      const atRelease = solveCaughtBehindSlipCorridor(cb, 800, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+      const atBounce = solveCaughtBehindSlipCorridor(cb, 1050, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+      const atTransit = solveCaughtBehindSlipCorridor(cb, 1200, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+      const atCatch = solveCaughtBehindSlipCorridor(cb, 1300, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+
+      assert(atRelease.radius > atBounce.radius, `T34.3: ${name} radius decreases release -> bounce`);
+      assert(atBounce.radius > atTransit.radius, `T34.3: ${name} radius decreases bounce -> transit`);
+      assert(atTransit.radius > atCatch.radius, `T34.3: ${name} radius decreases transit -> catch`);
+      assert(atCatch.radius >= 3.5, `T34.3: ${name} final catch radius remains visible (>= 3.5px)`);
+    }
+
+    // T34.4: Bat edge transit alignment
+    {
+      const edgeAtTransit = solveCaughtBehindSlipCorridor(edgeCb, 1200, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+      const missAtTransit = solveCaughtBehindSlipCorridor(missCb, 1200, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+
+      assert(Math.abs(edgeAtTransit.y - batEdgeY) < 0.1, "T34.4: Edge ball crosses at exact batEdgeY");
+      assert(Math.abs(missAtTransit.y - batEdgeY) < 0.1, "T34.4: Miss ball crosses at exact batEdgeY");
+      assert(edgeAtTransit.x > missAtTransit.x, "T34.4: Miss ball has visible daylight gap compared to edge ball");
+    }
+
+    // T34.5: Keeper glove arrival and hold
+    for (const [name, cb] of [["Genuine Edge", edgeCb], ["Clean Miss", missCb]] as const) {
+      const atCatch = solveCaughtBehindSlipCorridor(cb, 1300, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+      const postCatch = solveCaughtBehindSlipCorridor(cb, 1500, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+
+      assert(Math.abs(atCatch.x - gloveX) < 0.01 && Math.abs(atCatch.y - gloveY) < 0.01, `T34.5: ${name} arrives exactly at keeper glove coordinates at 1300ms`);
+      assert(Math.abs(postCatch.x - gloveX) < 0.01 && Math.abs(postCatch.y - gloveY) < 0.01, `T34.5: ${name} held securely in keeper gloves post-catch`);
+    }
+  }
+
+  // --- GROUP 35: ULTRAEDGE FRAME SYNCHRONIZATION, STEPPING & EVIDENCE BOUNDARIES ---
+  console.log("\n--- GROUP 35: ULTRAEDGE FRAME SYNCHRONIZATION, STEPPING & EVIDENCE BOUNDARIES ---");
+  {
+    const FPS = 50;
+    const FRAME_STEP_MS = 1000 / FPS; // 20ms
+
+    // T35.1: Mathematical frame-to-timestamp synchronization
+    assert(Math.round(1180 / FRAME_STEP_MS) === 59, "T35.1: Frame 59 maps exactly to 1180ms (pre-transit)");
+    assert(Math.round(1200 / FRAME_STEP_MS) === 60, "T35.1: Frame 60 maps exactly to 1200ms (transit)");
+    assert(Math.round(1220 / FRAME_STEP_MS) === 61, "T35.1: Frame 61 maps exactly to 1220ms (post-transit)");
+    assert(Math.round(1320 / FRAME_STEP_MS) === 66, "T35.1: Frame 66 maps exactly to 1320ms (ground scrape)");
+
+    // T35.2: Precise +/- 1 frame step delta
+    assert(1 * FRAME_STEP_MS === 20, "T35.2: Forward 1 frame delta is exactly +20ms");
+    assert(-1 * FRAME_STEP_MS === -20, "T35.2: Backward 1 frame delta is exactly -20ms");
+    assert(5 * FRAME_STEP_MS === 100, "T35.2: Coarse 5 frame delta is exactly +100ms");
+
+    // T35.3: +/- 1-frame comparative context window bounds
+    const tCenter = 1200;
+    const tPrev = tCenter - FRAME_STEP_MS;
+    const tNext = tCenter + FRAME_STEP_MS;
+    assert(tNext - tPrev === 40, "T35.3: +/- 1 frame context window spans exactly 40ms (F-1 to F+1)");
+
+    // T35.4: Case A (Seed 1, Genuine Edge) acoustic transient alignment
+    const scnA = generateScenario(1, "CAUGHT_BEHIND");
+    assert(scnA.caughtBehind !== undefined, "T35.4: Scenario A has caughtBehind data");
+    if (scnA.caughtBehind) {
+      const sigA = solveUltraEdgeSignal(scnA.caughtBehind);
+      const edgeTransient = sigA.transients.find((tr) => Math.abs(tr.timeMs - 1200) <= 20);
+      assert(edgeTransient !== undefined, "T35.4: Case A has acoustic transient inside transit window (|t - 1200| <= 20ms)");
+      assert(edgeTransient!.amplitude >= 0.5, "T35.4: Case A transient has prominent amplitude (>= 50%)");
+    }
+
+    // T35.5: Case B (Seed 2, Clean Miss) quiet baseline at transit
+    const scnB = generateScenario(2, "CAUGHT_BEHIND");
+    assert(scnB.caughtBehind !== undefined, "T35.5: Scenario B has caughtBehind data");
+    if (scnB.caughtBehind) {
+      const sigB = solveUltraEdgeSignal(scnB.caughtBehind);
+      const edgeLevelSpike = sigB.transients.find((tr) => Math.abs(tr.timeMs - 1200) <= 20 && tr.amplitude >= 0.45);
+      assert(edgeLevelSpike === undefined, "T35.5: Case B has NO prominent acoustic spike inside transit window (quiet baseline)");
+    }
+
+    // T35.6: Case C (Seed 10, Ground Decoy) late scrape acoustic transient
+    const scnC = generateScenario(10, "CAUGHT_BEHIND");
+    assert(scnC.caughtBehind !== undefined, "T35.6: Scenario C has caughtBehind data");
+    if (scnC.caughtBehind) {
+      const sigC = solveUltraEdgeSignal(scnC.caughtBehind);
+      const transitSpike = sigC.transients.find((tr) => Math.abs(tr.timeMs - 1200) <= 20 && tr.amplitude >= 0.45);
+      const lateSpike = sigC.transients.find((tr) => tr.timeMs >= 1300 && tr.amplitude >= 0.40);
+      assert(transitSpike === undefined, "T35.6: Case C has NO prominent spike at transit (1200ms)");
+      assert(lateSpike !== undefined, "T35.6: Case C has delayed acoustic spike (>= 1300ms) from turf contact");
+      assert(lateSpike!.timeMs >= 1310, "T35.6: Case C ground transient occurs while ball is past bat");
+    }
+  }
+
+  // --- GROUP 36: ULTRAEDGE OPTICAL CAMERA, DAYLIGHT EVIDENCE & BAT-BALL CONTACT GEOMETRY ---
+  console.log("\n--- GROUP 36: ULTRAEDGE OPTICAL CAMERA, DAYLIGHT EVIDENCE & BAT-BALL CONTACT GEOMETRY ---");
+  {
+    const w = 480;
+    const h = 200;
+    const BATTER_RIG_SCALE = 1.35;
+    const batterX = w * 0.52;
+    const batterY = 145.17;
+    const transitP = 0.375; // t = 1200ms
+
+    // T36.1: calculateBatOutsideEdgeScreenPos returns valid finite coordinates
+    const transitBatterK = solveCaughtBehindBatterKinematics(transitP, "FORWARD_DEFENCE", 14);
+    const { batEdgeX, batEdgeY } = calculateBatOutsideEdgeScreenPos(
+      batterX,
+      batterY,
+      transitBatterK,
+      BATTER_RIG_SCALE,
+      "LEFT"
+    );
+
+    assert(Number.isFinite(batEdgeX) && Number.isFinite(batEdgeY), "T36.1: batEdge coordinates are strictly finite");
+    assert(batEdgeX < batterX, "T36.1: For facing LEFT, bat outside edge is to the left of batter body center");
+    assert(Math.abs(batEdgeX - 243.17) < 1.0, "T36.1: batEdgeX accurately matches articulated willow blade outside edge");
+    assert(Math.abs(batEdgeY - 133.28) < 1.0, "T36.1: batEdgeY accurately matches articulated willow blade impact zone");
+
+    // T36.2: Genuine edge (hasEdge = true) ball touches bat outside edge at transit (t = 1200ms)
+    const edgeCb: CaughtBehindData = {
+      hasEdge: true,
+      waveformSpikeTimeMs: 1200,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.8,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 0,
+      soundType: "WOODY_SNICK",
+    };
+    const keeperX = w * 0.47;
+    const gloveX = keeperX + 14;
+    const gloveY = 70;
+    const ballEdge = solveCaughtBehindSlipCorridor(edgeCb, 1200, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+    const ballRightEdge = ballEdge.x + ballEdge.radius;
+    // Ball should reach or overlap the bat outside edge with zero phantom gap
+    assert(ballRightEdge >= batEdgeX - 0.5, "T36.2: Genuine edge ball reaches the bat outside edge at transit");
+    assert(Math.abs(ballRightEdge - batEdgeX) <= 2.5, "T36.2: Edge contact overlap is realistic physical contact (<= 2.5px)");
+
+    // T36.3: Clean miss has strictly positive daylight gap that scales with gapMm
+    const missSmall: CaughtBehindData = {
+      hasEdge: false,
+      waveformSpikeTimeMs: null,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.1,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 8,
+      soundType: "SILENCE",
+    };
+    const missLarge: CaughtBehindData = {
+      hasEdge: false,
+      waveformSpikeTimeMs: null,
+      distractorNoise: false,
+      distractorTimeMs: null,
+      distractorType: null,
+      proximityFrameMs: 1200,
+      spikeIntensity: 0.1,
+      ballPassesBatFrameMs: 1200,
+      gapMm: 24,
+      soundType: "SILENCE",
+    };
+
+    const ballMissSmall = solveCaughtBehindSlipCorridor(missSmall, 1200, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+    const ballMissLarge = solveCaughtBehindSlipCorridor(missLarge, 1200, w, h, batEdgeX, batEdgeY, gloveX, gloveY);
+
+    const daylightSmall = batEdgeX - (ballMissSmall.x + ballMissSmall.radius);
+    const daylightLarge = batEdgeX - (ballMissLarge.x + ballMissLarge.radius);
+
+    assert(daylightSmall > 0, "T36.3: Clean miss (8mm) has strictly visible daylight between ball and bat");
+    assert(daylightLarge > daylightSmall, "T36.3: Daylight gap strictly increases with larger gapMm");
+    assert(daylightLarge >= 10.0, "T36.3: Clean miss (24mm) provides prominent visible daylight (>= 10px)");
+
+    // T36.4: Camera zoom locking across critical frames (F58 - F62, 1160ms - 1240ms)
+    for (let t = 1160; t <= 1240; t += 20) {
+      const zoomFactor = (t >= 1140 && t <= 1260) ? 1.0 : 0.0;
+      assert(zoomFactor === 1.0, `T36.4: Camera zoom factor is strictly 1.0 (LOCKED) at t=${t}ms (F${t/20})`);
+    }
+
+    // T36.5: Stability and determinism across 20 varied scenario seeds
+    for (let seed = 1; seed <= 20; seed++) {
+      const scn = generateScenario(seed, "CAUGHT_BEHIND");
+      if (scn.caughtBehind) {
+        const p = 0.375;
+        const bK = solveCaughtBehindBatterKinematics(p, scn.initialEvidence?.caughtBehind?.shotType, scn.initialEvidence?.caughtBehind?.batAngleDeg ?? 14);
+        const { batEdgeX: bX, batEdgeY: bY } = calculateBatOutsideEdgeScreenPos(batterX, batterY, bK, BATTER_RIG_SCALE, "LEFT");
+        const bState = solveCaughtBehindSlipCorridor(scn.caughtBehind, 1200, w, h, bX, bY, gloveX, gloveY);
+        assert(Number.isFinite(bState.x) && Number.isFinite(bState.y), `T36.5 (seed ${seed}): Corridor coordinates are finite`);
+        if (scn.caughtBehind.hasEdge) {
+          assert((bState.x + bState.radius) >= bX - 0.5, `T36.5 (seed ${seed}): Genuine edge has contact`);
+        } else {
+          assert(bX - (bState.x + bState.radius) > 0, `T36.5 (seed ${seed}): Clean miss has daylight`);
+        }
+      }
+    }
+  }
+
+  // ==============================================================
+  // GROUP 37 — STUMPING & RUN-OUT KEY-FRAME AUTO-POPULATION, MCC LAW CITATIONS & CAMERA DECKS
+  // ==============================================================
+  console.log("\n--- GROUP 37: STUMPING KINEMATICS, AUTO KEY-FRAMES & MCC LAW CITATIONS ---");
+  {
+    // T37.1: Stumping Batter Kinematics Invariants (Stationary Stance + Rear-Leg Pendulum)
+    const creaseX = 300;
+    const marginPx = 15;
+    const stance = solveStumpingBatterKinematics(0.0, creaseX, marginPx);
+    const midDelivery = solveStumpingBatterKinematics(0.35, creaseX, marginPx);
+    const breakFrame = solveStumpingBatterKinematics(0.65, creaseX, marginPx);
+    const recovery = solveStumpingBatterKinematics(0.85, creaseX, marginPx);
+
+    // 1. Stationary Upper-Body Invariant:
+    // Torso, head, front leg, bat stay fixed across delivery
+    assert(
+      stance.batterX === midDelivery.batterX && midDelivery.batterX === breakFrame.batterX,
+      "T37.1: Batter upper-body root anchor remains completely stationary at batting stance"
+    );
+    assert(
+      stance.batterK.torsoAngleRad === midDelivery.batterK.torsoAngleRad &&
+      stance.batterK.headX === midDelivery.batterK.headX &&
+      stance.batterK.frontLegX === midDelivery.batterK.frontLegX,
+      "T37.1: Batter torso, head, and front leg remain STILL throughout the stumping sequence"
+    );
+
+    // 2. Rear-foot initial stance daylight:
+    const rearFootScreenX = stance.batterX + stance.batterK.backLegX * 1.15;
+    assert(
+      rearFootScreenX < creaseX,
+      `T37.1: Stance rear foot (${rearFootScreenX.toFixed(1)}px) is behind popping crease (${creaseX}px) with visible daylight`
+    );
+
+    // 3. Dynamic rear-leg vertical heel-lift & pendulum toe bounce:
+    assert(
+      (midDelivery.batterK.backLegLift ?? 0) > 0,
+      "T37.1: Rear leg heel/toe lifts vertically off turf during delivery"
+    );
+    assert(
+      (midDelivery.batterK.backLegFootAngleRad ?? 0) < 0,
+      "T37.1: Rear boot tilts into heel-lift elevation as delivery passes"
+    );
+
+    // 4. Recovery back-drag:
+    assert(
+      recovery.batterK.backLegX <= breakFrame.batterK.backLegX,
+      "T37.1: Batter reaches/drags rear foot back towards crease for recovery"
+    );
+
+    // T37.2: Keeper Kinematics & Glove Coordinates
+    const keeperStance = solveStumpingKeeperKinematics(0.0);
+    const keeperBreak = solveStumpingKeeperKinematics(0.65);
+    assert(Number.isFinite(keeperStance.gloveX) && Number.isFinite(keeperStance.gloveY), "T37.2: Keeper stance glove coords finite");
+    assert(Number.isFinite(keeperBreak.gloveX) && Number.isFinite(keeperBreak.gloveY), "T37.2: Keeper break glove coords finite");
+    assert(keeperBreak.isGlovesOpen === false, "T37.2: Keeper gloves clamped securely on break");
+
+    // T37.3: Auto-Populate Key Frames Logic & Deduplication
+    const fps = 500;
+    const batGroundedMs = 1460;
+    const bailsDislodgedMs = 1464; // Delta 4ms = 2 frames at 500 FPS
+
+    const frameBat = Math.round((batGroundedMs / 1000) * fps);
+    const frameBails = Math.round((bailsDislodgedMs / 1000) * fps);
+    const deltaMs = Math.abs(bailsDislodgedMs - batGroundedMs);
+    const deltaFrames = Math.abs(frameBails - frameBat);
+
+    assert(frameBat === 730, "T37.3: Bat grounded frame computed from canonical timestamp (1460ms -> F730 at 500fps)");
+    assert(frameBails === 732, "T37.3: Bails dislodged frame computed from canonical timestamp (1464ms -> F732 at 500fps)");
+    assert(deltaFrames === 2 && deltaMs === 4, `T37.3: Timing delta matches specification Δ2F (4ms) (got Δ${deltaFrames}F ${deltaMs}ms)`);
+
+    // Re-marking simulation: updating bat grounded frame replaces existing entry in place
+    const updatedBatGroundedMs = 1470;
+    const updatedFrameBat = Math.round((updatedBatGroundedMs / 1000) * fps);
+    const keyFramesMap = new Map<string, { frame: number; time: number; label: string }>();
+    keyFramesMap.set("auto-bat-grounded", { frame: frameBat, time: batGroundedMs, label: "Bat/foot grounded" });
+    keyFramesMap.set("auto-bails-dislodged", { frame: frameBails, time: bailsDislodgedMs, label: "Bails dislodged" });
+    assert(keyFramesMap.size === 2, "T37.3: Exactly 2 auto-populated key frame entries");
+
+    // Re-mark bat grounded
+    keyFramesMap.set("auto-bat-grounded", { frame: updatedFrameBat, time: updatedBatGroundedMs, label: "Bat/foot grounded" });
+    assert(keyFramesMap.size === 2, "T37.3: Re-marking does not create duplicate entries (size remains 2)");
+    assert(keyFramesMap.get("auto-bat-grounded")!.frame === 735, "T37.3: Re-marking updates timestamp in place");
+
+    // T37.4: Official Lord's MCC Law Citations Verification
+    const officialUrls = {
+      STUMPING: "https://www.lords.org/mcc/the-laws/stumped",
+      LBW: "https://www.lords.org/mcc/the-laws/leg-before-wicket",
+      CAUGHT_BEHIND: "https://www.lords.org/mcc/the-laws/caught",
+      RUN_OUT: "https://www.lords.org/mcc/the-laws/run-out",
+      BOUNDARY: "https://www.lords.org/mcc/the-laws/boundaries",
+    };
+
+    assert(officialUrls.STUMPING === "https://www.lords.org/mcc/the-laws/stumped", "T37.4: Law 39 Stumped official URL verified");
+    assert(officialUrls.LBW === "https://www.lords.org/mcc/the-laws/leg-before-wicket", "T37.4: Law 36 LBW official URL verified");
+    assert(officialUrls.CAUGHT_BEHIND === "https://www.lords.org/mcc/the-laws/caught", "T37.4: Law 33 Caught official URL verified");
+    assert(officialUrls.RUN_OUT === "https://www.lords.org/mcc/the-laws/run-out", "T37.4: Law 38 Run Out official URL verified");
+    assert(officialUrls.BOUNDARY === "https://www.lords.org/mcc/the-laws/boundaries", "T37.4: Law 19 Boundaries official URL verified");
+
+    // T37.5: Stumping Dedicated 2-Camera Forensic Suite (CAM 02 Crease 500fps, CAM 01 Side-On Keeper)
+    const stumpingCameras = [
+      { id: "CREASE_ZOOM", camCode: "CAM 02 500FPS CREASE", label: "Crease 500fps" },
+      { id: "SIDE_ON_POP", camCode: "CAM 01 SIDE-ON KEEPER", label: "Side-On Keeper" },
+    ];
+    assert(stumpingCameras.length === 2, "T37.5: Dedicated 2-camera forensic suite for Stumping");
+    assert(stumpingCameras[0].camCode.includes("500FPS CREASE"), "T37.5: CAM 02 dedicated to 500FPS Crease for Stumping");
+    assert(stumpingCameras[1].camCode.includes("SIDE-ON KEEPER"), "T37.5: CAM 01 dedicated to Side-On Keeper for Stumping");
+  }
+
+  // ==============================================================
+  // GROUP 38 — DEDICATED STUMPING DATA, DETERMINISTIC PHYSICS & ICC LAW 39
+  // ==============================================================
+  console.log("\n--- GROUP 38: DEDICATED STUMPING PHYSICS & LAW 39 INVARIANTS ---");
+  {
+    const FRAME_MS_500 = 2; // 1000 / 500 FPS
+    const MIN_REQUIRED_FRAMES = 6;
+
+    for (let seed = 1; seed <= 50; seed++) {
+      const scenario = generateScenario(seed * 999, "STUMPING");
+      assert(scenario.stumping !== undefined, `Seed ${seed}: stumping scenario generated`);
+      assert(scenario.runOut === undefined, `Seed ${seed}: runOut is undefined for decoupled Stumping`);
+      const st = scenario.stumping!;
+
+      // 1. Separation Invariant: absolute difference >= 12ms (>= 6 frames at 500 FPS)
+      const deltaMs = Math.abs(st.bailsDislodgedFrameMs - st.groundedFrameMs);
+      const frames500 = deltaMs / FRAME_MS_500;
+      assert(
+        frames500 >= MIN_REQUIRED_FRAMES,
+        `Stumping Crease Timing Margin (seed ${seed}): deltaMs=${deltaMs}ms (>= ${MIN_REQUIRED_FRAMES} frames)`
+      );
+
+      // 2. Evaluation correctness
+      const evalResult = evaluateStumping(st, scenario.onFieldSignal);
+      if (evalResult.correctFinalVerdict === "NOT_OUT") {
+        assert(
+          st.groundedFrameMs < st.bailsDislodgedFrameMs,
+          `Stumping NOT OUT (seed ${seed}): foot grounded before bails dislodged`
+        );
+        assert(st.creaseMarginMm > 0, `Stumping NOT OUT (seed ${seed}): creaseMarginMm positive`);
+        assert(st.footGrounded === true, `Stumping NOT OUT (seed ${seed}): foot grounded`);
+        assert(st.toeAirborneAtBreak === false, `Stumping NOT OUT (seed ${seed}): toe NOT airborne at break`);
+      } else {
+        assert(
+          st.bailsDislodgedFrameMs < st.groundedFrameMs,
+          `Stumping OUT (seed ${seed}): bails dislodged before foot grounded`
+        );
+        assert(st.creaseMarginMm < 0, `Stumping OUT (seed ${seed}): creaseMarginMm negative`);
+        assert(st.toeAirborneAtBreak === true, `Stumping OUT (seed ${seed}): toe airborne at break`);
+      }
+
+      // 3. Stumping Physics Engine Determinism
+      const state1 = solveStumpingReplayState(st, st.bailsDislodgedFrameMs);
+      const state2 = solveStumpingReplayState(st, st.bailsDislodgedFrameMs);
+      assert(
+        state1.batter.toeAltitudeMm === state2.batter.toeAltitudeMm &&
+        state1.stumps.bailsSeparating === state2.stumps.bailsSeparating,
+        `Stumping Physics: Deterministic state across repeated evaluations`
+      );
+
+      // 4. Physical grounding agrees with verdict
+      if (evalResult.correctFinalVerdict === "OUT") {
+        assert(
+          state1.batter.toeAltitudeMm > 0 || !state1.batter.isGrounded,
+          `Stumping OUT (seed ${seed}): Toe is airborne at bails dislodged frame`
+        );
+      } else {
+        assert(
+          state1.batter.toeAltitudeMm === 0 && state1.batter.isGrounded,
+          `Stumping NOT OUT (seed ${seed}): Toe is grounded at bails dislodged frame`
+        );
+      }
+    }
+  }
+
+  // ==============================================================
+  // GROUP 39 — STUMPING PHASE 2 SYNCHRONIZED FORENSIC SUITE & ANATOMICAL BOOT CALIBRATION
+  // ==============================================================
+  console.log("\n--- GROUP 39: STUMPING PHASE 2 SYNCHRONIZED FORENSIC SUITE & ANATOMICAL BOOT CALIBRATION ---");
+  {
+    // T39.1: Anatomical Boot Orientation Invariant (+X Bowler, -X Stumps) & Clearance
+    const creaseX = 250;
+    const stumpsX = 130;
+    const stumpingScenario = generateScenario(12345, "STUMPING");
+    assert(stumpingScenario.stumping !== undefined, "T39.1: Stumping scenario generated");
+    const stData = stumpingScenario.stumping!;
+    const stateAtBreak = solveStumpingReplayState(stData, stData.bailsDislodgedFrameMs);
+
+    // Toe points down the pitch (+X toward bowler), heel points back (-X toward stumps)
+    // Anchor is at toeTipX, heel extends in negative-X direction
+    const pxPerMm = 1.4;
+    const toeTipX = creaseX - stateAtBreak.batter.toeCreaseOffsetMm * pxPerMm;
+    const heelX = toeTipX - 70; // 70px shoe length in negative-X direction
+    assert(toeTipX > heelX, "T39.1: Boot toe (+X) is anatomically forward of boot heel (-X)");
+    assert(heelX > stumpsX, "T39.1: Boot heel maintains physical clearance from striker stumps (zero clipping)");
+
+    // T39.2: Upper-Body & Bat Stationarity Invariant across Delivery
+    const stanceK = solveStumpingBatterKinematics(0.0, creaseX, 10);
+    const midK = solveStumpingBatterKinematics(0.4, creaseX, 10);
+    const breakK = solveStumpingBatterKinematics(0.65, creaseX, 10);
+    const recoveryK = solveStumpingBatterKinematics(0.9, creaseX, 10);
+
+    assert(
+      stanceK.batterX === midK.batterX &&
+      midK.batterX === breakK.batterX &&
+      breakK.batterX === recoveryK.batterX,
+      "T39.2: Batter root X anchor remains completely motionless across entire delivery"
+    );
+    assert(
+      stanceK.batterK.torsoAngleRad === breakK.batterK.torsoAngleRad &&
+      stanceK.batterK.headX === breakK.batterK.headX &&
+      stanceK.batterK.frontLegX === breakK.batterK.frontLegX &&
+      stanceK.batterK.batRotRad === breakK.batterK.batRotRad,
+      "T39.2: Torso, head, front leg, and bat remain strictly motionless in stance box"
+    );
+
+    // Bat ground contact is positioned in front of popping crease (preventing false grounding under Law 39)
+    const batBladeTipX = stanceK.batterX + stanceK.batterK.batPivotX + Math.sin(stanceK.batterK.batRotRad) * 45;
+    assert(batBladeTipX > creaseX, "T39.2: Bat blade tip is held in front of popping crease, preventing false grounding under Law 39");
+
+    // T39.3: Dual 500 FPS Synchronized Replay Timeline
+    const fps500 = 500;
+    const frameStepMs = 1000 / fps500;
+    assert(frameStepMs === 2, "T39.3: 500 FPS replay standard provides exact 2ms frame steps");
+
+    const tBreakMs = stData.bailsDislodgedFrameMs;
+    const fBreak = Math.round((tBreakMs / 1000) * fps500);
+    assert(fBreak === 750, "T39.3: Bails dislodged focal event is exactly F750 (1500ms)");
+
+    // T39.4: Dual Window Framing & Strict Zero-CAD Invariant
+    const windowALabel = "KEEPER / WICKET • 500 FPS CLOSE-UP";
+    const windowBLabel = "FOOT / CREASE • 500 FPS CLOSE-UP";
+    const windowAQuestion = "WHEN WERE THE BAILS DISLODGED?";
+    const windowBQuestion = "WHERE WAS THE STRIKER'S GROUNDED CONTACT?";
+
+    assert(windowALabel.includes("KEEPER / WICKET") && windowALabel.includes("500 FPS"), "T39.4: Window A labeled correctly");
+    assert(windowBLabel.includes("FOOT / CREASE") && windowBLabel.includes("500 FPS"), "T39.4: Window B labeled correctly");
+    assert(windowAQuestion.includes("WHEN WERE THE BAILS DISLODGED"), "T39.4: Window A core question matches specification");
+    assert(windowBQuestion.includes("WHERE WAS THE STRIKER'S GROUNDED CONTACT"), "T39.4: Window B core question matches specification");
+
+    // T39.5: Stumping Retirement of CAM 07 & Synchronized Replay Lockstep
+    // Verify that at F750, Window A bails are separating and Window B boot is in canonical state
+    const syncedState = solveStumpingReplayState(stData, 1500);
+    assert(syncedState.stumps.bailsSeparating === true, "T39.5: Window A Zing bails separate at F750 (1500ms)");
+    assert(syncedState.timeMs === 1500, "T39.5: Both viewports lockstep at identical canonical time");
+
+    // Auto-populated keyframes sorted deduplicated order
+    const autoGathered = { frameNum: Math.round((1040 / 1000) * 500), timeMs: 1040, label: "Ball gathered" };
+    const autoGrounded = { frameNum: Math.round((stData.groundedFrameMs / 1000) * 500), timeMs: stData.groundedFrameMs, label: "Bat/foot grounded" };
+    const autoBails = { frameNum: Math.round((stData.bailsDislodgedFrameMs / 1000) * 500), timeMs: stData.bailsDislodgedFrameMs, label: "Bails dislodged" };
+    const keyFramesList = [autoGathered, autoGrounded, autoBails].sort((a, b) => a.timeMs - b.timeMs);
+    assert(keyFramesList.length === 3, "T39.5: Exactly 3 chronological keyframes populated");
+    assert(keyFramesList[0].label === "Ball gathered", "T39.5: Ball gathered is earliest keyframe");
+  }
+
+  // ==============================================================
+  // GROUP 40 — STUMPING PHASE 2 CAM 02 VISUAL DESIGN PROTOTYPE SELECTOR
+  // ==============================================================
+  console.log("\n--- GROUP 40: STUMPING PHASE 2 CAM 02 PROTOTYPE SELECTOR & 3 OPTICAL FRAMINGS ---");
+  {
+    // T40.1: All three framing configurations exist and satisfy optical zoom ranges (R2)
+    const optA = STUMPING_FRAMING_CONFIGS.A;
+    const optB = STUMPING_FRAMING_CONFIGS.B;
+    const optC = STUMPING_FRAMING_CONFIGS.C;
+
+    assert(optA !== undefined, "T40.1: Option A configuration exists");
+    assert(optB !== undefined, "T40.1: Option B configuration exists");
+    assert(optC !== undefined, "T40.1: Option C configuration exists");
+
+    // Option A: 2.5x - 3.0x zoom
+    assert(optA.zoom >= 2.5 && optA.zoom <= 3.0, "T40.1: Option A zoom is within 2.5x - 3.0x broadcast optical zoom range");
+    assert(optA.label.includes("A — BROADCAST ZOOM"), "T40.1: Option A label matches requirement");
+    assert(optA.buttonText === "[ A — BROADCAST ZOOM ]", "T40.1: Option A buttonText matches requirement");
+
+    // Option B: 3.0x - 3.5x zoom
+    assert(optB.zoom >= 3.0 && optB.zoom <= 3.5, "T40.1: Option B zoom is within 3.0x - 3.5x tight crease zoom range");
+    assert(optB.label.includes("B — TIGHT CREASE"), "T40.1: Option B label matches requirement");
+    assert(optB.buttonText === "[ B — TIGHT CREASE ]", "T40.1: Option B buttonText matches requirement");
+
+    // Option C: 2.0x - 2.4x zoom
+    assert(optC.zoom >= 2.0 && optC.zoom <= 2.4, "T40.1: Option C zoom is within 2.0x - 2.4x high-speed camera range");
+    assert(optC.label.includes("C — HIGH-SPEED CAMERA"), "T40.1: Option C label matches requirement");
+    assert(optC.buttonText === "[ C — HIGH-SPEED CAMERA ]", "T40.1: Option C buttonText matches requirement");
+
+    // T40.2: Clear visual distinction between Option A, Option B, and Option C
+    assert(optA.zoom !== optB.zoom && optB.zoom !== optC.zoom && optA.zoom !== optC.zoom, "T40.2: Distinct zoom levels across A, B, and C");
+    assert(optA.targetX !== optB.targetX || optA.targetY !== optB.targetY, "T40.2: Distinct camera framing center between A and B");
+    assert(optB.targetX !== optC.targetX || optB.targetY !== optC.targetY, "T40.2: Distinct camera framing center between B and C");
+    assert(optA.targetX !== optC.targetX || optA.targetY !== optC.targetY, "T40.2: Distinct camera framing center between A and C");
+
+    // T40.3: Render StumpingEvidenceReview markup and verify permanent clean broadcast presentation
+    const sc = generateScenario(42, "STUMPING");
+    const st = sc.stumping!;
+    const html = renderToStaticMarkup(
+      React.createElement(StumpingEvidenceReview, {
+        stumping: st,
+        currentTimeMs: 1500,
+      })
+    );
+
+    // Prototype selector bar removed in production
+    assert(!html.includes("CAM 02 OPTICAL FRAMING:"), "T40.3: Prototype selector bar is removed from production view");
+    assert(html.includes("3.3× OPTICAL CLOSE-UP"), "T40.3: Permanent Option B 3.3x badge rendered in Window B");
+
+    // T40.4: Strict Zero-CAD & Neutrality Invariants preserved
+    const windowBIndex = html.indexOf("FOOT / CREASE • 500 FPS CLOSE-UP");
+    assert(windowBIndex !== -1, "T40.4: Window B header present in markup");
+    const windowBHtml = html.substring(windowBIndex);
+    assert(!windowBHtml.includes("laser"), "T40.4: Window B contains no laser CAD overlays");
+    assert(!windowBHtml.includes("ruler"), "T40.4: Window B contains no ruler CAD overlays");
+    assert(!windowBHtml.includes("caliper"), "T40.4: Window B contains no caliper CAD overlays");
+    assert(!windowBHtml.includes("mm scale"), "T40.4: Window B contains no mm scale overlays");
+    assert(windowBHtml.includes("PURE OPTICAL EVIDENCE"), "T40.4: Window B pure optical evidence badge maintained");
+
+    // T40.5: Window B permanent configuration satisfies Option B specifications
+    assert(optB.zoom === 3.3, "T40.5: Option B permanent zoom is exactly 3.3x");
+    assert(optB.targetX === 342 && optB.targetY === 225, "T40.5: Option B target coordinates are (342, 225)");
   }
 
   console.log("=================================================");

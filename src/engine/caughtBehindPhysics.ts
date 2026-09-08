@@ -25,8 +25,48 @@
 import type { CaughtBehindData } from "../types/scenario";
 
 // ================================================================
-// 1. BALL CORRIDOR
+// 1. BALL CORRIDOR & CANONICAL 3D DELIVERY TRAJECTORY
 // ================================================================
+
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * Authoritative 3D state of the delivery ball in pitch coordinate space:
+ * - Striker stumps base: (0, 0, 0)
+ * - +X: lateral right (off-side for right-handed batter)
+ * - -X: lateral left (leg-side)
+ * - +Y: vertical height above turf in meters (0 = turf)
+ * - +Z: distance along pitch towards bowler (popping crease = 1.22m, bowler stumps = 20.12m)
+ */
+export interface Delivery3DState {
+  timeMs: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  hasBounced: boolean;
+  hasPassedBat: boolean;
+  isDeflected: boolean;
+  gapMm: number;
+  radius: number;
+}
+
+export const CB_TIMESTAMPS = {
+  T_RELEASE: 800,
+  T_BOUNCE: 1050,
+  T_TRANSIT: 1200,
+  T_KEEPER: 1300,
+  T_END: 2200,
+} as const;
+
+export const BAT_EDGE_X_M = 0.20;
+export const BALL_RADIUS_M = 0.036;
 
 /** Replay progress at which the ball reaches the bat plane. */
 export const CB_BAT_CROSS_P = 0.5;
@@ -73,13 +113,320 @@ export interface CaughtBehindBallState {
   isDeflected: boolean;
 }
 
+function lerpVal(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/**
+ * Solves the single canonical 3D delivery trajectory for a Caught Behind incident.
+ * Consumed identically by CAM 01 (Broadcast Replay), CAM 04 (UltraEdge), and CAM 08 (HotSpot).
+ */
+export function solveCaughtBehindDeliveryTrajectory(
+  cb: CaughtBehindData,
+  timeMs: number
+): Delivery3DState {
+  const transitTime = cb.ballPassesBatFrameMs || CB_TIMESTAMPS.T_TRANSIT;
+  const bounceTime = CB_TIMESTAMPS.T_BOUNCE;
+  const releaseTime = CB_TIMESTAMPS.T_RELEASE;
+  const keeperTime = CB_TIMESTAMPS.T_KEEPER;
+
+  const trueGapMm = cb.hasEdge ? 0 : cb.gapMm;
+  const gapM = trueGapMm / 1000;
+
+  // Waypoints
+  // Transit waypoint at bat plane (Z = 1.22m)
+  const xTransit = BAT_EDGE_X_M + BALL_RADIUS_M + gapM;
+  const yTransit = 0.65;
+  const zTransit = 1.22;
+
+  // Bounce waypoint on good length (Z = 6.5m)
+  const xBounce = xTransit - 0.04;
+  const yBounce = BALL_RADIUS_M;
+  const zBounce = 6.5;
+
+  // Release waypoint near bowler stumps (Z = 18.2m)
+  const xRelease = xBounce - 0.06;
+  const yRelease = 2.15;
+  const zRelease = 18.2;
+
+  // Pre-transit velocities entering bat plane:
+  const dtBounceToTransit = (transitTime - bounceTime) / 1000;
+  const vxPre = (xTransit - xBounce) / dtBounceToTransit;
+  const vzPre = (zTransit - zBounce) / dtBounceToTransit; // -35.2 m/s
+  const yApex = 0.70;
+  const vyPre = (2 * (yTransit - yApex)) / dtBounceToTransit; // -0.667 m/s downward descent
+
+  // Post-transit dynamics (1200ms -> 1300ms)
+  const dtPost = (keeperTime - transitTime) / 1000; // 0.10s
+  const gScaled = 3.2; // scaled gravity for super-slow motion replay
+
+  // Deflection on edge vs pure carry on clean miss:
+  const vxPost = cb.hasEdge ? vxPre + 0.55 : vxPre;
+  const vzPost = cb.hasEdge ? -27.2 : -30.2;
+  const vyPost = cb.hasEdge ? vyPre + 0.35 : vyPre;
+
+  // Analytical keeper catch position at keeperTime (1300ms):
+  const xKeeper = xTransit + vxPost * dtPost;
+  const yKeeper = yTransit + vyPost * dtPost - 0.5 * gScaled * dtPost * dtPost;
+  const zKeeper = zTransit + vzPost * dtPost; // ~ -1.5m to -1.8m
+
+  let x = xRelease;
+  let y = yRelease;
+  let z = zRelease;
+  let vx = 0;
+  let vy = 0;
+  let vz = 0;
+  const hasBounced = timeMs >= bounceTime;
+  const hasPassedBat = timeMs >= transitTime;
+  const isDeflected = cb.hasEdge && hasPassedBat;
+
+  if (timeMs <= releaseTime) {
+    // Before release: ball held in bowler's hand
+    x = xRelease;
+    y = yRelease;
+    z = zRelease;
+    vx = 0;
+    vy = 0;
+    vz = 0;
+  } else if (timeMs < bounceTime) {
+    // Release -> Bounce flight (800ms to 1050ms)
+    const dt = (bounceTime - releaseTime) / 1000;
+    const u = Math.max(0, Math.min(1, (timeMs - releaseTime) / (bounceTime - releaseTime)));
+    
+    // Linear in X and Z
+    x = lerpVal(xRelease, xBounce, u);
+    z = lerpVal(zRelease, zBounce, u);
+    vx = (xBounce - xRelease) / dt;
+    vz = (zBounce - zRelease) / dt;
+
+    // Parabolic gravity flight in Y
+    const yMid = (yRelease + yBounce) / 2 - 0.20;
+    const om = 1 - u;
+    y = om * om * yRelease + 2 * om * u * yMid + u * u * yBounce;
+    vy = (2 * om * (yMid - yRelease) + 2 * u * (yBounce - yMid)) / dt;
+  } else if (timeMs <= transitTime) {
+    // Bounce -> Bat-plane transit (1050ms to 1200ms)
+    const dt = dtBounceToTransit;
+    const u = Math.max(0, Math.min(1, (timeMs - bounceTime) / (transitTime - bounceTime)));
+
+    // Linear in X and Z (Strict lateral collinearity: constant Vx)
+    x = lerpVal(xBounce, xTransit, u);
+    z = lerpVal(zBounce, zTransit, u);
+    vx = vxPre;
+    vz = vzPre;
+
+    // Rising bounce arc in Y
+    const om = 1 - u;
+    y = om * om * yBounce + 2 * om * u * yApex + u * u * yTransit;
+    vy = (2 * om * (yApex - yBounce) + 2 * u * (yTransit - yApex)) / dt;
+  } else {
+    // Post-transit -> Wicketkeeper (1200ms onwards)
+    if (timeMs >= keeperTime) {
+      // Ball safely caught and secured in keeper's gloves
+      x = xKeeper;
+      y = yKeeper;
+      z = zKeeper;
+      vx = 0;
+      vy = 0;
+      vz = 0;
+    } else {
+      // 1200ms < timeMs < 1300ms: continuous C1 carry into gloves
+      const elapsedSec = (timeMs - transitTime) / 1000;
+      x = xTransit + vxPost * elapsedSec;
+      y = yTransit + vyPost * elapsedSec - 0.5 * gScaled * elapsedSec * elapsedSec;
+      z = zTransit + vzPost * elapsedSec;
+      vx = vxPost;
+      vy = vyPost - gScaled * elapsedSec;
+      vz = vzPost;
+    }
+  }
+
+  return {
+    timeMs,
+    x,
+    y,
+    z,
+    vx,
+    vy,
+    vz,
+    hasBounced,
+    hasPassedBat,
+    isDeflected,
+    gapMm: trueGapMm,
+    radius: BALL_RADIUS_M,
+  };
+}
+
+/**
+ * Returns the exact 3D position where the wicketkeeper intercepts and catches the delivery.
+ */
+export function getKeeperCatchPosition(cb: CaughtBehindData): Vec3 {
+  const d = solveCaughtBehindDeliveryTrajectory(cb, CB_TIMESTAMPS.T_KEEPER);
+  return { x: d.x, y: d.y, z: d.z };
+}
+
+export interface SlipCorridorBallState {
+  x: number;
+  y: number;
+  radius: number;
+  hasBounced: boolean;
+  hasPassedBat: boolean;
+  isDeflected: boolean;
+}
+
+/**
+ * Calibrated 2.5D visual delivery corridor for Slip Cam (Phase 1 & Phase 2).
+ *
+ * Interpolates smoothly across four physical visual anchors:
+ * 1. Release (t <= 800ms): Bowler delivery release near frame bottom.
+ * 2. Bounce (t = 1050ms): Pitch impact on the perspective clay strip.
+ * 3. Bat Transit (t = 1200ms): Bat-plane transit (outside edge contact or visible daylight gap).
+ * 4. Keeper Gloves (t = 1300ms): Terminal arrival in the planted wicketkeeper's gloves.
+ *
+ * Mathematically guarantees:
+ * - Screen Y strictly decreases monotonically towards the batter and keeper (no direction reversal).
+ * - Zero division singularities or coordinate inversions.
+ * - Accurate event alignment: ball crosses bat at exactly t = 1200ms.
+ * - Perfectly continuous glove arrival at t = 1300ms.
+ */
+export function solveCaughtBehindSlipCorridor(
+  cb: CaughtBehindData,
+  timeMs: number,
+  w: number,
+  h: number,
+  batEdgeX: number,
+  batEdgeY: number,
+  gloveX: number,
+  gloveY: number
+): SlipCorridorBallState {
+  const T_RELEASE = 800;
+  const T_BOUNCE = 1050;
+  const T_TRANSIT = 1200;
+  const T_KEEPER = 1300;
+
+  // Visual Anchors
+  const x0 = w * 0.50;
+  const y0 = h * 0.965;
+  const r0 = 6.4;
+
+  const x1 = w * 0.495;
+  const y1 = h * 0.88;
+  const r1 = 5.6;
+
+  const gapPx = cb.hasEdge ? 0 : Math.max(4, Math.min(28, (cb.gapMm / 30) * 16));
+  const x2 = cb.hasEdge ? batEdgeX - 3.2 : batEdgeX - gapPx - 3.2;
+  const y2 = batEdgeY;
+  const r2 = 4.8;
+
+  const x3 = gloveX;
+  const y3 = gloveY;
+  const r3 = 4.0;
+
+  let x = x0;
+  let y = y0;
+  let radius = r0;
+  const hasBounced = timeMs >= T_BOUNCE;
+  const hasPassedBat = timeMs >= T_TRANSIT;
+  const isDeflected = cb.hasEdge && hasPassedBat;
+
+  if (timeMs <= T_RELEASE) {
+    x = x0;
+    y = y0;
+    radius = r0;
+  } else if (timeMs <= T_BOUNCE) {
+    const u = (timeMs - T_RELEASE) / (T_BOUNCE - T_RELEASE);
+    x = lerpVal(x0, x1, u);
+    y = lerpVal(y0, y1, u) - Math.sin(u * Math.PI) * 6;
+    radius = lerpVal(r0, r1, u);
+  } else if (timeMs <= T_TRANSIT) {
+    const u = (timeMs - T_BOUNCE) / (T_TRANSIT - T_BOUNCE);
+    x = lerpVal(x1, x2, u);
+    y = lerpVal(y1, y2, u) - Math.sin(u * Math.PI) * 8;
+    radius = lerpVal(r1, r2, u);
+  } else if (timeMs <= T_KEEPER) {
+    const u = (timeMs - T_TRANSIT) / (T_KEEPER - T_TRANSIT);
+    // Screen Y decreases monotonically into the keeper gloves
+    y = lerpVal(y2, y3, u) - Math.sin(u * Math.PI) * 2;
+    if (!cb.hasEdge) {
+      x = lerpVal(x2, x3, u);
+    } else {
+      const eased = u * (2 - u);
+      x = lerpVal(x2, x3, eased);
+    }
+    radius = lerpVal(r2, r3, u);
+  } else {
+    x = x3;
+    y = y3;
+    radius = r3;
+  }
+
+  return {
+    x,
+    y,
+    radius,
+    hasBounced,
+    hasPassedBat,
+    isDeflected,
+  };
+}
+
+/**
+ * Canonical perspective projection from 3D pitch coordinates into Slip Cam 2D screen coordinates.
+ */
+export function projectPitchToSlipCam(
+  p: Vec3,
+  w: number,
+  h: number
+): { x: number; y: number; scale: number } {
+  const CAM_X = 6.0;
+  const HORIZON_H = 0.16;
+  const PERSP_K = 3.48;
+  const EYE_D0 = 1.0;
+  const WORLD_BATTER_GUARD_Z = 1.06;
+
+  const camDist = CAM_X - p.z;
+  const depthFactor = PERSP_K / (camDist + EYE_D0);
+  const baseDepth = PERSP_K / (CAM_X - WORLD_BATTER_GUARD_Z + EYE_D0);
+  const scale = depthFactor / baseDepth;
+
+  const groundY = h * (HORIZON_H + depthFactor);
+  const stripHalfW = w * 0.27 * scale;
+  const pxPerMeterX = stripHalfW / 1.525;
+  const pxPerMeterY = 72 * scale;
+
+  const screenX = w * 0.50 - p.x * pxPerMeterX;
+  const screenY = groundY - p.y * pxPerMeterY;
+
+  return { x: screenX, y: screenY, scale };
+}
+
+/**
+ * Projects a 3D delivery point into macro edge camera screen coordinates.
+ */
+export function projectCaughtBehindToMacro(
+  state: Delivery3DState,
+  edgeX: number = 200,
+  ballRadiusPx: number = 28,
+  scale: number = 3.5
+): { ballX: number; ballY: number; scaleFactor: number } {
+  // Lateral offset from outside edge profile in view pixels
+  const lateralDeltaM = state.x - (BAT_EDGE_X_M + BALL_RADIUS_M);
+  const ballX = edgeX + ballRadiusPx + lateralDeltaM * 1000 * (scale / 3.5);
+
+  // Vertical movement through the corridor: passes edge at Y = 150
+  const zDeltaM = state.z - 1.22; // 0 at bat plane
+  const ballY = 150 - zDeltaM * 110;
+
+  const scaleFactor = Math.max(0.7, Math.min(1.3, 1.0 - zDeltaM * 0.08));
+
+  return { ballX, ballY, scaleFactor };
+}
+
 /**
  * Target the ball reaches when it misses the bat.
  *
- * The ball keeps its line and is taken wide of the gloves, on the side away
- * from the bat, by an amount that scales with the apparent gap. Because the
- * whole flight is one segment towards this point, the lateral direction can
- * never reverse.
+ * The ball passes the bat edge at q = CB_BAT_CROSS_P with exact separation gapPx,
+ * continuing along its natural flight line past the stumps into the gloves.
  */
 function cleanMissTarget(c: CaughtBehindCorridor) {
   // The keeper stands down-corridor from the bat edge. A ball that beats the
@@ -402,16 +749,43 @@ export function solveUltraEdgeSignal(cb: CaughtBehindData): UltraEdgeSignal {
 }
 
 /**
+ * Solves bat vertical displacement (turf contact) during a stroke.
+ * If the incident contains a ground scrape distractor, the bat toe contacts
+ * the turf precisely around distractorTimeMs.
+ */
+export function solveBatGroundContact(cb: CaughtBehindData, timeMs: number): {
+  toeDisplacementPx: number;
+  isTurfContact: boolean;
+  contactIntensity: number;
+} {
+  if (!cb.distractorNoise || cb.distractorType !== "GROUND_SCRAPE" || cb.distractorTimeMs === null) {
+    return { toeDisplacementPx: 0, isTurfContact: false, contactIntensity: 0 };
+  }
+  const dt = timeMs - cb.distractorTimeMs;
+  const sigma = 35; // 35ms pulse width
+  const intensity = Math.exp(-(dt * dt) / (2 * sigma * sigma));
+  const maxDisplacementPx = 6.0; // moves bat toe 6px down to touch the turf line
+  const displacement = maxDisplacementPx * intensity;
+  return {
+    toeDisplacementPx: displacement,
+    isTurfContact: intensity > 0.82,
+    contactIntensity: intensity,
+  };
+}
+
+/**
  * Amplitude of the signal at a point in time, including the noise floor.
  *
  * Used to draw the scope and to render the audio buffer from the same model,
  * so what the operator sees always matches what they hear.
  */
 export function sampleUltraEdgeAmplitude(signal: UltraEdgeSignal, timeMs: number): number {
-  let amp = signal.noiseFloor * Math.sin(timeMs * 0.7);
+  // Stable, low-amplitude ambient noise floor (-36dB to -40dB equivalent)
+  let amp = (signal.noiseFloor * 0.16) * Math.sin(timeMs * 0.08) + 
+            (signal.noiseFloor * 0.06) * Math.sin(timeMs * 0.22);
   for (const tr of signal.transients) {
     const delta = timeMs - tr.timeMs;
-    if (Math.abs(delta) > tr.decayMs * 6) continue;
+    if (Math.abs(delta) > tr.decayMs * 5) continue;
     const envelope = Math.exp(-Math.abs(delta) / tr.decayMs);
     amp += Math.sin((delta * tr.centreFreqHz) / 12000) * tr.amplitude * envelope;
   }

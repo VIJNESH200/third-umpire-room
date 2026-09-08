@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import type { RunOutData } from "../../types/scenario";
+import type { RunOutData, IncidentType } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { projectToCAM01 } from "../../engine/cameraProjections";
 import { clamp } from "../instinct/actorRigs";
@@ -13,6 +13,7 @@ import {
 interface SideOnWideCreaseViewProps {
   runOut: RunOutData;
   currentTimeMs: number;
+  incidentType?: IncidentType;
 }
 
 // Rig constants: the articulated runner rig is drawn at this scale, facing the
@@ -21,7 +22,7 @@ const RUNNER_SCALE = 1.1;
 const RUNNER_FACING = -1;
 
 /**
- * CAM 01 • BROADCAST SIDE-ON WIDE ANGLE
+ * CAM 01 • BROADCAST SIDE-ON WIDE ANGLE / SIDE-ON KEEPER
  *
  * Every actor is rendered from the SAME canonical RunOutReplayState as
  * CAM 02 / CAM 07 / CAM 10 at the same canonical timestamp:
@@ -35,6 +36,7 @@ const RUNNER_FACING = -1;
 export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
   runOut,
   currentTimeMs,
+  incidentType,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -169,7 +171,9 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
         <div className="flex items-center space-x-2.5">
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
           <span className="text-xs font-bold tracking-wider text-slate-100 font-display">
-            CAM 01 • BROADCAST SIDE-ON WIDE ANGLE
+            {incidentType === "STUMPING"
+              ? "CAM 01 • SIDE-ON KEEPER"
+              : "CAM 01 • BROADCAST SIDE-ON WIDE ANGLE"}
           </span>
           <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-slate-300 font-semibold">
             FRAME {currentFrame} • 1080P 50FPS
@@ -177,7 +181,11 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
         </div>
 
         <div className="text-[11px] text-slate-400">
-          THROW: <span className="text-cyan-300 font-bold">{runOut.fielderThrow}</span>
+          {incidentType === "STUMPING" ? (
+            <>ACTION: <span className="text-cyan-300 font-bold">Wicketkeeper Gather & Break</span></>
+          ) : (
+            <>THROW: <span className="text-cyan-300 font-bold">{runOut.fielderThrow}</span></>
+          )}
         </div>
       </div>
 
@@ -196,7 +204,7 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
         <div className="absolute top-2.5 left-2.5 bg-slate-950/90 border border-slate-700 px-3 py-1.5 rounded text-[11px] font-mono backdrop-blur-sm z-20">
           <span className="text-slate-400 font-bold">CAMERA: </span>
           <span className="text-cyan-300 font-bold">
-            SIDE-ON WIDE (1080P 50FPS)
+            {incidentType === "STUMPING" ? "SIDE-ON KEEPER (1080P 50FPS)" : "SIDE-ON WIDE (1080P 50FPS)"}
           </span>
         </div>
       </div>
@@ -205,15 +213,21 @@ export const SideOnWideCreaseView: React.FC<SideOnWideCreaseViewProps> = ({
       <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
         <div className="hardware-panel p-2 rounded-lg">
           <div className="text-[9px] text-slate-400 font-bold">VIEW ANGLE</div>
-          <div className="text-[11px] font-black text-slate-200">SIDE-ON WIDE (CAM 01)</div>
+          <div className="text-[11px] font-black text-slate-200">
+            {incidentType === "STUMPING" ? "SIDE-ON KEEPER (CAM 01)" : "SIDE-ON WIDE (CAM 01)"}
+          </div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
           <div className="text-[9px] text-slate-400 font-bold">FRAME RATE</div>
           <div className="text-[11px] font-black text-cyan-300">50 FPS HIGH-DEFINITION</div>
         </div>
         <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">DIVE TECHNIQUE</div>
-          <div className="text-[11px] font-black text-amber-300">{runOut.diveType}</div>
+          <div className="text-[9px] text-slate-400 font-bold">
+            {incidentType === "STUMPING" ? "RECOVERY ACTION" : "DIVE TECHNIQUE"}
+          </div>
+          <div className="text-[11px] font-black text-amber-300">
+            {incidentType === "STUMPING" ? "BACK-FOOT DRAG" : runOut.diveType}
+          </div>
         </div>
       </div>
     </div>

@@ -318,11 +318,11 @@ export function solveHotSpotThermalFrame(
   // read as a verdict under any circumstances.
   let statusLine: string;
   if (time < model.transitTimeMs - 40) {
-    statusLine = "BALL APPROACHING BAT PLANE — IR ELEMENTS NOMINAL";
+    statusLine = "DELIVERY APPROACHING BAT PLANE • THERMAL SENSOR READY";
   } else if (ignitedCount === 0) {
-    statusLine = "NO ZONE EXCEEDS DETECTION THRESHOLD";
+    statusLine = "NOMINAL BASELINE • NO ZONE EXCEEDS DETECTION THRESHOLD";
   } else {
-    statusLine = `RADIANCE ZONE${ignitedCount > 1 ? "S" : ""} PRESENT — INTERPRET BEFORE CALLING`;
+    statusLine = "THERMAL RADIANCE DETECTED • REVIEW BAT PROFILE";
   }
 
   return {

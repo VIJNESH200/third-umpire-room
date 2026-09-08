@@ -3,14 +3,16 @@ import type { Scenario } from "../../types/scenario";
 import { PitchMapOverlay } from "../tools/PitchMapOverlay";
 import { FrontOnPitchView } from "../tools/FrontOnPitchView";
 import { CreaseZoom } from "../tools/CreaseZoom";
+import { StumpingEvidenceReview } from "../tools/StumpingEvidenceReview";
 import { SideOnWideCreaseView } from "../tools/SideOnWideCreaseView";
 import { OverheadCreaseView } from "../tools/OverheadCreaseView";
-import { StrikerStumpCamView } from "../tools/StrikerStumpCamView";
 import { UltraEdgeWaveform } from "../tools/UltraEdgeWaveform";
 import { HotSpotIRView } from "../tools/HotSpotIRView";
-import { SuperSlowEdgeView } from "../tools/SuperSlowEdgeView";
 import { BoundaryZoom } from "../tools/BoundaryZoom";
 import { CatchRelayView } from "../tools/CatchRelayView";
+import { SlipCamReplayView } from "../tools/SlipCamReplayView";
+import { StumpProjectionView } from "../tools/StumpProjectionView";
+import { IncidentReplayFeed } from "../instinct/IncidentReplayFeed";
 
 interface ReplayViewportProps {
   scenario: Scenario;
@@ -42,6 +44,14 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
           />
         );
       }
+      if (activeTool === "STUMP_PROJ") {
+        return (
+          <StumpProjectionView
+            lbw={scenario.lbw}
+            currentTimeMs={currentTimeMs}
+          />
+        );
+      }
       // Default / BROADCAST_FRONT (CAM 01)
       return (
         <FrontOnPitchView
@@ -51,14 +61,15 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
       );
     }
 
-    // 2. RUN OUT & STUMPING Incidents
-    if ((scenario.incidentType === "RUN_OUT" || scenario.incidentType === "STUMPING") && scenario.runOut) {
+    // 2. RUN OUT Incidents
+    if (scenario.incidentType === "RUN_OUT" && scenario.runOut) {
       if (activeTool === "CREASE_ZOOM") {
         return (
           <CreaseZoom
             runOut={scenario.runOut}
             currentTimeMs={currentTimeMs}
             onTimeChange={onTimeChange}
+            incidentType={scenario.incidentType}
           />
         );
       }
@@ -67,6 +78,7 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
           <SideOnWideCreaseView
             runOut={scenario.runOut}
             currentTimeMs={currentTimeMs}
+            incidentType={scenario.incidentType}
           />
         );
       }
@@ -75,14 +87,7 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
           <OverheadCreaseView
             runOut={scenario.runOut}
             currentTimeMs={currentTimeMs}
-          />
-        );
-      }
-      if (activeTool === "STUMP_CAM") {
-        return (
-          <StrikerStumpCamView
-            runOut={scenario.runOut}
-            currentTimeMs={currentTimeMs}
+            incidentType={scenario.incidentType}
           />
         );
       }
@@ -92,22 +97,44 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
           runOut={scenario.runOut}
           currentTimeMs={currentTimeMs}
           onTimeChange={onTimeChange}
+          incidentType={scenario.incidentType}
+        />
+      );
+    }
+
+    // 2b. STUMPING Incidents
+    if (scenario.incidentType === "STUMPING" && scenario.stumping) {
+      return (
+        <StumpingEvidenceReview
+          stumping={scenario.stumping}
+          currentTimeMs={currentTimeMs}
+          onTimeChange={onTimeChange}
         />
       );
     }
 
     // 3. CAUGHT BEHIND Incidents
     if (scenario.incidentType === "CAUGHT_BEHIND" && scenario.caughtBehind) {
+      if (activeTool === "BROADCAST_SLIP") {
+        return (
+          <SlipCamReplayView
+            caughtBehind={scenario.caughtBehind}
+            currentTimeMs={currentTimeMs}
+            scenario={scenario}
+          />
+        );
+      }
       if (activeTool === "ULTRAEDGE") {
         return (
           <UltraEdgeWaveform
             caughtBehind={scenario.caughtBehind}
             currentTimeMs={currentTimeMs}
             onTimeChange={onTimeChange}
+            scenario={scenario}
           />
         );
       }
-      if (activeTool === "HOTSPOT") {
+      if (activeTool === "HOTSPOT" || activeTool === "STUMP_CAM") {
         return (
           <HotSpotIRView
             caughtBehind={scenario.caughtBehind}
@@ -115,20 +142,14 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
           />
         );
       }
-      if (activeTool === "SUPER_SLOW") {
-        return (
-          <SuperSlowEdgeView
-            caughtBehind={scenario.caughtBehind}
-            currentTimeMs={currentTimeMs}
-          />
-        );
-      }
-      // Fallback
+
+      // Fallback: Default to UltraEdge
       return (
         <UltraEdgeWaveform
           caughtBehind={scenario.caughtBehind}
           currentTimeMs={currentTimeMs}
           onTimeChange={onTimeChange}
+          scenario={scenario}
         />
       );
     }
@@ -150,6 +171,13 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
             boundary={scenario.boundary}
             currentTimeMs={currentTimeMs}
           />
+        );
+      }
+      if (activeTool === "INSTINCT_CAM") {
+        return (
+          <div className="h-full w-full">
+            <IncidentReplayFeed scenario={scenario} />
+          </div>
         );
       }
       // Fallback

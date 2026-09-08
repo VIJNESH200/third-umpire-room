@@ -24,3 +24,11 @@ dist-ssr
 *.sw?
 
 verification-screenshots/
+
+# Local test scripts and screenshots
+scripts/
+*.png
+*.txt
+ORIGINAL_REQUEST.md
+.agents/
+

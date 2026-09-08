@@ -198,6 +198,8 @@ export interface BatterKinematics {
   padRecoilX: number;
   padRecoilY: number;
   isDiving?: boolean;
+  backLegLift?: number;
+  backLegFootAngleRad?: number;
 }
 
 export interface BowlerKinematics {
@@ -752,48 +754,88 @@ export function solveStumpingBatterKinematics(
   creaseX: number,
   marginPx: number
 ): { batterX: number; batterY: number; batterK: BatterKinematics } {
-  // Batter is positioned relative to popping crease
-  let advanceProgress = 0.0;
-  let stretchBackProgress = 0.0;
+  // Batter maintains a fixed stationary upper body stance in the crease box.
+  // Torso, head, shoulders, arms, bat, and front leg remain STILL.
+  const batterX = creaseX + 10;
+  const batterY = 215;
 
-  if (p < 0.35) {
-    // Advances down pitch
-    const t = p / 0.35;
-    advanceProgress = easeOutCubic(t);
-  } else if (p >= 0.35 && p < 0.65) {
-    advanceProgress = 1.0;
-    // Beaten & desperate back-foot drag
-    const t = (p - 0.35) / 0.30;
-    stretchBackProgress = easeInOutQuad(t);
+  const torsoAngleRad = 0.08;
+  const headX = 2;
+  const headY = -52;
+  const headTiltRad = 0.0;
+  const frontLegX = 14;
+  const frontLegY = -28;
+  const batPivotX = 6;
+  const batPivotY = -30;
+  const batRotRad = 0.16;
+
+  // Rear leg pendulum kinematics:
+  // At stance (p=0): rear foot is firmly behind popping crease with visible daylight (backLegX = -18).
+  // During delivery (p: 0.10 -> 0.45): heel lifts up, knee flexes slightly, toe elevates off turf.
+  // At break (p = 0.65):
+  //   OUT: toe remains airborne or short of crease.
+  //   NOT OUT: toe taps down flat behind popping crease.
+  // Post-break (p > 0.65): batter reaches/drags back towards crease for recovery.
+  const isOut = marginPx > 0;
+
+  // 1. Horizontal position backLegX:
+  // Smoothly transfer from -18 (stance) to target position at wicket break (p=0.65), then to -22 (recovery drag)
+  const targetBreakX = isOut
+    ? (-17.5 + Math.min(2, marginPx * 0.04))
+    : (-18.5 - Math.min(2, Math.abs(marginPx) * 0.05));
+
+  let backLegX = -18;
+  if (p < 0.65) {
+    const t = p / 0.65;
+    // Early delivery unweight (-18 -> -15) then reach back towards targetBreakX
+    const unweight = Math.sin(t * Math.PI) * 2.2;
+    backLegX = lerp(-18, targetBreakX, easeInOutQuad(t)) + unweight;
   } else {
-    advanceProgress = 1.0;
-    stretchBackProgress = 1.0;
+    const t = clamp((p - 0.65) / 0.35, 0, 1);
+    backLegX = lerp(targetBreakX, -22, easeOutCubic(t));
   }
 
-  const batterX = creaseX + 28 + advanceProgress * 14;
-  const torsoAngleRad = lerp(0.12, 0.28, advanceProgress) - stretchBackProgress * 0.15;
-  const headX = lerp(4, 10, advanceProgress);
-  const headY = lerp(-50, -46, advanceProgress);
+  // 2. Vertical rear-leg lift and foot rotation:
+  let backLegLift = 0;
+  let backLegFootAngleRad = 0;
 
-  // Back foot stretches backwards towards crease line
-  const backFootReach = lerp(-10, -10 - marginPx * 0.6, stretchBackProgress);
-  const backLegX = backFootReach;
-  const frontLegX = lerp(14, 22, advanceProgress);
-
-  const batPivotX = lerp(8, 14, advanceProgress);
-  const batPivotY = -30;
-  const batRotRad = lerp(0.18, 0.40, advanceProgress);
+  if (isOut) {
+    const breakLift = 6;
+    const breakAngle = -0.35;
+    if (p < 0.65) {
+      const t = p / 0.65;
+      const arc = Math.sin(t * Math.PI * 0.5);
+      backLegLift = arc * breakLift;
+      backLegFootAngleRad = arc * breakAngle;
+    } else {
+      const t = clamp((p - 0.65) / 0.35, 0, 1);
+      const smoothT = easeOutCubic(t);
+      backLegLift = lerp(breakLift, 0, smoothT);
+      backLegFootAngleRad = lerp(breakAngle, 0, smoothT);
+    }
+  } else {
+    // NOT OUT: Toe lifts during delivery, then lands/taps down by p = 0.58, staying at 0 through break and after
+    if (p < 0.58) {
+      const t = p / 0.58;
+      const arc = Math.sin(t * Math.PI);
+      backLegLift = arc * 6;
+      backLegFootAngleRad = -arc * 0.35;
+    } else {
+      backLegLift = 0;
+      backLegFootAngleRad = 0;
+    }
+  }
 
   return {
     batterX,
-    batterY: 215,
+    batterY,
     batterK: {
       torsoAngleRad,
       headX,
       headY,
-      headTiltRad: lerp(0.15, -0.1, stretchBackProgress),
+      headTiltRad,
       frontLegX,
-      frontLegY: -28,
+      frontLegY,
       backLegX,
       backLegY: -28,
       batPivotX,
@@ -801,6 +843,8 @@ export function solveStumpingBatterKinematics(
       batRotRad,
       padRecoilX: 0,
       padRecoilY: 0,
+      backLegLift,
+      backLegFootAngleRad,
     },
   };
 }
@@ -840,6 +884,7 @@ export function solveStumpingKeeperKinematics(p: number): KeeperKinematics {
     crouchElevation = lerp(0.1, 1.0, smoothT);
     gloveX = lerp(-4, 0, smoothT);
     gloveY = lerp(-36, -52, smoothT);
+    isGlovesOpen = false;
   }
 
   const torsoAngleRad = lerp(0.15, -0.1, crouchElevation);
@@ -1073,7 +1118,7 @@ export function solveBatterSkeleton(k: BatterKinematics): BatterSkeleton {
     trailHip,
     BATTER_BONE.thigh,
     BATTER_BONE.shin,
-    { x: k.backLegX, y: ankleY },
+    { x: k.backLegX, y: ankleY - (k.backLegLift ?? 0) },
     -1
   );
 
@@ -1169,10 +1214,28 @@ export function drawArticulatedBatter(
 
   // --- 1. Rear Leg & Rear Pad (FK chain, drawn behind the torso) ---
   drawPadLeg(s.trailHip, s.trailKnee, s.trailAnkle, "#e2e8f0", "#cbd5e1", 9, 11);
+  ctx.save();
+  ctx.translate(s.trailAnkle.x - 2, s.trailAnkle.y + 2);
+  if (k.backLegFootAngleRad) {
+    ctx.rotate(k.backLegFootAngleRad);
+  }
+  // Anatomical cricket boot: white leather upper with forward toe (+X toward bowler), dark sole
+  ctx.fillStyle = "#f8fafc";
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.ellipse(0, -1, 7.5, 3.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = "#1e293b";
   ctx.beginPath();
-  ctx.ellipse(s.trailAnkle.x - 2, s.trailAnkle.y + 2, 7, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 1.8, 7.5, 1.4, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(4.5, -0.5, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 
   // --- 2. Torso & Flannels (identical art block, rooted at the FK pelvis) ---
   ctx.save();

@@ -3,7 +3,7 @@ import type {
   DecisionVerdict,
   OnFieldSignal,
 } from "../../types/scenario";
-import { Send, AlertTriangle, Scale, Lock } from "lucide-react";
+import { Send, AlertTriangle } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
 /** Task 7 — LBW evidence review checklist. Transmission (normal mode) is
@@ -44,7 +44,7 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   reviewChecklist,
 }) => {
   const [selectedVerdict, setSelectedVerdict] = useState<DecisionVerdict | null>(null);
-  const [dismissalReason, setDismissalReason] = useState<string>("STANDARD");
+  const dismissalReason = "STANDARD";
 
   const isRunOutOrStumping = incidentType === "RUN_OUT" || incidentType === "STUMPING";
   const areMarkersPlaced = !isRunOutOrStumping || (playerBatGroundedMs !== null && playerBailsDislodgedMs !== null);
@@ -70,72 +70,54 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   };
 
   return (
-    <div className="hardware-panel rounded-xl p-3.5 font-mono select-none text-slate-200 space-y-3 shadow-xl">
-      {/* Header Banner */}
-      <div className="flex items-center justify-between pb-2 border-b border-console-800">
-        <div className="flex items-center space-x-2">
-          <div className="w-2.5 h-2.5 rounded-full tally-lamp-amber" />
-          <span className="text-xs font-bold tracking-wider text-amber-300 font-display">
-            TV UMPIRE VERDICT TRANSMITTER
+    <div className="space-y-1.5 select-none text-neutral-200 font-sans">
+      {/* Header Banner with Inline On-Field Call */}
+      <div className="flex items-center justify-between pb-1 border-b border-[#27272a]">
+        <div className="flex items-center space-x-1.5">
+          <span className="w-1.5 h-1.5 bg-amber-500 shrink-0" />
+          <span className="text-xs font-bold tracking-wider text-neutral-200 uppercase">
+            DECISION STATION
           </span>
         </div>
-        <span className="text-[10px] bg-console-950 text-slate-400 px-2 py-0.5 rounded border border-console-800">
-          OFFICIAL ICC DRS PROTOCOL
-        </span>
-      </div>
-
-      {/* On-Field Standard of Proof Box */}
-      <div className="bg-console-950 p-2.5 rounded-lg border border-console-800 space-y-1.5 text-xs">
-        <div className="flex items-center justify-between">
-          <span className="text-slate-400 text-[11px]">ORIGINAL ON-FIELD CALL:</span>
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-neutral-400 font-semibold uppercase">ON-FIELD:</span>
           <span
-            className={`font-black px-2 py-0.5 rounded text-xs border ${
+            className={`font-bold px-1.5 py-0.5 rounded-sm text-[10px] font-mono tracking-wider border ${
               onFieldSignal === "OUT"
-                ? "bg-rose-950/90 border-rose-500 text-rose-300"
+                ? "bg-red-950/60 border-red-700/60 text-red-300"
                 : onFieldSignal === "NOT_OUT"
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-300"
-                : "bg-amber-950/90 border-amber-500 text-amber-300"
+                ? "bg-emerald-950/60 border-emerald-700/60 text-emerald-300"
+                : "bg-amber-950/60 border-amber-700/60 text-amber-300"
             }`}
           >
             {onFieldSignal}
           </span>
         </div>
-
-        {/* Neutral standard of proof — never enumerates which evidence
-            decides the case; the full law explanation arrives only after
-            transmission, on the result screen. */}
-        <div className="text-[11px] text-slate-300 flex items-start gap-1.5 pt-1 border-t border-console-850">
-          <Scale size={13} className="text-cyan-400 shrink-0 mt-0.5" />
-          <span className="font-bold">STANDARD OF PROOF:</span>
-          <span>CONCLUSIVE EVIDENCE REQUIRED</span>
-        </div>
       </div>
 
-      {/* LBW Evidence Review States — satisfied only by genuine review actions.
-          Ball-track review reflects real progression through the Hawk-Eye
-          sequence (n/5 stages walked); it completes only at the projection. */}
+      {/* LBW Evidence Review States — Gated progression checklist */}
       {reviewChecklist && !trainingMode && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-1.5">
           {(
             [
-              { key: "replay", label: "CHECK REPLAY", done: reviewChecklist.replay, progress: "" },
+              { key: "replay", label: "REPLAY", done: reviewChecklist.replay, progress: "" },
               {
                 key: "track",
-                label: "CHECK BALL TRACK",
+                label: "BALL TRACKING",
                 done: reviewChecklist.trackStage >= TRACK_REVIEW_COMPLETE_STAGE,
                 progress:
                   reviewChecklist.trackStage > 0 && reviewChecklist.trackStage < TRACK_REVIEW_COMPLETE_STAGE
-                    ? ` • STAGE ${reviewChecklist.trackStage}/${TRACK_REVIEW_COMPLETE_STAGE}`
+                    ? ` (${reviewChecklist.trackStage}/${TRACK_REVIEW_COMPLETE_STAGE})`
                     : "",
               },
             ] as const
           ).map((chip) => (
             <div
               key={chip.key}
-              className={`px-2 py-1.5 rounded text-[10px] font-bold text-center border transition-all ${
+              className={`px-2 py-1 rounded-sm text-[10px] sm:text-[10.5px] font-semibold text-center border transition-all ${
                 chip.done
-                  ? "bg-emerald-950/70 border-emerald-600/50 text-emerald-300"
-                  : "bg-console-950 border-console-800 text-slate-500"
+                  ? "bg-emerald-950/40 border-emerald-600/50 text-emerald-300"
+                  : "bg-[#161618] border-[#27272a] text-neutral-400"
               }`}
             >
               {chip.done ? "✓ " : "○ "}
@@ -148,34 +130,36 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
         </div>
       )}
 
-      {/* Primary Verdict Selection Buttons */}
-      <div className="grid grid-cols-2 gap-3 pt-1">
-        {/* OUT */}
+      {/* Primary Verdict Selection Buttons (Wordle-inspired rectangular tiles) */}
+      <div className="grid grid-cols-2 gap-1.5">
+        {/* OUT Button */}
         <button
+          type="button"
           onClick={() => handleSelectVerdict("OUT")}
-          className={`p-3 rounded-xl border transition-all flex flex-col items-center justify-center gap-1 shadow-lg active:scale-95 ${
+          className={`py-2 px-3 rounded-sm border transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer active:scale-98 ${
             selectedVerdict === "OUT"
-              ? "bg-rose-900 border-rose-400 text-white ring-2 ring-rose-500/50 shadow-rose-600/30"
-              : "bg-rose-950/40 hover:bg-rose-900/60 border-rose-800/60 text-rose-200 hover:border-rose-500/60"
+              ? "bg-[#b53b3b] border-red-500 text-white font-bold"
+              : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] hover:border-neutral-500 text-neutral-200"
           }`}
         >
-          <span className="text-base font-black tracking-widest font-display">OUT</span>
-          <span className="text-[10px] text-rose-300/80">
+          <span className="text-sm sm:text-base font-bold tracking-widest uppercase">OUT</span>
+          <span className={`text-[10px] sm:text-[10.5px] leading-none ${selectedVerdict === "OUT" ? "text-white/80" : "text-neutral-400"}`}>
             {onFieldSignal === "OUT" ? "Confirm On-Field" : "Overturn to OUT"}
           </span>
         </button>
 
-        {/* NOT OUT */}
+        {/* NOT OUT Button */}
         <button
+          type="button"
           onClick={() => handleSelectVerdict("NOT_OUT")}
-          className={`p-3 rounded-xl border transition-all flex flex-col items-center justify-center gap-1 shadow-lg active:scale-95 ${
+          className={`py-2 px-3 rounded-sm border transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer active:scale-98 ${
             selectedVerdict === "NOT_OUT"
-              ? "bg-emerald-900 border-emerald-400 text-white ring-2 ring-emerald-500/50 shadow-emerald-600/30"
-              : "bg-emerald-950/40 hover:bg-emerald-900/60 border-emerald-800/60 text-emerald-200 hover:border-emerald-500/60"
+              ? "bg-[#538d4e] border-emerald-500 text-white font-bold"
+              : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] hover:border-neutral-500 text-neutral-200"
           }`}
         >
-          <span className="text-base font-black tracking-widest font-display">NOT OUT</span>
-          <span className="text-[10px] text-emerald-300/80">
+          <span className="text-sm sm:text-base font-bold tracking-widest uppercase">NOT OUT</span>
+          <span className={`text-[10px] sm:text-[10.5px] leading-none ${selectedVerdict === "NOT_OUT" ? "text-white/80" : "text-neutral-400"}`}>
             {onFieldSignal === "NOT_OUT" ? "Confirm On-Field" : "Overturn to NOT OUT"}
           </span>
         </button>
@@ -183,26 +167,27 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
 
       {/* Forensic Marker Placement Warning for Run-Out / Stumping */}
       {isRunOutOrStumping && !areMarkersPlaced && (
-        <div className="bg-amber-950/40 border border-amber-500/40 p-2.5 rounded-lg text-[11px] text-amber-300 flex items-center gap-2">
-          <AlertTriangle size={14} className="text-amber-400 shrink-0 animate-pulse" />
+        <div className="bg-[#1a1a1b] border border-amber-600/40 px-2 py-1 rounded-sm text-[10px] text-amber-300 flex items-center gap-1.5">
+          <AlertTriangle size={12} className="text-amber-400 shrink-0" />
           <span>
-            <b>MARK BOTH EVENTS:</b> Identify and mark both 'Bat Grounded' and 'Bails Dislodged' frames before transmitting verdict.
+            <b>TIMING REQUIRED:</b> Mark bat & bails.
           </span>
         </div>
       )}
 
       {/* Final Transmission Trigger */}
       <button
+        type="button"
         disabled={!canTransmit}
         onClick={handleTransmit}
-        className={`w-full py-3 rounded-xl font-black text-xs tracking-wider uppercase transition-all flex items-center justify-center gap-2 shadow-xl font-display ${
+        className={`w-full py-2 rounded-sm font-bold text-xs sm:text-[12.5px] tracking-wider uppercase transition-all flex items-center justify-center gap-1.5 ${
           canTransmit
-            ? "bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-slate-950 shadow-cyan-500/25 active:scale-98 cursor-pointer"
-            : "bg-console-950 text-slate-600 border border-console-800 cursor-not-allowed opacity-60"
+            ? "bg-white hover:bg-neutral-200 text-black cursor-pointer active:scale-98"
+            : "bg-[#1a1a1b] text-neutral-600 border border-[#27272a] cursor-not-allowed opacity-60"
         }`}
       >
-        <Send size={13} />
-        <span>TRANSMIT VERDICT TO ON-FIELD SCREEN</span>
+        <Send size={12} />
+        <span>TRANSMIT DECISION</span>
       </button>
     </div>
   );

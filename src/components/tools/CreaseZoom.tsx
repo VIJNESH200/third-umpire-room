@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { RunOutData } from "../../types/scenario";
+import type { RunOutData, IncidentType } from "../../types/scenario";
 import { solveRunOutReplayState } from "../../engine/runOutPhysics";
 import { projectToCAM02 } from "../../engine/cameraProjections";
 import { ZoomIn, Crosshair, Zap } from "lucide-react";
@@ -8,13 +8,15 @@ interface CreaseZoomProps {
   runOut: RunOutData;
   currentTimeMs: number;
   onTimeChange: (timeMs: number) => void;
+  incidentType?: IncidentType;
 }
 
 export const CreaseZoom: React.FC<CreaseZoomProps> = ({
   runOut,
   currentTimeMs,
+  incidentType,
 }) => {
-  const [zoomLevel, setZoomLevel] = useState<number>(1.35);
+  const [opticalZoom, setOpticalZoom] = useState<"1.0x" | "1.5x">("1.0x");
   const [showLaser, setShowLaser] = useState<boolean>(true);
 
   // Canonical shared physical replay state
@@ -41,14 +43,21 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
   // Virtual 500 FPS frame counter
   const currentFrame = Math.round((currentTimeMs / 1000) * 500);
 
+  // Action-prioritized dynamic camera framing
+  // 1.0x Wide: Frames stumps, bails, popping crease, and bat reach tightly without dead sky
+  // 1.5x Close: Magnifies crease crossing and bail separation with native vector sharpness
+  const activeViewBox = opticalZoom === "1.5x" ? "125 90 250 165" : "80 65 340 205";
+
   return (
-    <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-3 select-none font-mono text-slate-200">
+    <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-1.5 select-none font-mono text-slate-200">
       {/* Top Monitor Header */}
-      <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
+      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
         <div className="flex items-center space-x-2.5">
           <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
           <span className="text-xs font-bold tracking-wider text-slate-100 font-display">
-            CAM 02 • 500 FPS HIGH-SPEED POPPING CREASE
+            {incidentType === "STUMPING"
+              ? "CAM 02 • 500 FPS STUMPING / CREASE"
+              : "CAM 02 • 500 FPS HIGH-SPEED POPPING CREASE"}
           </span>
           <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-slate-300 font-semibold">
             FRAME {currentFrame} / 1100 • 500FPS
@@ -59,7 +68,7 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
           {/* Crease Laser Guide Toggle */}
           <button
             onClick={() => setShowLaser(!showLaser)}
-            className={`tactical-btn px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1.5 transition-colors ${
+            className={`tactical-btn px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
               showLaser ? "text-cyan-300 border-cyan-500/50 bg-cyan-950/40" : "text-slate-400"
             }`}
           >
@@ -69,23 +78,22 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
 
           {/* Optical Zoom Toggle */}
           <button
-            onClick={() => setZoomLevel(zoomLevel === 1.35 ? 1.8 : 1.35)}
-            className="tactical-btn px-2.5 py-1 rounded text-[11px] font-bold text-slate-300 flex items-center gap-1"
+            onClick={() => setOpticalZoom(opticalZoom === "1.0x" ? "1.5x" : "1.0x")}
+            className="tactical-btn px-2.5 py-1 rounded text-[11px] font-bold text-slate-200 hover:text-white flex items-center gap-1 cursor-pointer transition-all hover:scale-105 active:scale-95"
           >
             <ZoomIn size={12} className="text-amber-400" />
-            <span>{zoomLevel.toFixed(2)}x</span>
+            <span>{opticalZoom}</span>
           </button>
         </div>
       </div>
 
       {/* Main Slow-Mo Canvas */}
-      <div className="relative flex-1 min-h-[230px] my-2 bg-gradient-to-b from-[#09111c] via-[#060c14] to-[#03060a] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
+      <div className="relative flex-1 min-h-0 mt-1 bg-gradient-to-b from-[#09111c] via-[#060c14] to-[#03060a] rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center shadow-inner">
         <div className="pointer-events-none absolute inset-0 scanlines-overlay opacity-20" />
 
         <svg
-          viewBox="0 0 500 280"
-          className="w-full h-full max-h-[350px] transition-transform duration-150 z-10"
-          style={{ transform: `scale(${zoomLevel})` }}
+          viewBox={activeViewBox}
+          className="w-full h-full object-contain transition-all duration-200 z-10"
         >
           <defs>
             {/* Natural Grass Turf Gradient */}
@@ -103,12 +111,12 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
             </linearGradient>
           </defs>
 
-          {/* Turf Surface */}
-          <rect x="0" y="195" width="500" height="85" fill="url(#creaseGrass)" />
-          <line x1="0" y1="195" x2="500" y2="195" stroke="#2a4d38" strokeWidth="1.5" />
+          {/* Turf Surface — spans seamlessly across full pitch canvas */}
+          <rect x="-200" y="195" width="900" height="150" fill="url(#creaseGrass)" />
+          <line x1="-200" y1="195" x2="700" y2="195" stroke="#2a4d38" strokeWidth="1.5" />
 
           {/* Painted White Popping Crease Line */}
-          <rect x={creaseX - 2} y="195" width="4" height="85" fill="#FFFFFF" opacity="0.95" />
+          <rect x={creaseX - 2} y="195" width="4" height="120" fill="#FFFFFF" opacity="0.95" />
           <text x={creaseX - 35} y="188" fill="#38BDF8" fontSize="8" fontFamily="monospace" fontWeight="bold">
             POPPING CREASE
           </text>
@@ -119,7 +127,7 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
               x1={creaseX}
               y1="40"
               x2={creaseX}
-              y2="280"
+              y2="300"
               stroke="#00E5FF"
               strokeWidth="1.2"
               strokeDasharray="4 2"
@@ -133,7 +141,7 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
               only: it never states where the bat is relative to the line. */}
           {(() => {
             const pxPerMm = (creaseX - stumpsX) / 1220;
-            const rulerY = 258;
+            const rulerY = 238;
             const spanMm = 200;
             const ticks: number[] = [];
             for (let mm = -spanMm; mm <= spanMm; mm += 50) ticks.push(mm);
@@ -265,26 +273,6 @@ export const CreaseZoom: React.FC<CreaseZoomProps> = ({
               <span className="font-black">ZING CAMERA: </span>
               <span className="text-slate-300">ACTIVE FEED (500 FPS)</span>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Neutral Diagnostics Footer */}
-      <div className="grid grid-cols-3 gap-2 font-mono text-xs pt-1">
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">FRAME RATE</div>
-          <div className="text-[11px] font-black text-cyan-300">500 FPS HIGH-SPEED</div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">CURRENT FRAME</div>
-          <div className="text-[11px] font-black text-slate-200">
-            FRAME {currentFrame} / 1100
-          </div>
-        </div>
-        <div className="hardware-panel p-2 rounded-lg">
-          <div className="text-[9px] text-slate-400 font-bold">TIMECODE</div>
-          <div className="text-[11px] font-black text-cyan-300">
-            T+{(currentTimeMs / 1000).toFixed(3)}s
           </div>
         </div>
       </div>
