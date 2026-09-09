@@ -8,7 +8,27 @@ export type ImpactZone = "OUTSIDE_LINE_PLAYING_SHOT" | "IN_LINE" | "OUTSIDE_LINE
 export type ProjectedStumpHit = "MISSING" | "UMPIRES_CALL" | "CLEARLY_HITTING";
 export type FirstContactType = "PAD_FIRST" | "BAT_FIRST" | "BAT_PAD_SIMULTANEOUS" | "PAD_ONLY";
 
-export interface MatchContext {
+import type {
+  MatchContext,
+  IncidentContext,
+  MatchFormat,
+  ReviewingSide,
+  RemainingReviews,
+} from "./matchContext";
+
+export type {
+  MatchContext,
+  IncidentContext,
+  MatchFormat,
+  ReviewingSide,
+  RemainingReviews,
+};
+
+/**
+ * Legacy MatchContext embedded in existing Scenario objects.
+ * Retained for backwards compatibility with Rapid and Review Shift modes.
+ */
+export interface LegacyMatchContext {
   over: number;
   ballInOver: number;
   battingTeamScore: string;
@@ -20,12 +40,14 @@ export interface MatchContext {
   bowlerFigures: string;
   appealType: string;
   onFieldSignal: OnFieldSignal;
-  matchFormat: "TEST" | "ODI" | "T20";
+  matchFormat: MatchFormat;
   tournament: string;
   matchSituation: string;
   requiredRuns?: number;
   ballsRemaining?: number;
 }
+
+export type ScenarioMatchContext = LegacyMatchContext;
 
 export interface LBWData {
   // Gate 0A: Fair Delivery Check
@@ -205,7 +227,9 @@ export interface ScenarioInitialEvidence {
 export interface Scenario {
   id: string;
   incidentType: IncidentType;
-  matchContext: MatchContext;
+  matchContext: LegacyMatchContext;
+  incidentContext?: IncidentContext;
+  leagueMatchContext?: MatchContext;
   lbw?: LBWData;
   runOut?: RunOutData;
   stumping?: StumpingData;

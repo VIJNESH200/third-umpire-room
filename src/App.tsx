@@ -6,7 +6,8 @@ import type {
   DecisionVerdict,
   IncidentType,
 } from "./types/scenario";
-import { generateSession, generateScenario } from "./engine/scenarioGenerator";
+import { generateScenario } from "./engine/scenarioGenerator";
+import { generateSessionIncidents } from "./engine/randomIncidentEngine";
 import { checkDRSCompliance } from "./engine/drsRules";
 import { computeSessionStats } from "./engine/scoring";
 import { ConsoleLayout, ConsolePhase } from "./components/console/ConsoleLayout";
@@ -50,9 +51,10 @@ export const App: React.FC = () => {
   // Start new shift
   const startNewShift = (count: number = 8, forcedType?: IncidentType) => {
     sounds.playRadioChirp();
+    const sessionSeed = Date.now();
     const scenarios = forcedType
-      ? Array.from({ length: count }, (_, i) => generateScenario(Date.now() + i * 53, forcedType))
-      : generateSession(count, Date.now());
+      ? generateSessionIncidents(sessionSeed, count, { weights: { [forcedType]: 1 } })
+      : generateSessionIncidents(sessionSeed, count);
 
     setSessionScenarios(scenarios);
     setCurrentIncidentIndex(0);
@@ -158,6 +160,16 @@ export const App: React.FC = () => {
         totalCount > 1
           ? [scenario, ...Array.from({ length: totalCount - 1 }, (_, i) => generateScenario(seed + i + 1, type))]
           : [scenario];
+      setSessionScenarios(scenarios);
+      setCurrentIncidentIndex(0);
+      setIncidentHistory([]);
+      setSoftSignalChoice(null);
+      setCurrentIncidentResult(null);
+      setConsolePhase("SOFT_SIGNAL");
+      setAppState("INCIDENT");
+    };
+    (window as any).__startSession = (seed: number = Date.now(), count: number = 8) => {
+      const scenarios = generateSessionIncidents(seed, count);
       setSessionScenarios(scenarios);
       setCurrentIncidentIndex(0);
       setIncidentHistory([]);

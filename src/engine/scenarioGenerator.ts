@@ -13,7 +13,7 @@ import type {
   ImpactZone,
   ProjectedStumpHit,
   FirstContactType,
-  MatchContext,
+  LegacyMatchContext,
   ScenarioInitialEvidence,
   LBWInitialEvidence,
   CaughtBehindInitialEvidence,
@@ -145,7 +145,7 @@ export function generateScenario(
     bowlerObj.type === "SPIN"
   );
 
-  const matchContext: MatchContext = {
+  const matchContext: LegacyMatchContext = {
     over,
     ballInOver,
     battingTeamScore: `${totalRuns}/${totalWickets}`,

@@ -1,11 +1,11 @@
 import React from "react";
-import type { MatchContext, DifficultyTier } from "../../types/scenario";
+import type { LegacyMatchContext, DifficultyTier } from "../../types/scenario";
 import { Volume2, VolumeX } from "lucide-react";
 
 type PhaseIndicator = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
 
 interface MatchLogBarProps {
-  matchContext: MatchContext;
+  matchContext: LegacyMatchContext;
   difficultyTier: DifficultyTier;
   incidentIndex: number;
   totalIncidents: number;
