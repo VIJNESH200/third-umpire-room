@@ -124,6 +124,22 @@ console.log("\n--- Suite 2: Player Count & ID Uniqueness ---");
   for (const player of FICTIONAL_PLAYERS) {
     assert(idFormatRegex.test(player.id), `S2.4: Player ID ${player.id} conforms to standard pattern`);
   }
+
+  // Surname-only format: names must contain no whitespace (single-word surnames)
+  for (const player of FICTIONAL_PLAYERS) {
+    assert(
+      !/\s/.test(player.name),
+      `S2.5: Player ${player.id} name "${player.name}" is a single-word surname (no whitespace)`
+    );
+  }
+
+  // name and shortName must be identical (both are the surname)
+  for (const player of FICTIONAL_PLAYERS) {
+    assert(
+      player.name === player.shortName,
+      `S2.6: Player ${player.id} name "${player.name}" matches shortName "${player.shortName}"`
+    );
+  }
 }
 
 // ============================================================================
@@ -278,6 +294,7 @@ console.log("\n--- Suite 6: Real-World Branding & Name Quarantine ---");
     "bravo", "gayle", "narine", "steyn", "rabada", "klaasen",
     "pooran", "chahal", "kuldeep", "siraj", "arshdeep",
     "suryakumar", "jaiswal", "gaikwad", "ruturaj", "tewatia",
+    "sharma", "singh",
   ];
 
   for (const player of FICTIONAL_PLAYERS) {
