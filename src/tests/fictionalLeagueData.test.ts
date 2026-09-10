@@ -71,12 +71,27 @@ console.log("--- Suite 1: Franchise Count & Identity ---");
   const teamNames = FICTIONAL_TEAMS.map((t) => t.name);
   const venues = FICTIONAL_TEAMS.map((t) => t.homeVenue);
 
+  const expectedDisplayNames = [
+    "Mumbai",
+    "Bengaluru",
+    "Delhi",
+    "Chennai",
+    "Kolkata",
+    "Hyderabad",
+    "Ahmedabad",
+    "Punjab",
+  ];
+
   for (const expectedId of expectedTeamIds) {
     assert(teamIds.includes(expectedId), `S1.2: Contains expected franchise ID ${expectedId}`);
   }
 
   for (const expectedCode of expectedShortCodes) {
     assert(shortCodes.includes(expectedCode), `S1.3: Contains expected short code ${expectedCode}`);
+  }
+
+  for (const expectedName of expectedDisplayNames) {
+    assert(teamNames.includes(expectedName), `S1.3b: Contains expected city-only display name ${expectedName}`);
   }
 
   assert(new Set(teamIds).size === 8, "S1.4: All franchise IDs are unique");

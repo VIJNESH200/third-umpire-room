@@ -1286,7 +1286,7 @@ export const FICTIONAL_PLAYERS: readonly PlayerProfile[] = deepFreeze([
 export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   {
     id: "FRAN_MUM",
-    name: "Mumbai Hawks",
+    name: "Mumbai",
     shortCode: "MHK",
     city: "Mumbai",
     homeVenue: "Marine Drive Stadium",
@@ -1300,7 +1300,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_BLR",
-    name: "Bengaluru Blazers",
+    name: "Bengaluru",
     shortCode: "BLZ",
     city: "Bengaluru",
     homeVenue: "Cubbon Park Arena",
@@ -1314,7 +1314,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_DEL",
-    name: "Delhi Dynamos",
+    name: "Delhi",
     shortCode: "DYN",
     city: "Delhi",
     homeVenue: "Yamuna Cricket Ground",
@@ -1328,7 +1328,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_CHE",
-    name: "Chennai Comets",
+    name: "Chennai",
     shortCode: "CMT",
     city: "Chennai",
     homeVenue: "Coromandel Park",
@@ -1342,7 +1342,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_KOL",
-    name: "Kolkata Strikers",
+    name: "Kolkata",
     shortCode: "STK",
     city: "Kolkata",
     homeVenue: "Hooghly Oval",
@@ -1356,7 +1356,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_HYD",
-    name: "Hyderabad Phoenix",
+    name: "Hyderabad",
     shortCode: "PHX",
     city: "Hyderabad",
     homeVenue: "Deccan Bowl",
@@ -1370,7 +1370,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_AHM",
-    name: "Ahmedabad Aviators",
+    name: "Ahmedabad",
     shortCode: "AVT",
     city: "Ahmedabad",
     homeVenue: "Sabarmati Colosseum",
@@ -1384,7 +1384,7 @@ export const FICTIONAL_TEAMS: readonly Team[] = deepFreeze([
   },
   {
     id: "FRAN_PUN",
-    name: "Punjab Panthers",
+    name: "Punjab",
     shortCode: "PTH",
     city: "Mohali",
     homeVenue: "Northern Plains Arena",
