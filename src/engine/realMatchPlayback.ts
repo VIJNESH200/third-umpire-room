@@ -325,3 +325,125 @@ export class RealMatchPlaybackSession {
     this._overlays.clear();
   }
 }
+
+/**
+ * Parameters required to translate an evaluated LBW DRS incident into a sparse DRS outcome override.
+ * Fully decoupled from LBW physics: only takes the evaluated DRS verdict and the immutable target delivery.
+ */
+export interface LbwDrsConsequenceParams {
+  /** Target delivery on which the LBW appeal and DRS review took place */
+  readonly delivery: RealDelivery;
+  /** Evaluated final verdict produced by the DRS LBW rule engine */
+  readonly verdict: "OUT" | "NOT_OUT";
+  /** Original on-field signal by the standing umpire ("OUT" or "NOT_OUT") */
+  readonly onFieldSignal: "OUT" | "NOT_OUT" | "REFERRED";
+  /** Which team initiated the review (defaults to BOWLING if on-field was NOT_OUT, BATTING if OUT) */
+  readonly reviewingSide?: "BATTING" | "BOWLING";
+  /** Optional rule explanation or citation from the DRS engine */
+  readonly reason?: string;
+  /** Whether the review was deemed Umpire's Call by the DRS engine */
+  readonly isUmpiresCall?: boolean;
+}
+
+/**
+ * Pure function: Translates an evaluated LBW DRS decision into a sparse DrsOutcomeOverride.
+ *
+ * Consequence Semantics:
+ * 1. LBW OUT:
+ *    - Effective delivery becomes a wicket (kind: "LBW", playerOut: delivery.striker).
+ *    - Batter runs remain 0 (under Law 36 / 18, runs off the bat cannot occur on LBW dismissal).
+ *    - If review was initiated by Bowling side and overturned NOT_OUT -> OUT, review is retained.
+ *    - If review was initiated by Batting side and upheld OUT, review is lost unless Umpire's Call.
+ *
+ * 2. LBW NOT OUT:
+ *    - Effective delivery retains the baseline non-wicket outcome (no wicket added).
+ *    - Original runs/extras from delivery are preserved intact.
+ *    - If review was initiated by Bowling side and NOT_OUT stands, review is lost unless Umpire's Call.
+ *    - If review was initiated by Batting side and overturned OUT -> NOT_OUT, review is retained.
+ *
+ * Zero-copy: Never mutates or clones the delivery; only references delivery.id and baseline outcome.
+ */
+export function createLbwDrsConsequence(
+  params: LbwDrsConsequenceParams
+): DrsOutcomeOverride {
+  const {
+    delivery,
+    verdict,
+    onFieldSignal,
+    reviewingSide: explicitSide,
+    reason,
+    isUmpiresCall = false,
+  } = params;
+
+  // Infer reviewing side if not explicitly provided
+  const reviewingSide: "BATTING" | "BOWLING" =
+    explicitSide ?? (onFieldSignal === "OUT" ? "BATTING" : "BOWLING");
+
+  // Review retention logic under ICC DRS rules:
+  // - Review is retained if the decision was overturned (successful review).
+  // - Review is retained if Umpire's Call was upheld (margin of error protection).
+  // - Review is lost ONLY if the on-field decision stood and was NOT Umpire's Call (unsuccessful review).
+  let reviewRetained = true;
+  if (reviewingSide === "BOWLING") {
+    if (verdict === "OUT") {
+      // Overturned from NOT_OUT to OUT (or confirmed OUT) -> review successful, retained
+      reviewRetained = true;
+    } else {
+      // NOT_OUT outcome: if umpire's call, review retained; if clean miss/not out, review lost
+      reviewRetained = isUmpiresCall;
+    }
+  } else {
+    // BATTING side review
+    if (verdict === "NOT_OUT") {
+      // Overturned from OUT to NOT_OUT -> review successful, retained
+      reviewRetained = true;
+    } else {
+      // OUT confirmed: if umpire's call, review retained; if clearly hitting, review lost
+      reviewRetained = isUmpiresCall;
+    }
+  }
+
+  if (verdict === "OUT") {
+    // Effective delivery becomes an LBW wicket for the striker facing the ball
+    const drsOutcome: BallOutcome = {
+      runsBatter: 0,
+      runsExtras: delivery.outcome.runsExtras,
+      extras: delivery.outcome.extras,
+      wicket: {
+        kind: "LBW",
+        playerOut: delivery.striker,
+      },
+    };
+
+    return {
+      ballId: delivery.id,
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? `LBW: Evaluated as OUT (${delivery.striker} dismissed)`,
+    };
+  } else {
+    // Effective delivery retains baseline non-wicket outcome
+    // If baseline had a wicket (e.g. on-field out overturned), strip the wicket; otherwise keep outcome
+    const drsOutcome: BallOutcome = delivery.outcome.wicket
+      ? {
+          runsBatter: delivery.outcome.runsBatter,
+          runsExtras: delivery.outcome.runsExtras,
+          extras: delivery.outcome.extras,
+        }
+      : delivery.outcome;
+
+    return {
+      ballId: delivery.id,
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? `LBW: Evaluated as NOT OUT`,
+    };
+  }
+}
+
