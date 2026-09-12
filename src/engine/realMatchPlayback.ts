@@ -98,6 +98,10 @@ export function computePlaybackState(
       striker: firstBall ? firstBall.striker : "",
       nonStriker: firstBall ? firstBall.nonStriker : "",
       bowler: firstBall ? firstBall.bowler : "",
+      remainingReviews: {
+        batting: 2,
+        bowling: 2,
+      },
       isComplete: false,
     };
   }

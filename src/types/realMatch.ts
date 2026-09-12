@@ -164,7 +164,7 @@ export interface MatchPlaybackState {
   readonly wickets: number;
   /** 0-indexed over number of the current delivery (e.g. 0 for 1st over, 1 for 2nd over) */
   readonly overs: number;
-  /** Balls bowled in the current over (1 to 6) */
+  /** Balls bowled in the current over (1 to 6, or higher when extras occur) */
   readonly ballInOver: number;
   /** Active striker at this point */
   readonly striker: string;
