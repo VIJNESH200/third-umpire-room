@@ -34,6 +34,8 @@ interface ConsoleLayoutProps {
   ) => void;
   onNextIncident: () => void;
   trainingMode?: boolean;
+  isRealMatch?: boolean;
+  nextButtonLabel?: string;
 }
 
 export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
@@ -48,6 +50,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   onFinalVerdictSubmit,
   onNextIncident,
   trainingMode = false,
+  isRealMatch = false,
+  nextButtonLabel,
 }) => {
   // Get initial primary tool for scenario
   const getDefaultTool = (type: string) => {
@@ -713,6 +717,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 incidentIndex={incidentIndex}
                 totalIncidents={totalIncidents}
                 onNextIncident={onNextIncident}
+                isRealMatch={isRealMatch}
+                nextButtonLabel={nextButtonLabel}
               />
             </div>
 

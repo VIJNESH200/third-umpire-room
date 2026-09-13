@@ -24,9 +24,14 @@ import {
   VolumeX,
   Zap,
   GraduationCap,
+  Tv,
 } from "lucide-react";
+import { T20_WC_2024_FINAL } from "./data/realMatches/t20Wc2024Final";
+import { RealMatchGameSession } from "./engine/realMatchGameSession";
+import { RealMatchPlaybackView } from "./components/realMatch/RealMatchPlaybackView";
+import type { RealMatchDrsIncident } from "./types/realMatch";
 
-type AppState = "BRIEFING" | "INCIDENT" | "CARD_REVEAL";
+type AppState = "BRIEFING" | "INCIDENT" | "CARD_REVEAL" | "REAL_MATCH" | "REAL_MATCH_REVIEW";
 
 export const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>("BRIEFING");
@@ -46,6 +51,30 @@ export const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   // Training mode: forensic assists (AUTO ALL, review checklist auto-complete)
   const [trainingMode, setTrainingMode] = useState<boolean>(false);
+
+  // Real Match DRS Mode state
+  const realMatchSessionRef = useRef<RealMatchGameSession | null>(null);
+  const [activeRealMatchIncident, setActiveRealMatchIncident] = useState<RealMatchDrsIncident | null>(null);
+  const [activeReviewIndex, setActiveReviewIndex] = useState<number>(0);
+
+  const startRealMatch = (incidentCount: number = 8, startingSeed: number = Date.now()) => {
+    sounds.playRadioChirp();
+    const session = new RealMatchGameSession(T20_WC_2024_FINAL, startingSeed, { incidentCount });
+    realMatchSessionRef.current = session;
+    setActiveRealMatchIncident(null);
+    setActiveReviewIndex(0);
+    setAppState("REAL_MATCH");
+  };
+
+  const handleEnterRealMatchReview = (incident: RealMatchDrsIncident) => {
+    sounds.playRadioChirp();
+    setActiveRealMatchIncident(incident);
+    setActiveReviewIndex(realMatchSessionRef.current?.getDecisionsHistory().length ?? 0);
+    setSoftSignalChoice(null);
+    setCurrentIncidentResult(null);
+    setConsolePhase("SOFT_SIGNAL");
+    setAppState("REAL_MATCH_REVIEW");
+  };
 
 
   // Start new shift
@@ -91,7 +120,25 @@ export const App: React.FC = () => {
     softSignalOverride?: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS",
     elapsedMsOverride?: number
   ) => {
-    const currentScenario = sessionScenarios[currentIncidentIndex];
+    const isRealMatchReview = appState === "REAL_MATCH_REVIEW" && activeRealMatchIncident !== null;
+    const currentScenario = isRealMatchReview
+      ? activeRealMatchIncident.scenario
+      : sessionScenarios[currentIncidentIndex];
+
+    if (!currentScenario) return;
+
+    if (isRealMatchReview && realMatchSessionRef.current) {
+      const customReason =
+        _dismissalReason &&
+        _dismissalReason.trim() !== "" &&
+        _dismissalReason.trim().toUpperCase() !== "STANDARD"
+          ? _dismissalReason.trim()
+          : undefined;
+      realMatchSessionRef.current.submitDecision(verdict, {
+        reason: customReason,
+      });
+    }
+
     const isVerdictCorrect = verdict === currentScenario.correctFinalVerdict;
 
     const effectiveSoftSignal = softSignalOverride ?? softSignalChoice;
@@ -132,6 +179,14 @@ export const App: React.FC = () => {
   };
 
   const handleNextIncident = () => {
+    if (appState === "REAL_MATCH_REVIEW") {
+      setActiveRealMatchIncident(null);
+      setCurrentIncidentResult(null);
+      setSoftSignalChoice(null);
+      setAppState("REAL_MATCH");
+      return;
+    }
+
     const nextIndex = currentIncidentIndex + 1;
     if (nextIndex < sessionScenarios.length) {
       setCurrentIncidentIndex(nextIndex);
@@ -186,6 +241,10 @@ export const App: React.FC = () => {
       setSoftSignalElapsedMsRef.current(elapsedMs);
       submitFinalVerdictRef.current(verdict, "Test evaluation", undefined, softSignal, elapsedMs);
     };
+    (window as any).__startRealMatch = (seed: number = Date.now(), incidentCount: number = 8) => {
+      startRealMatch(incidentCount, seed);
+    };
+    (window as any).__getRealMatchSession = () => realMatchSessionRef.current;
   }, []);
 
   // 1. BRIEFING SCREEN
@@ -258,11 +317,21 @@ export const App: React.FC = () => {
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
             <button
               type="button"
+              onClick={() => startRealMatch(8)}
+              className="py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs flex items-center justify-center space-x-1.5 shadow-lg border border-amber-400/40 transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer"
+              title="Play through the verified 2024 ICC T20 World Cup Final with live DRS incident injection"
+            >
+              <Tv size={14} />
+              <span>REAL MATCH (2024 FINAL)</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => startNewShift(8)}
               className="flex-1 py-3.5 px-4 rounded-xl bg-slate-100 hover:bg-white text-slate-950 font-black text-xs flex items-center justify-center space-x-2 shadow-md border border-white/20 transition-all active:scale-95 font-display uppercase tracking-wider cursor-pointer"
             >
               <Play size={14} fill="currentColor" />
-              <span>START REVIEW SHIFT (8 INCIDENTS)</span>
+              <span>REVIEW SHIFT (8)</span>
             </button>
 
             <button
@@ -293,7 +362,7 @@ export const App: React.FC = () => {
     );
   }
 
-  // 2. ACTIVE INCIDENT CONSOLE
+  // 2. ACTIVE INCIDENT CONSOLE (RAPID / REVIEW SHIFT)
   if (appState === "INCIDENT") {
     const currentScenario = sessionScenarios[currentIncidentIndex];
     return (
@@ -313,7 +382,40 @@ export const App: React.FC = () => {
     );
   }
 
-  // 3. SESSION COMPLETE & CARD EXPORT
+  // 3. REAL MATCH DRS PLAYBACK VIEW
+  if (appState === "REAL_MATCH" && realMatchSessionRef.current) {
+    return (
+      <RealMatchPlaybackView
+        session={realMatchSessionRef.current}
+        onEnterReview={handleEnterRealMatchReview}
+        onExitMatch={() => setAppState("BRIEFING")}
+        isMuted={isMuted}
+        onToggleMute={handleToggleMute}
+      />
+    );
+  }
+
+  // 4. REAL MATCH DRS REVIEW (reuses ConsoleLayout!)
+  if (appState === "REAL_MATCH_REVIEW" && activeRealMatchIncident) {
+    return (
+      <ConsoleLayout
+        scenario={activeRealMatchIncident.scenario}
+        phase={consolePhase}
+        incidentIndex={activeReviewIndex}
+        totalIncidents={realMatchSessionRef.current?.incidentCount ?? 8}
+        isMuted={isMuted}
+        currentResult={currentIncidentResult}
+        onToggleMute={handleToggleMute}
+        onSoftSignalSubmit={handleSoftSignalSubmit}
+        onFinalVerdictSubmit={handleFinalVerdictSubmit}
+        onNextIncident={handleNextIncident}
+        trainingMode={trainingMode}
+        isRealMatch={true}
+      />
+    );
+  }
+
+  // 5. SESSION COMPLETE & CARD EXPORT
   if (appState === "CARD_REVEAL" && sessionStats) {
     return (
       <ResultCard

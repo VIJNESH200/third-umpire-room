@@ -10,6 +10,8 @@
  * - Free of bloated commentary, tracking coordinates, and provider-specific payload junk.
  */
 
+import type { IncidentType, DifficultyTier, Scenario } from "./scenario";
+
 /**
  * Cricket dismissal categories recognized by the real match data foundation.
  */
@@ -133,6 +135,19 @@ export interface DrsOutcomeOverride {
   readonly reviewRetained?: boolean;
   /** Optional forensic rationale (e.g. "LBW: Pitching in line, impact in line, wickets hitting") */
   readonly reason?: string;
+}
+
+/**
+ * Lightweight link between a canonical real-match delivery and an attached DRS incident scenario.
+ * Zero-copy: avoids duplicating the entire delivery or match; stores references and IDs only.
+ */
+export interface RealMatchDrsIncident {
+  readonly matchId: string;
+  readonly innings: number;
+  readonly deliveryId: string;
+  readonly incidentType: IncidentType;
+  readonly difficulty: DifficultyTier;
+  readonly scenario: Scenario;
 }
 
 /**

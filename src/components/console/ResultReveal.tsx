@@ -16,10 +16,12 @@ import { sounds } from "../../engine/audioSynth";
 
 interface ResultRevealProps {
   scenario: Scenario;
-  result: IncidentResult;
+  result?: IncidentResult | null;
   incidentIndex: number;
   totalIncidents: number;
   onNextIncident: () => void;
+  isRealMatch?: boolean;
+  nextButtonLabel?: string;
 }
 
 export const ResultReveal: React.FC<ResultRevealProps> = ({
@@ -28,7 +30,11 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
   incidentIndex,
   totalIncidents,
   onNextIncident,
+  isRealMatch = false,
+  nextButtonLabel,
 }) => {
+  if (!result) return null;
+
   const isVerdictCorrect = result.finalVerdictCorrect;
   const isLastIncident = incidentIndex >= totalIncidents - 1;
   const isProtocolBreach = !isVerdictCorrect && scenario.drsEvaluation.failedGate !== undefined && scenario.drsEvaluation.failedGate !== "NONE";
@@ -720,7 +726,13 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
                 NEXT ADJUDICATION
               </span>
               <span className="font-mono text-neutral-500">
-                {isLastIncident ? "SERIES FINALE" : `REMAINING: ${totalIncidents - incidentIndex - 1}`}
+                {isRealMatch
+                  ? isLastIncident
+                    ? "FINAL REVIEW COMPLETE"
+                    : `REMAINING: ${totalIncidents - incidentIndex - 1}`
+                  : isLastIncident
+                  ? "SERIES FINALE"
+                  : `REMAINING: ${totalIncidents - incidentIndex - 1}`}
               </span>
             </div>
 
@@ -731,7 +743,14 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
               className="w-full py-3.5 px-6 rounded-lg font-bold text-xs sm:text-sm tracking-[0.15em] uppercase flex items-center justify-center gap-2.5 cursor-pointer transition-all shadow-[0_4px_20px_rgba(216,183,108,0.25)] active:scale-[0.99] bg-gradient-to-r from-[#d8b76c] via-[#ecd599] to-[#c9a456] text-[#121214] hover:brightness-105 border border-[#ecd599]/60"
             >
               <ArrowRight size={18} className="text-[#121214] stroke-[2.5]" />
-              <span>{isLastIncident ? "GENERATE FINAL DRS PERFORMANCE RATING" : "NEXT INCIDENT"}</span>
+              <span>
+                {nextButtonLabel ??
+                  (isRealMatch
+                    ? "RETURN TO MATCH PLAYBACK"
+                    : isLastIncident
+                    ? "GENERATE FINAL DRS PERFORMANCE RATING"
+                    : "NEXT INCIDENT")}
+              </span>
             </button>
           </div>
         </div>
