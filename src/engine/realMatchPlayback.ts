@@ -25,9 +25,9 @@ import type {
  */
 export function deriveEffectiveOutcome(
   delivery: RealDelivery,
-  overlayMap: DrsOverlayMap
+  overlayMap?: DrsOverlayMap
 ): BallOutcome {
-  const override = overlayMap.get(delivery.id);
+  const override = overlayMap?.get(delivery.id);
   if (override && override.applied) {
     return override.drsOutcome;
   }
@@ -40,10 +40,11 @@ export function deriveEffectiveOutcome(
  */
 export function getEffectiveBall(
   delivery: RealDelivery,
-  overlayMap: DrsOverlayMap
+  overlayMap?: DrsOverlayMap
 ): EffectiveBall {
   const effectiveOutcome = deriveEffectiveOutcome(delivery, overlayMap);
-  const isOverridden = effectiveOutcome !== delivery.outcome;
+  const override = overlayMap?.get(delivery.id);
+  const isOverridden = override !== undefined && override.applied;
   return {
     delivery,
     effectiveOutcome,
@@ -59,7 +60,7 @@ export function computePlaybackState(
   match: RealMatch,
   inningsIndex: number,
   deliveryIndex: number,
-  overlayMap: DrsOverlayMap
+  overlayMap?: DrsOverlayMap
 ): MatchPlaybackState {
   if (
     inningsIndex < 0 ||
@@ -77,6 +78,10 @@ export function computePlaybackState(
       striker: "",
       nonStriker: "",
       bowler: "",
+      remainingReviews: {
+        batting: 2,
+        bowling: 2,
+      },
       isComplete: false,
     };
   }
@@ -122,7 +127,7 @@ export function computePlaybackState(
     }
 
     // Account for review deductions under DRS rules
-    const override = overlayMap.get(d.id);
+    const override = overlayMap?.get(d.id);
     if (override && override.applied && override.reviewingSide) {
       if (override.reviewRetained === false) {
         if (override.reviewingSide === "BATTING") {
@@ -172,10 +177,23 @@ export class RealMatchPlaybackSession {
 
   constructor(
     match: RealMatch,
-    initialOverlays?: ReadonlyMap<string, DrsOutcomeOverride>
+    initialOverlays?:
+      | ReadonlyMap<string, DrsOutcomeOverride>
+      | readonly DrsOutcomeOverride[]
   ) {
     this.match = match;
-    this._overlays = new Map<string, DrsOutcomeOverride>(initialOverlays ?? []);
+    this._overlays = new Map<string, DrsOutcomeOverride>();
+    if (initialOverlays) {
+      if ("get" in initialOverlays && typeof initialOverlays.get === "function") {
+        (initialOverlays as ReadonlyMap<string, DrsOutcomeOverride>).forEach((ov, key) => {
+          this._overlays.set(String(key), ov);
+        });
+      } else {
+        for (const ov of initialOverlays as readonly DrsOutcomeOverride[]) {
+          this._overlays.set(ov.ballId, ov);
+        }
+      }
+    }
   }
 
   /**
@@ -327,6 +345,64 @@ export class RealMatchPlaybackSession {
 }
 
 /**
+ * Shared pure utility: Determines whether a team's DRS review is retained under ICC rules.
+ *
+ * Rules:
+ * - If referral was initiated by on-field umpires ("REFERRED") or no team review occurred, neither team loses a review.
+ * - Bowling review:
+ *   - Overturned (verdict === "OUT") -> Retained
+ *   - Upheld (verdict === "NOT_OUT") -> Lost, unless Umpire's Call
+ * - Batting review:
+ *   - Overturned (verdict === "NOT_OUT") -> Retained
+ *   - Upheld (verdict === "OUT") -> Lost, unless Umpire's Call
+ */
+export function calculateReviewRetention(params: {
+  readonly verdict: "OUT" | "NOT_OUT";
+  readonly onFieldSignal?: "OUT" | "NOT_OUT" | "REFERRED";
+  readonly reviewingSide?: "BATTING" | "BOWLING";
+  readonly isUmpiresCall?: boolean;
+}): { readonly reviewingSide?: "BATTING" | "BOWLING"; readonly reviewRetained: boolean } {
+  const { verdict, onFieldSignal, reviewingSide: explicitSide, isUmpiresCall = false } = params;
+
+  // If on-field signal was REFERRED and no explicit reviewing side was specified,
+  // this is an umpire referral (e.g. run out / stumping / boundary check).
+  // Under ICC rules, umpire referrals do not consume team reviews.
+  if (onFieldSignal === "REFERRED" && !explicitSide) {
+    return { reviewingSide: undefined, reviewRetained: true };
+  }
+
+  // Infer reviewing side if not explicitly provided
+  const reviewingSide: "BATTING" | "BOWLING" | undefined =
+    explicitSide ??
+    (onFieldSignal === "OUT"
+      ? "BATTING"
+      : onFieldSignal === "NOT_OUT"
+      ? "BOWLING"
+      : undefined);
+
+  if (!reviewingSide) {
+    return { reviewingSide: undefined, reviewRetained: true };
+  }
+
+  let reviewRetained = true;
+  if (reviewingSide === "BOWLING") {
+    if (verdict === "OUT") {
+      reviewRetained = true;
+    } else {
+      reviewRetained = isUmpiresCall;
+    }
+  } else {
+    if (verdict === "NOT_OUT") {
+      reviewRetained = true;
+    } else {
+      reviewRetained = isUmpiresCall;
+    }
+  }
+
+  return { reviewingSide, reviewRetained };
+}
+
+/**
  * Parameters required to translate an evaluated LBW DRS incident into a sparse DRS outcome override.
  * Fully decoupled from LBW physics: only takes the evaluated DRS verdict and the immutable target delivery.
  */
@@ -335,10 +411,12 @@ export interface LbwDrsConsequenceParams {
   readonly delivery: RealDelivery;
   /** Evaluated final verdict produced by the DRS LBW rule engine */
   readonly verdict: "OUT" | "NOT_OUT";
-  /** Original on-field signal by the standing umpire ("OUT" or "NOT_OUT") */
-  readonly onFieldSignal: "OUT" | "NOT_OUT" | "REFERRED";
+  /** Original on-field signal by the standing umpire ("OUT", "NOT_OUT", or "REFERRED") */
+  readonly onFieldSignal?: "OUT" | "NOT_OUT" | "REFERRED";
   /** Which team initiated the review (defaults to BOWLING if on-field was NOT_OUT, BATTING if OUT) */
   readonly reviewingSide?: "BATTING" | "BOWLING";
+  /** Whether the delivery was a No Ball (Law 36.1 forbids LBW on No Ball) */
+  readonly isNoBall?: boolean;
   /** Optional rule explanation or citation from the DRS engine */
   readonly reason?: string;
   /** Whether the review was deemed Umpire's Call by the DRS engine */
@@ -360,6 +438,7 @@ export interface LbwDrsConsequenceParams {
  *    - Original runs/extras from delivery are preserved intact.
  *    - If review was initiated by Bowling side and NOT_OUT stands, review is lost unless Umpire's Call.
  *    - If review was initiated by Batting side and overturned OUT -> NOT_OUT, review is retained.
+ *    - If delivery was a No Ball, Law 36.1 prevents dismissal and preserves/awards the No Ball extra.
  *
  * Zero-copy: Never mutates or clones the delivery; only references delivery.id and baseline outcome.
  */
@@ -369,46 +448,37 @@ export function createLbwDrsConsequence(
   const {
     delivery,
     verdict,
-    onFieldSignal,
+    onFieldSignal = delivery.outcome.wicket ? "OUT" : "NOT_OUT",
     reviewingSide: explicitSide,
+    isNoBall: explicitNoBall,
     reason,
     isUmpiresCall = false,
   } = params;
 
-  // Infer reviewing side if not explicitly provided
-  const reviewingSide: "BATTING" | "BOWLING" =
-    explicitSide ?? (onFieldSignal === "OUT" ? "BATTING" : "BOWLING");
+  // Under Law 36.1, a batter cannot be out LBW off a No Ball
+  const isNoBallDelivery =
+    explicitNoBall === true ||
+    delivery.outcome.extras?.type === "NO_BALLS";
 
-  // Review retention logic under ICC DRS rules:
-  // - Review is retained if the decision was overturned (successful review).
-  // - Review is retained if Umpire's Call was upheld (margin of error protection).
-  // - Review is lost ONLY if the on-field decision stood and was NOT Umpire's Call (unsuccessful review).
-  let reviewRetained = true;
-  if (reviewingSide === "BOWLING") {
-    if (verdict === "OUT") {
-      // Overturned from NOT_OUT to OUT (or confirmed OUT) -> review successful, retained
-      reviewRetained = true;
-    } else {
-      // NOT_OUT outcome: if umpire's call, review retained; if clean miss/not out, review lost
-      reviewRetained = isUmpiresCall;
-    }
-  } else {
-    // BATTING side review
-    if (verdict === "NOT_OUT") {
-      // Overturned from OUT to NOT_OUT -> review successful, retained
-      reviewRetained = true;
-    } else {
-      // OUT confirmed: if umpire's call, review retained; if clearly hitting, review lost
-      reviewRetained = isUmpiresCall;
-    }
-  }
+  const effectiveVerdict: "OUT" | "NOT_OUT" = isNoBallDelivery
+    ? "NOT_OUT"
+    : verdict;
 
-  if (verdict === "OUT") {
-    // Effective delivery becomes an LBW wicket for the striker facing the ball
+  const { reviewingSide, reviewRetained } = calculateReviewRetention({
+    verdict: effectiveVerdict,
+    onFieldSignal,
+    reviewingSide: explicitSide,
+    isUmpiresCall,
+  });
+
+  if (effectiveVerdict === "OUT") {
+    // Effective delivery becomes an LBW wicket for the striker facing the ball.
+    // Under MCC Laws (Law 20.1.1.3, Law 26, Law 36), the ball becomes dead at dismissal;
+    // extras (leg byes, byes, wides) and batter runs are not scored on an LBW dismissal.
     const drsOutcome: BallOutcome = {
       runsBatter: 0,
-      runsExtras: delivery.outcome.runsExtras,
-      extras: delivery.outcome.extras,
+      runsExtras: undefined,
+      extras: undefined,
       wicket: {
         kind: "LBW",
         playerOut: delivery.striker,
@@ -417,6 +487,7 @@ export function createLbwDrsConsequence(
 
     return {
       ballId: delivery.id,
+      incidentType: "LBW",
       originalOutcome: delivery.outcome,
       drsOutcome,
       applied: true,
@@ -425,25 +496,667 @@ export function createLbwDrsConsequence(
       reason: reason ?? `LBW: Evaluated as OUT (${delivery.striker} dismissed)`,
     };
   } else {
+    // If No Ball was explicitly flagged and baseline lacked No Ball extra, award 1-run penalty
+    const awardedExtras =
+      isNoBallDelivery && explicitNoBall === true && delivery.outcome.extras?.type !== "NO_BALLS"
+        ? {
+            runsExtras: (delivery.outcome.runsExtras ?? 0) + 1,
+            extras: { type: "NO_BALLS" as const, runs: 1 },
+          }
+        : {
+            runsExtras: delivery.outcome.runsExtras,
+            extras: delivery.outcome.extras,
+          };
+
     // Effective delivery retains baseline non-wicket outcome
     // If baseline had a wicket (e.g. on-field out overturned), strip the wicket; otherwise keep outcome
-    const drsOutcome: BallOutcome = delivery.outcome.wicket
-      ? {
-          runsBatter: delivery.outcome.runsBatter,
-          runsExtras: delivery.outcome.runsExtras,
-          extras: delivery.outcome.extras,
-        }
-      : delivery.outcome;
+    const drsOutcome: BallOutcome =
+      delivery.outcome.wicket || (isNoBallDelivery && explicitNoBall === true)
+        ? {
+            runsBatter: delivery.outcome.runsBatter,
+            ...awardedExtras,
+          }
+        : delivery.outcome;
+
+    const defaultReason = isNoBallDelivery
+      ? `LBW: Evaluated as NOT OUT (delivery is a No Ball; Law 36.1 dictates batter cannot be LBW)`
+      : `LBW: Evaluated as NOT OUT`;
 
     return {
       ballId: delivery.id,
+      incidentType: "LBW",
       originalOutcome: delivery.outcome,
       drsOutcome,
       applied: true,
       reviewingSide,
       reviewRetained,
-      reason: reason ?? `LBW: Evaluated as NOT OUT`,
+      reason: reason ?? defaultReason,
     };
   }
 }
+
+/**
+ * Parameters required to translate an evaluated Run Out incident into a sparse DRS outcome override.
+ */
+export interface RunOutDrsConsequenceParams {
+  /** Target delivery on which the run-out appeal took place */
+  readonly delivery: RealDelivery;
+  /** Evaluated final verdict produced by the DRS run-out rule engine */
+  readonly verdict: "OUT" | "NOT_OUT";
+  /** Original on-field signal ("OUT", "NOT_OUT", or "REFERRED", defaults to "REFERRED") */
+  readonly onFieldSignal?: "OUT" | "NOT_OUT" | "REFERRED";
+  /** Which team initiated the review (if team review; undefined for umpire referral) */
+  readonly reviewingSide?: "BATTING" | "BOWLING";
+  /**
+   * Batter who was run out (striker or non-striker).
+   * Defaults to delivery.striker if dismissedEnd is "STRIKER", or delivery.nonStriker if "NON_STRIKER".
+   */
+  readonly dismissedBatter?: string;
+  /** Which end the run out occurred at ("STRIKER" or "NON_STRIKER", defaults to "STRIKER") */
+  readonly dismissedEnd?: "STRIKER" | "NON_STRIKER";
+  /**
+   * Completed runs prior to run out.
+   * Under Law 38, runs completed before the dismissal stand.
+   * If omitted, preserves baseline delivery.outcome.runsBatter.
+   */
+  readonly runsCompleted?: number;
+  /** Fielders involved in the run out dismissal (e.g. thrower, stump breaker) */
+  readonly fielders?: readonly string[];
+  /** Optional rule explanation or citation from the DRS engine */
+  readonly reason?: string;
+}
+
+/**
+ * Pure function: Translates an evaluated Run Out decision into a sparse DrsOutcomeOverride.
+ *
+ * Consequence Semantics:
+ * 1. RUN OUT OUT:
+ *    - Preserves legitimate completed runs (under Law 38, runs completed before run-out stand).
+ *    - Adds exactly one wicket of kind "RUN_OUT".
+ *    - Accurately assigns dismissed player to either striker or non-striker.
+ *    - Preserves delivery extras (wides/no-balls/byes) intact.
+ *
+ * 2. RUN OUT NOT OUT:
+ *    - Baseline delivery outcome is preserved intact (runs and extras retained).
+ *    - If baseline had a wicket (e.g. on-field out overturned), the wicket is removed.
+ *
+ * Zero-copy: Never mutates or clones the delivery; only references delivery.id and baseline outcome.
+ */
+export function createRunOutDrsConsequence(
+  params: RunOutDrsConsequenceParams
+): DrsOutcomeOverride {
+  const {
+    delivery,
+    verdict,
+    onFieldSignal = "REFERRED",
+    reviewingSide: explicitSide,
+    dismissedBatter: explicitBatter,
+    dismissedEnd = "STRIKER",
+    runsCompleted,
+    fielders,
+    reason,
+  } = params;
+
+  const { reviewingSide, reviewRetained } = calculateReviewRetention({
+    verdict,
+    onFieldSignal,
+    reviewingSide: explicitSide,
+    isUmpiresCall: false,
+  });
+
+  const playerOut =
+    explicitBatter ??
+    (params.dismissedEnd !== undefined
+      ? params.dismissedEnd === "NON_STRIKER"
+        ? delivery.nonStriker
+        : delivery.striker
+      : delivery.outcome.wicket?.kind === "RUN_OUT" && delivery.outcome.wicket.playerOut
+      ? delivery.outcome.wicket.playerOut
+      : dismissedEnd === "NON_STRIKER"
+      ? delivery.nonStriker
+      : delivery.striker);
+
+  const runsBatter =
+    runsCompleted !== undefined
+      ? runsCompleted
+      : delivery.outcome.runsBatter;
+
+  const effectiveFielders =
+    fielders && fielders.length > 0
+      ? fielders
+      : delivery.outcome.wicket?.kind === "RUN_OUT"
+      ? delivery.outcome.wicket.fielders
+      : undefined;
+
+  if (verdict === "OUT") {
+    const drsOutcome: BallOutcome = {
+      runsBatter,
+      runsExtras: delivery.outcome.runsExtras,
+      extras: delivery.outcome.extras,
+      wicket: {
+        kind: "RUN_OUT",
+        playerOut,
+        fielders: effectiveFielders,
+      },
+    };
+
+    return {
+      ballId: delivery.id,
+      incidentType: "RUN_OUT",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? `Run Out: Evaluated as OUT (${playerOut} short of crease)`,
+    };
+  } else {
+    const drsOutcome: BallOutcome =
+      delivery.outcome.wicket || runsCompleted !== undefined
+        ? {
+            runsBatter,
+            runsExtras: delivery.outcome.runsExtras,
+            extras: delivery.outcome.extras,
+          }
+        : delivery.outcome;
+
+    return {
+      ballId: delivery.id,
+      incidentType: "RUN_OUT",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? `Run Out: Evaluated as NOT OUT (${playerOut} grounded behind crease)`,
+    };
+  }
+}
+
+/**
+ * Parameters required to translate an evaluated Stumping incident into a sparse DRS outcome override.
+ */
+export interface StumpingDrsConsequenceParams {
+  /** Target delivery on which the stumping appeal took place */
+  readonly delivery: RealDelivery;
+  /** Evaluated final verdict produced by the DRS stumping rule engine */
+  readonly verdict: "OUT" | "NOT_OUT";
+  /** Original on-field signal ("OUT", "NOT_OUT", or "REFERRED", defaults to "REFERRED") */
+  readonly onFieldSignal?: "OUT" | "NOT_OUT" | "REFERRED";
+  /** Which team initiated the review (if team review; undefined for umpire referral) */
+  readonly reviewingSide?: "BATTING" | "BOWLING";
+  /** Dismissed batter name (defaults to delivery.striker per Law 39) */
+  readonly dismissedBatter?: string;
+  /** Wicketkeeper who executed the stumping */
+  readonly wicketkeeper?: string;
+  /**
+   * Whether the delivery was a No Ball.
+   * Under Law 39.1, a batter cannot be out Stumped off a No Ball.
+   * If true or if baseline delivery was a No Ball, verdict is constrained to NOT_OUT.
+   */
+  readonly isNoBall?: boolean;
+  /** Optional rule explanation or citation from the DRS engine */
+  readonly reason?: string;
+}
+
+/**
+ * Pure function: Translates an evaluated Stumping decision into a sparse DrsOutcomeOverride.
+ *
+ * Consequence Semantics:
+ * 1. STUMPING OUT:
+ *    - Striker is out (kind: "STUMPED", playerOut: delivery.striker).
+ *    - Runs off bat remain 0 (batter missed stroke and stepped out).
+ *    - Delivery extras (e.g. Wides) are preserved intact (under Law 39.1, stumping can occur off a Wide).
+ *
+ * 2. STUMPING NOT OUT:
+ *    - Batter is safe (grounded behind popping crease).
+ *    - Baseline delivery outcome is preserved.
+ *    - If delivery was a No Ball (either via isNoBall flag or delivery.outcome.extras.type === "NO_BALLS"),
+ *      stumping cannot be given under Law 39.1, and the No Ball extra is preserved.
+ *
+ * Zero-copy: Never mutates or clones the delivery; only references delivery.id and baseline outcome.
+ */
+export function createStumpingDrsConsequence(
+  params: StumpingDrsConsequenceParams
+): DrsOutcomeOverride {
+  const {
+    delivery,
+    verdict: requestedVerdict,
+    onFieldSignal = "REFERRED",
+    reviewingSide: explicitSide,
+    dismissedBatter,
+    wicketkeeper,
+    isNoBall: explicitNoBall,
+    reason,
+  } = params;
+
+  const playerOut = dismissedBatter ?? delivery.striker;
+
+  // Under Law 39.1, a batter cannot be out stumped off a No Ball.
+  // Check both explicit parameter and baseline delivery extras.
+  const isNoBallDelivery =
+    explicitNoBall === true ||
+    delivery.outcome.extras?.type === "NO_BALLS";
+
+  const effectiveVerdict: "OUT" | "NOT_OUT" = isNoBallDelivery
+    ? "NOT_OUT"
+    : requestedVerdict;
+
+  const { reviewingSide, reviewRetained } = calculateReviewRetention({
+    verdict: effectiveVerdict,
+    onFieldSignal,
+    reviewingSide: explicitSide,
+    isUmpiresCall: false,
+  });
+
+  const effectiveFielders =
+    wicketkeeper
+      ? [wicketkeeper]
+      : delivery.outcome.wicket?.kind === "STUMPED"
+      ? delivery.outcome.wicket.fielders
+      : undefined;
+
+  if (effectiveVerdict === "OUT") {
+    // Under MCC Laws (Law 20.1.1.3, Law 26, Law 39.1, Law 22.15), the ball becomes dead at dismissal;
+    // byes and leg byes cannot be scored on a stumping. Wides (and Penalty) are preserved intact.
+    const isRetainedExtra =
+      delivery.outcome.extras?.type === "WIDES" ||
+      delivery.outcome.extras?.type === "PENALTY";
+
+    const drsOutcome: BallOutcome = {
+      runsBatter: 0,
+      runsExtras: isRetainedExtra ? delivery.outcome.runsExtras : undefined,
+      extras: isRetainedExtra ? delivery.outcome.extras : undefined,
+      wicket: {
+        kind: "STUMPED",
+        playerOut,
+        fielders: effectiveFielders,
+      },
+    };
+
+    return {
+      ballId: delivery.id,
+      incidentType: "STUMPING",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason:
+        reason ??
+        `Stumping: Evaluated as OUT (${playerOut} stumped by ${wicketkeeper ?? effectiveFielders?.[0] ?? "wicketkeeper"})`,
+    };
+  } else {
+    // If No Ball was explicitly flagged and baseline lacked No Ball extra, award 1-run penalty
+    const awardedExtras =
+      isNoBallDelivery && explicitNoBall === true && delivery.outcome.extras?.type !== "NO_BALLS"
+        ? {
+            runsExtras: (delivery.outcome.runsExtras ?? 0) + 1,
+            extras: { type: "NO_BALLS" as const, runs: 1 },
+          }
+        : {
+            runsExtras: delivery.outcome.runsExtras,
+            extras: delivery.outcome.extras,
+          };
+
+    const drsOutcome: BallOutcome =
+      delivery.outcome.wicket || (isNoBallDelivery && explicitNoBall === true)
+        ? {
+            runsBatter: delivery.outcome.runsBatter,
+            ...awardedExtras,
+          }
+        : delivery.outcome;
+
+    const defaultReason = isNoBallDelivery
+      ? `Stumping: Evaluated as NOT OUT (delivery is a No Ball; Law 39.1 dictates batter cannot be stumped)`
+      : `Stumping: Evaluated as NOT OUT (${playerOut} grounded behind crease)`;
+
+    return {
+      ballId: delivery.id,
+      incidentType: "STUMPING",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? defaultReason,
+    };
+  }
+}
+
+/**
+ * Parameters required to translate an evaluated Caught Behind incident into a sparse DRS outcome override.
+ */
+export interface CaughtBehindDrsConsequenceParams {
+  /** Target delivery on which the caught behind appeal took place */
+  readonly delivery: RealDelivery;
+  /** Evaluated final verdict produced by the DRS caught behind rule engine */
+  readonly verdict: "OUT" | "NOT_OUT";
+  /** Original on-field signal ("OUT", "NOT_OUT", or "REFERRED", defaults to OUT if baseline had wicket, else NOT_OUT) */
+  readonly onFieldSignal?: "OUT" | "NOT_OUT" | "REFERRED";
+  /** Which team initiated the review */
+  readonly reviewingSide?: "BATTING" | "BOWLING";
+  /** Dismissed batter name (defaults to delivery.striker) */
+  readonly dismissedBatter?: string;
+  /** Fielder who took the catch (wicketkeeper or slip) */
+  readonly catcher?: string;
+  /** Whether the delivery was a No Ball (Law 33.1 forbids Caught dismissal on No Ball) */
+  readonly isNoBall?: boolean;
+  /** Optional rule explanation or citation from the DRS engine */
+  readonly reason?: string;
+}
+
+/**
+ * Pure function: Translates an evaluated Caught Behind decision into a sparse DrsOutcomeOverride.
+ *
+ * Consequence Semantics:
+ * 1. CAUGHT BEHIND OUT:
+ *    - Striker is out (kind: "CAUGHT", playerOut: delivery.striker, fielders: [catcher]).
+ *    - Runs off bat remain 0 (cannot score off bat when caught behind).
+ *    - Extras preserved.
+ *    - Review retention: retained if bowling overturned NOT_OUT -> OUT; lost if batting upheld OUT.
+ *
+ * 2. CAUGHT BEHIND NOT OUT:
+ *    - If baseline had a caught dismissal (overturned by review), strip the wicket and preserve runs.
+ *    - If baseline had no wicket, preserve baseline outcome intact.
+ *    - Review retention: retained if batting overturned OUT -> NOT_OUT; lost if bowling upheld NOT_OUT.
+ *    - If delivery was a No Ball, Law 33.1 prevents dismissal and preserves/awards the No Ball extra.
+ *
+ * Zero-copy: Never mutates or clones the delivery; only references delivery.id and baseline outcome.
+ */
+export function createCaughtBehindDrsConsequence(
+  params: CaughtBehindDrsConsequenceParams
+): DrsOutcomeOverride {
+  const {
+    delivery,
+    verdict,
+    onFieldSignal = delivery.outcome.wicket ? "OUT" : "NOT_OUT",
+    reviewingSide: explicitSide,
+    dismissedBatter,
+    catcher,
+    isNoBall: explicitNoBall,
+    reason,
+  } = params;
+
+  const playerOut = dismissedBatter ?? delivery.striker;
+
+  // Under Law 33.1, a batter cannot be out caught off a No Ball.
+  const isNoBallDelivery =
+    explicitNoBall === true ||
+    delivery.outcome.extras?.type === "NO_BALLS";
+
+  const effectiveVerdict: "OUT" | "NOT_OUT" = isNoBallDelivery
+    ? "NOT_OUT"
+    : verdict;
+
+  const { reviewingSide, reviewRetained } = calculateReviewRetention({
+    verdict: effectiveVerdict,
+    onFieldSignal,
+    reviewingSide: explicitSide,
+    isUmpiresCall: false,
+  });
+
+  const effectiveFielders =
+    catcher
+      ? [catcher]
+      : delivery.outcome.wicket?.kind === "CAUGHT"
+      ? delivery.outcome.wicket.fielders
+      : undefined;
+
+  if (effectiveVerdict === "OUT") {
+    // Under MCC Laws (Law 20.1.1.3, Law 33), the ball becomes dead at dismissal;
+    // extras (byes, leg byes, wides) and batter runs are not scored on a catch.
+    const drsOutcome: BallOutcome = {
+      runsBatter: 0,
+      runsExtras: undefined,
+      extras: undefined,
+      wicket: {
+        kind: "CAUGHT",
+        playerOut,
+        fielders: effectiveFielders,
+      },
+    };
+
+    return {
+      ballId: delivery.id,
+      incidentType: "CAUGHT_BEHIND",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason:
+        reason ??
+        `Caught Behind: Evaluated as OUT (${playerOut} caught by ${catcher ?? effectiveFielders?.[0] ?? "wicketkeeper"})`,
+    };
+  } else {
+    // If No Ball was explicitly flagged and baseline lacked No Ball extra, award 1-run penalty
+    const awardedExtras =
+      isNoBallDelivery && explicitNoBall === true && delivery.outcome.extras?.type !== "NO_BALLS"
+        ? {
+            runsExtras: (delivery.outcome.runsExtras ?? 0) + 1,
+            extras: { type: "NO_BALLS" as const, runs: 1 },
+          }
+        : {
+            runsExtras: delivery.outcome.runsExtras,
+            extras: delivery.outcome.extras,
+          };
+
+    const drsOutcome: BallOutcome =
+      delivery.outcome.wicket || (isNoBallDelivery && explicitNoBall === true)
+        ? {
+            runsBatter: delivery.outcome.runsBatter,
+            ...awardedExtras,
+          }
+        : delivery.outcome;
+
+    const defaultReason = isNoBallDelivery
+      ? `Caught Behind: Evaluated as NOT OUT (delivery is a No Ball; Law 33.1 dictates batter cannot be caught)`
+      : `Caught Behind: Evaluated as NOT OUT (conclusive daylight / no bat edge)`;
+
+    return {
+      ballId: delivery.id,
+      incidentType: "CAUGHT_BEHIND",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? defaultReason,
+    };
+  }
+}
+
+/**
+ * Parameters required to translate an evaluated Boundary Catch review into a sparse DRS outcome override.
+ */
+export interface BoundaryDrsConsequenceParams {
+  /** Target delivery on which the boundary catch review took place */
+  readonly delivery: RealDelivery;
+  /** Evaluated final verdict produced by the DRS boundary rule engine */
+  readonly verdict: "OUT" | "NOT_OUT";
+  /** Original on-field signal ("OUT", "NOT_OUT", or "REFERRED", defaults to "REFERRED") */
+  readonly onFieldSignal?: "OUT" | "NOT_OUT" | "REFERRED";
+  /** Which team initiated the review (if team review; undefined for umpire referral) */
+  readonly reviewingSide?: "BATTING" | "BOWLING";
+  /** Batter who struck the ball (defaults to delivery.striker) */
+  readonly dismissedBatter?: string;
+  /** Fielders involved in the boundary catch/relay */
+  readonly fielders?: readonly string[];
+  /**
+   * Boundary runs to award if NOT OUT (boundary contact occurred).
+   * Typically 4 or 6 (defaults to 4 if baseline had a wicket, or delivery.outcome.runsBatter if baseline had no wicket).
+   */
+  readonly boundaryRuns?: number;
+  /** Whether the delivery was a No Ball (Law 33.1 forbids catch off No Ball) */
+  readonly isNoBall?: boolean;
+  /** Optional rule explanation or citation from the DRS engine */
+  readonly reason?: string;
+}
+
+/**
+ * Pure function: Translates an evaluated Boundary Catch decision into a sparse DrsOutcomeOverride.
+ *
+ * Consequence Semantics:
+ * 1. BOUNDARY CATCH OUT:
+ *    - Fielder legally completed catch inside rope without cushion contact.
+ *    - Striker is out (kind: "CAUGHT", playerOut: delivery.striker, fielders: fielders).
+ *    - Batter runs become 0.
+ *
+ * 2. BOUNDARY CATCH NOT OUT:
+ *    - Fielder contacted boundary cushion while touching ball, or ball crossed boundary.
+ *    - If baseline had a wicket (on-field catch overturned), strips the wicket and awards boundary runs (4 or explicit).
+ *    - If baseline had no wicket, preserves baseline runs intact (or awards explicit boundaryRuns).
+ *    - If delivery was a No Ball, Law 33.1 prevents dismissal and preserves/awards the No Ball extra.
+ *
+ * Zero-copy: Never mutates or clones the delivery; only references delivery.id and baseline outcome.
+ */
+export function createBoundaryDrsConsequence(
+  params: BoundaryDrsConsequenceParams
+): DrsOutcomeOverride {
+  const {
+    delivery,
+    verdict,
+    onFieldSignal = "REFERRED",
+    reviewingSide: explicitSide,
+    dismissedBatter,
+    fielders,
+    boundaryRuns: explicitBoundaryRuns,
+    isNoBall: explicitNoBall,
+    reason,
+  } = params;
+
+  const playerOut = dismissedBatter ?? delivery.striker;
+
+  // Under Law 33.1, a batter cannot be caught off a No Ball.
+  const isNoBallDelivery =
+    explicitNoBall === true ||
+    delivery.outcome.extras?.type === "NO_BALLS";
+
+  const effectiveVerdict: "OUT" | "NOT_OUT" = isNoBallDelivery
+    ? "NOT_OUT"
+    : verdict;
+
+  const { reviewingSide, reviewRetained } = calculateReviewRetention({
+    verdict: effectiveVerdict,
+    onFieldSignal,
+    reviewingSide: explicitSide,
+    isUmpiresCall: false,
+  });
+
+  const effectiveFielders =
+    fielders && fielders.length > 0
+      ? fielders
+      : delivery.outcome.wicket?.kind === "CAUGHT"
+      ? delivery.outcome.wicket.fielders
+      : undefined;
+
+  if (effectiveVerdict === "OUT") {
+    // Under MCC Laws (Law 20.1.1.3, Law 33), the ball becomes dead when catch is completed inside boundary;
+    // extras (byes, leg byes, wides) and batter runs are not scored on a boundary catch.
+    const drsOutcome: BallOutcome = {
+      runsBatter: 0,
+      runsExtras: undefined,
+      extras: undefined,
+      wicket: {
+        kind: "CAUGHT",
+        playerOut,
+        fielders: effectiveFielders,
+      },
+    };
+
+    return {
+      ballId: delivery.id,
+      incidentType: "BOUNDARY",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason:
+        reason ??
+        `Boundary Catch: Evaluated as OUT (${playerOut} cleanly caught inside rope)`,
+    };
+  } else {
+    // If baseline had a wicket (on-field catch overturned), default to 4 boundary runs.
+    // If baseline had NO wicket, preserve baseline runs unless explicitBoundaryRuns is specified.
+    const awardedRuns =
+      explicitBoundaryRuns !== undefined
+        ? explicitBoundaryRuns
+        : delivery.outcome.wicket
+        ? (delivery.outcome.runsBatter >= 4 ? delivery.outcome.runsBatter : 4)
+        : delivery.outcome.runsBatter;
+
+    // If No Ball was explicitly flagged and baseline lacked No Ball extra, award 1-run penalty
+    const awardedExtras =
+      isNoBallDelivery && explicitNoBall === true && delivery.outcome.extras?.type !== "NO_BALLS"
+        ? {
+            runsExtras: (delivery.outcome.runsExtras ?? 0) + 1,
+            extras: { type: "NO_BALLS" as const, runs: 1 },
+          }
+        : {
+            runsExtras: delivery.outcome.runsExtras,
+            extras: delivery.outcome.extras,
+          };
+
+    const drsOutcome: BallOutcome =
+      delivery.outcome.wicket || explicitBoundaryRuns !== undefined || (isNoBallDelivery && explicitNoBall === true)
+        ? {
+            runsBatter: awardedRuns,
+            ...awardedExtras,
+          }
+        : delivery.outcome;
+
+    const defaultReason = isNoBallDelivery
+      ? `Boundary Catch: Evaluated as NOT OUT (delivery is a No Ball; Law 33.1 dictates batter cannot be caught)`
+      : `Boundary Catch: Evaluated as NOT OUT (boundary cushion contact; ${awardedRuns} runs awarded)`;
+
+    return {
+      ballId: delivery.id,
+      incidentType: "BOUNDARY",
+      originalOutcome: delivery.outcome,
+      drsOutcome,
+      applied: true,
+      reviewingSide,
+      reviewRetained,
+      reason: reason ?? defaultReason,
+    };
+  }
+}
+
+/**
+ * Discriminated union of parameters for all 5 DRS consequence incident types.
+ */
+export type DrsConsequenceParams =
+  | ({ readonly incidentType: "LBW" } & LbwDrsConsequenceParams)
+  | ({ readonly incidentType: "RUN_OUT" } & RunOutDrsConsequenceParams)
+  | ({ readonly incidentType: "STUMPING" } & StumpingDrsConsequenceParams)
+  | ({ readonly incidentType: "CAUGHT_BEHIND" } & CaughtBehindDrsConsequenceParams)
+  | ({ readonly incidentType: "BOUNDARY" } & BoundaryDrsConsequenceParams);
+
+/**
+ * Unified pure dispatcher: Translates any evaluated DRS incident into a sparse DrsOutcomeOverride.
+ * Delegates to the incident-specific consequence generator based on `incidentType`.
+ */
+export function createDrsConsequence(
+  params: DrsConsequenceParams
+): DrsOutcomeOverride {
+  switch (params.incidentType) {
+    case "LBW":
+      return createLbwDrsConsequence(params);
+    case "RUN_OUT":
+      return createRunOutDrsConsequence(params);
+    case "STUMPING":
+      return createStumpingDrsConsequence(params);
+    case "CAUGHT_BEHIND":
+      return createCaughtBehindDrsConsequence(params);
+    case "BOUNDARY":
+      return createBoundaryDrsConsequence(params);
+    default: {
+      const type = (params as { readonly incidentType?: string })?.incidentType;
+      throw new Error(`Unsupported DRS incident type: ${type}`);
+    }
+  }
+}
+
 

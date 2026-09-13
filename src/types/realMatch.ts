@@ -119,6 +119,8 @@ export interface RealMatch {
 export interface DrsOutcomeOverride {
   /** Target delivery ID to override (e.g. "1_2_4") */
   readonly ballId: string;
+  /** Which DRS incident category produced this override */
+  readonly incidentType?: "LBW" | "RUN_OUT" | "STUMPING" | "CAUGHT_BEHIND" | "BOUNDARY";
   /** Original baseline outcome before DRS intervention */
   readonly originalOutcome: BallOutcome;
   /** Effective outcome determined by the DRS decision */
@@ -147,7 +149,7 @@ export interface EffectiveBall {
   readonly delivery: RealDelivery;
   /** Effective outcome (either drsOutcome if override applied, or delivery.outcome) */
   readonly effectiveOutcome: BallOutcome;
-  /** Whether this delivery's outcome differs from the baseline real match data */
+  /** Whether this delivery has an active DRS consequence overlay applied */
   readonly isOverridden: boolean;
 }
 
