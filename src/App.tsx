@@ -82,7 +82,15 @@ export const App: React.FC = () => {
     sounds.playRadioChirp();
     const sessionSeed = Date.now();
     const scenarios = forcedType
-      ? generateSessionIncidents(sessionSeed, count, { weights: { [forcedType]: 1 } })
+      ? generateSessionIncidents(sessionSeed, count, {
+          weights: {
+            LBW: forcedType === "LBW" ? 1 : 0,
+            RUN_OUT: forcedType === "RUN_OUT" ? 1 : 0,
+            CAUGHT_BEHIND: forcedType === "CAUGHT_BEHIND" ? 1 : 0,
+            STUMPING: forcedType === "STUMPING" ? 1 : 0,
+            BOUNDARY: forcedType === "BOUNDARY" ? 1 : 0,
+          },
+        })
       : generateSessionIncidents(sessionSeed, count);
 
     setSessionScenarios(scenarios);

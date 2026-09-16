@@ -518,12 +518,13 @@ export const CameraSwitcherAngles: React.FC<CameraSwitcherAnglesProps> = ({
               {/* 2. Camera Thumbnail Preview Cards */}
               {cameraConfigs.length === 1 ? (
                 // Single Camera (Caught Behind: UltraEdge)
-                <div
+                <button
+                  type="button"
                   onClick={() => {
                     onSelectTool(cameraConfigs[0].id);
                     sounds.playClick(850);
                   }}
-                  className="flex items-center gap-3 p-1.5 rounded-sm border border-cyan-500 bg-[#1a1a1b] cursor-pointer group"
+                  className="flex items-center gap-3 p-1.5 rounded-sm border border-cyan-500 bg-[#1a1a1b] cursor-pointer group text-left w-full"
                 >
                   <div className="relative w-36 h-14 sm:h-16 rounded-xs overflow-hidden shrink-0 bg-black border border-[#27272a]">
                     {cameraConfigs[0].renderThumbnail()}
@@ -541,7 +542,7 @@ export const CameraSwitcherAngles: React.FC<CameraSwitcherAnglesProps> = ({
                       {cameraConfigs[0].description} • Optical slow-mo & acoustic trace
                     </p>
                   </div>
-                </div>
+                </button>
               ) : (
                 // 2 or 3 Cameras (LBW, Run Out, Boundary)
                 <div
@@ -552,13 +553,14 @@ export const CameraSwitcherAngles: React.FC<CameraSwitcherAnglesProps> = ({
                   {cameraConfigs.map((cam) => {
                     const isActive = activeTool === cam.id;
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={cam.id}
                         onClick={() => {
                           onSelectTool(cam.id);
                           sounds.playClick(850);
                         }}
-                        className={`flex flex-col rounded-sm border transition-colors cursor-pointer group overflow-hidden ${
+                        className={`flex flex-col rounded-sm border transition-colors cursor-pointer group overflow-hidden text-left ${
                           isActive
                             ? "border-cyan-500 bg-[#1a1a1b]"
                             : "border-[#27272a] bg-[#161618] hover:border-neutral-500"
@@ -583,7 +585,7 @@ export const CameraSwitcherAngles: React.FC<CameraSwitcherAnglesProps> = ({
                             {cam.description}
                           </p>
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
