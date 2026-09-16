@@ -80,7 +80,7 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-1.5 text-[10px]">
-          <span className="text-neutral-400 font-semibold uppercase">ON-FIELD:</span>
+          <span className="text-neutral-400 font-semibold uppercase" title="Original on-field umpire signal under review (independent of soft-signal instinct)">ON-FIELD:</span>
           <span
             className={`font-bold px-1.5 py-0.5 rounded-sm text-[10px] font-mono tracking-wider border ${
               onFieldSignal === "OUT"

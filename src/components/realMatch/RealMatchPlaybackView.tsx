@@ -429,7 +429,7 @@ export const RealMatchPlaybackView: React.FC<RealMatchPlaybackViewProps> = ({
             <button
               type="button"
               onClick={handleStepBackward}
-              disabled={state.deliveryIndex <= 0 && state.inningsIndex === 0}
+              disabled={(state.deliveryIndex <= 0 && state.inningsIndex === 0) || isPausedForReview}
               className="flex-1 sm:flex-none p-2.5 rounded-lg bg-[#141B28] hover:bg-[#1E283C] disabled:opacity-40 disabled:hover:bg-[#141B28] text-slate-200 border border-[#243147] transition-all cursor-pointer"
               title="Previous Delivery"
             >

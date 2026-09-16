@@ -117,23 +117,54 @@ export function computePlaybackState(
   let battingReviews = 2;
   let bowlingReviews = 2;
 
+  // In 2nd innings, calculate target from 1st innings
+  let target: number | null = null;
+  if (inningsIndex > 0 && match.innings[0]) {
+    let inn1Score = 0;
+    let inn1Wkts = 0;
+    for (const d of match.innings[0].deliveries) {
+      if (inn1Wkts >= 10) break;
+      const outcome = deriveEffectiveOutcome(d, overlayMap);
+      inn1Score += outcome.runsBatter + (outcome.runsExtras ?? 0);
+      if (outcome.wicket && inn1Wkts < 10) {
+        inn1Wkts += 1;
+      }
+    }
+    target = inn1Score + 1;
+  }
+
+  let inningsTerminatedAt: number | null = null;
+
   // Single-pass linear scan up to current delivery index
   for (let i = 0; i <= clampedDeliveryIndex; i++) {
     const d = deliveries[i];
     const outcome = deriveEffectiveOutcome(d, overlayMap);
-    totalScore += outcome.runsBatter + (outcome.runsExtras ?? 0);
-    if (outcome.wicket) {
-      totalWickets += 1;
+
+    // If innings had already terminated by 10 wickets or target reached on an earlier ball,
+    // do not accumulate further runs or wickets beyond termination
+    if (inningsTerminatedAt === null) {
+      totalScore += outcome.runsBatter + (outcome.runsExtras ?? 0);
+      if (outcome.wicket) {
+        if (totalWickets < 10) {
+          totalWickets += 1;
+        }
+      }
+
+      if (totalWickets >= 10 || (target !== null && totalScore >= target)) {
+        inningsTerminatedAt = i;
+      }
     }
 
     // Account for review deductions under DRS rules
-    const override = overlayMap?.get(d.id);
-    if (override && override.applied && override.reviewingSide) {
-      if (override.reviewRetained === false) {
-        if (override.reviewingSide === "BATTING") {
-          battingReviews = Math.max(0, battingReviews - 1);
-        } else if (override.reviewingSide === "BOWLING") {
-          bowlingReviews = Math.max(0, bowlingReviews - 1);
+    if (inningsTerminatedAt === null || i <= inningsTerminatedAt) {
+      const override = overlayMap?.get(d.id);
+      if (override && override.applied && override.reviewingSide) {
+        if (override.reviewRetained === false) {
+          if (override.reviewingSide === "BATTING") {
+            battingReviews = Math.max(0, battingReviews - 1);
+          } else if (override.reviewingSide === "BOWLING") {
+            bowlingReviews = Math.max(0, bowlingReviews - 1);
+          }
         }
       }
     }
@@ -142,7 +173,12 @@ export function computePlaybackState(
   const currentDelivery = deliveries[clampedDeliveryIndex];
   const currentEffectiveBall = getEffectiveBall(currentDelivery, overlayMap);
 
-  const isLastBallOfInnings = clampedDeliveryIndex === deliveries.length - 1;
+  const isInningsAllOut = totalWickets >= 10;
+  const isTargetReached = target !== null && totalScore >= target;
+  const isLastBallOfInnings =
+    clampedDeliveryIndex === deliveries.length - 1 ||
+    isInningsAllOut ||
+    isTargetReached;
   const isFinalInnings = inningsIndex === match.innings.length - 1;
   const isComplete = isLastBallOfInnings && isFinalInnings;
 
@@ -244,7 +280,16 @@ export class RealMatchPlaybackSession {
       return false;
     }
 
-    if (this._deliveryIndex < currentInnings.deliveries.length - 1) {
+    const state = this.getCurrentState();
+    if (state.isComplete) {
+      return false;
+    }
+
+    const isCurrentInningsEnded =
+      this._deliveryIndex >= currentInnings.deliveries.length - 1 ||
+      state.wickets >= 10;
+
+    if (!isCurrentInningsEnded) {
       this._deliveryIndex += 1;
       return true;
     }

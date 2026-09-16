@@ -390,6 +390,18 @@ export function solveUnhinderedBallTrajectory(lbw: LBWData, timeMs: number): {
   return { pos, vel };
 }
 
+export const HAWKEYE_GEOMETRY = {
+  PITCH_CENTER_X: 300,
+  STRIKER_GROUND_Y: 65,
+  BOWLER_GROUND_Y: 335,
+  WICKET_WIDTH_M: 0.2286,
+  WICKET_HALF_WIDTH_M: 0.1143,
+  STRIKER_SCALE_PX_PER_M: 59.0551,
+  BOWLER_SCALE_PX_PER_M: 167.3228,
+  STRIKER_WICKET_HALF_WIDTH_PX: 0.1143 * 59.0551, // ≈ 6.75 px
+  BOWLER_WICKET_HALF_WIDTH_PX: 0.1143 * 167.3228, // ≈ 19.12 px
+} as const;
+
 /**
  * Projects a 3D world-space coordinate into the 2D SVG canvas of CAM 03 Hawk-Eye (600x350 viewBox).
  * Pitch trapezoid in SVG:
@@ -397,13 +409,13 @@ export function solveUnhinderedBallTrajectory(lbw: LBWData, timeMs: number): {
  * - Bowler stumps at Z = 20.12: bottom line Y = 335, width = 510px, center = 300
  */
 export function projectLBWPointToHawkEyeSVG(point3D: Vec3): { x: number; y: number } {
-  const pitchCenterX = 300;
+  const pitchCenterX = HAWKEYE_GEOMETRY.PITCH_CENTER_X;
   const zClamped = Math.max(0, Math.min(20.12, point3D.z));
   const w = zClamped / 20.12;
 
   // Lateral perspective scale (180px / 3.048m -> 510px / 3.048m)
-  const scale = lerp(59.0551, 167.3228, w);
-  const groundY = lerp(65, 335, w);
+  const scale = lerp(HAWKEYE_GEOMETRY.STRIKER_SCALE_PX_PER_M, HAWKEYE_GEOMETRY.BOWLER_SCALE_PX_PER_M, w);
+  const groundY = lerp(HAWKEYE_GEOMETRY.STRIKER_GROUND_Y, HAWKEYE_GEOMETRY.BOWLER_GROUND_Y, w);
 
   const svgX = pitchCenterX + point3D.x * scale;
 

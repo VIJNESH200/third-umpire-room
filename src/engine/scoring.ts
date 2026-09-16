@@ -90,7 +90,7 @@ export function computeSessionStats(history: IncidentResult[]): SessionStats {
   const softSignalInstinct =
     softSignalEvaluated.length > 0
       ? Math.round((softCorrect / softSignalEvaluated.length) * 100)
-      : 50;
+      : 0;
 
   // 2. Review Precision: % final verdicts correct
   const correctVerdicts = history.filter((h) => h.finalVerdictCorrect).length;
@@ -106,13 +106,18 @@ export function computeSessionStats(history: IncidentResult[]): SessionStats {
       ? Math.round((ucComplied / qualifyingUCI.length) * 100)
       : 100; // If no qualifying incidents occurred, default to 100%
 
-  // 4. Reaction Time & Score
-  const validReactionTimes = history.map((h) => h.softSignalTimeMs / 1000);
+  // 4. Reaction Time & Score (only genuine soft-signal calls evaluated, excluding SEND_UPSTAIRS dodges)
+  const validReactionTimes = softSignalEvaluated.map((h) => h.softSignalTimeMs / 1000);
   const avgReactionTimeSeconds =
-    validReactionTimes.reduce((a, b) => a + b, 0) / total;
+    validReactionTimes.length > 0
+      ? validReactionTimes.reduce((a, b) => a + b, 0) / validReactionTimes.length
+      : 0;
 
   const instinctFactor = softSignalInstinct / 100;
-  const rawSpeedScore = Math.max(0, Math.min(100, 100 - (avgReactionTimeSeconds / 10) * 50));
+  const rawSpeedScore =
+    validReactionTimes.length > 0
+      ? Math.max(0, Math.min(100, 100 - (avgReactionTimeSeconds / 10) * 50))
+      : 0;
   const reactionTimeScore = Math.round(rawSpeedScore * (0.5 + 0.5 * instinctFactor));
 
   // 5. Longest correct streak & Consistency
@@ -137,12 +142,13 @@ export function computeSessionStats(history: IncidentResult[]): SessionStats {
     howlers.length > 0 ? Math.round((howlersCaught / howlers.length) * 100) : 100;
 
   // 7. Overall Weighted Rating (OVR)
-  // 30% Review Precision, 25% Umpire's Call IQ, 20% Soft Signal Instinct, 15% Reaction Time, 10% Consistency
+  // 30% Review Precision, 20% Umpire's Call IQ, 15% Soft Signal Instinct, 15% Howler Detection, 10% Reaction Time, 10% Consistency
   const rawOVR =
     reviewPrecision * 0.30 +
-    umpiresCallIQ * 0.25 +
-    softSignalInstinct * 0.20 +
-    reactionTimeScore * 0.15 +
+    umpiresCallIQ * 0.20 +
+    softSignalInstinct * 0.15 +
+    howlerDetection * 0.15 +
+    reactionTimeScore * 0.10 +
     consistency * 0.10;
 
   const overallRating = Math.round(Math.max(10, Math.min(99, rawOVR)));

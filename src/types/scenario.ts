@@ -73,9 +73,9 @@ export interface LBWData {
   projectedStumpHit: ProjectedStumpHit;
   spinOrPace: "SPIN" | "PACE";
   ballSpeedKph: number;
-  pitchX: number; // -1 to 1 (-0.28 to +0.28 is in line)
-  impactX: number;
-  stumpHitX: number;
+  pitchX: number; // Lateral offset in metres from pitch centreline (-0.1143 to +0.1143 is in line)
+  impactX: number; // Lateral offset in metres at pad/bat impact point
+  stumpHitX: number; // Lateral offset in metres at striker stumps plane (±0.1143m = outer edge of stumps)
   stumpHitHeightCm: number; // stump height 71.1cm
   hawkeyeTrajectory: { x: number; y: number; z: number }[]; // 3D coordinates
 }

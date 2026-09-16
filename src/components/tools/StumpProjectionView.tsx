@@ -49,13 +49,10 @@ const STUMP_W = 3.5 * PX_PER_CM; // 10.8
 const STUMP_GAP = ZONE_HALF_W - STUMP_W / 2; // centres at ±29.9
 const VIEW_CX = 250;
 
-// stumpHitX is a normalised line coordinate; 0.22 of it corresponds
-// to the outer edge of the wicket (same geometry the CAM 03 stump
-// HUD draws against). Convert to true centimetres so the caliper,
-// the ruler and the printed numbers all measure the same thing.
-const X_UNIT_CM = 11.43 / 0.22; // ≈ 51.95 cm per unit
-const stumpHitCmX = (stumpHitX: number) => stumpHitX * X_UNIT_CM;
-const impactCmX = (impactX: number) => impactX * X_UNIT_CM;
+// stumpHitX and impactX are physical lateral offsets in metres from the pitch centreline.
+// Convert metres to true centimetres for caliper, ruler, and HUD alignment.
+const stumpHitCmX = (stumpHitX: number) => stumpHitX * 100;
+const impactCmX = (impactX: number) => impactX * 100;
 
 // Caliper scale (bottom strip) is a 2× instrument readout.
 const CAL_PX_PER_CM = 6;

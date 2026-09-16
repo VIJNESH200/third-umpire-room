@@ -70,7 +70,7 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
     let startTime = performance.now();
 
     const render = (now: number) => {
-      const forcedProgress = (window as any).__PHASE1_PROGRESS__;
+      const forcedProgress = import.meta.env.DEV ? (window as any).__PHASE1_PROGRESS__ : undefined;
       const elapsed = typeof forcedProgress === "number" 
         ? forcedProgress * CLIP_DURATION_MS 
         : (now - startTime) % CLIP_DURATION_MS;

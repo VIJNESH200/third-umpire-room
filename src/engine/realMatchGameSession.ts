@@ -210,6 +210,9 @@ export class RealMatchGameSession {
    * Steps playback back to the previous delivery.
    */
   public stepBackward(): boolean {
+    if (this.isPausedForReview()) {
+      return false;
+    }
     const stepped = this._playbackSession.stepBackward();
     if (stepped) {
       this._syncStatus();
@@ -273,12 +276,26 @@ export class RealMatchGameSession {
   ): DrsOutcomeOverride {
     const currentBall = this._playbackSession.getCurrentDelivery();
     if (!currentBall) {
-      throw new Error("Cannot submit decision: no active delivery");
+      console.warn("Cannot submit decision: no active delivery");
+      return {
+        ballId: "",
+        originalOutcome: { runsBatter: 0 },
+        drsOutcome: { runsBatter: 0 },
+        applied: false,
+        reason: "No active delivery",
+      };
     }
 
     const incident = this._scheduledIncidents.get(currentBall.delivery.id);
     if (!incident) {
-      throw new Error(`Cannot submit decision: delivery ${currentBall.delivery.id} has no DRS incident`);
+      console.warn(`Cannot submit decision: delivery ${currentBall.delivery.id} has no DRS incident`);
+      return {
+        ballId: currentBall.delivery.id,
+        originalOutcome: currentBall.delivery.outcome,
+        drsOutcome: currentBall.delivery.outcome,
+        applied: false,
+        reason: "No active DRS incident",
+      };
     }
 
     const delivery = currentBall.delivery;
@@ -400,11 +417,36 @@ export class RealMatchGameSession {
     const overlays = this._playbackSession.getOverlays();
     let score = 0;
     let wickets = 0;
+
+    // For innings 2, we need target from innings 1
+    let target: number | null = null;
+    if (inningsIndex > 0 && this.match.innings[0]) {
+      let inn1Runs = 0;
+      let inn1Wkts = 0;
+      for (const d of this.match.innings[0].deliveries) {
+        if (inn1Wkts >= 10) break;
+        const ov = overlays.get(d.id);
+        const outcome = ov && ov.applied ? ov.drsOutcome : d.outcome;
+        inn1Runs += outcome.runsBatter + (outcome.runsExtras ?? 0);
+        if (outcome.wicket && inn1Wkts < 10) {
+          inn1Wkts += 1;
+        }
+      }
+      target = inn1Runs + 1;
+    }
+
     for (const d of innings.deliveries) {
+      if (wickets >= 10) break;
+      if (target !== null && score >= target) break;
+
       const ov = overlays.get(d.id);
       const outcome = ov && ov.applied ? ov.drsOutcome : d.outcome;
       score += outcome.runsBatter + (outcome.runsExtras ?? 0);
-      if (outcome.wicket) wickets++;
+      if (outcome.wicket) {
+        if (wickets < 10) {
+          wickets++;
+        }
+      }
     }
     return { score, wickets };
   }

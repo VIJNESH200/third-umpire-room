@@ -209,6 +209,7 @@ export const App: React.FC = () => {
   setSoftSignalElapsedMsRef.current = setSoftSignalElapsedMs;
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     (window as any).__startIncident = (type: IncidentType, seed: number = Date.now(), totalCount: number = 1) => {
       const scenario = generateScenario(seed, type);
       const scenarios =

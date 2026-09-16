@@ -8,7 +8,7 @@ import {
   Activity,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
-import { getHawkEyeTrajectoryStages } from "../../engine/lbwPhysics";
+import { getHawkEyeTrajectoryStages, HAWKEYE_GEOMETRY } from "../../engine/lbwPhysics";
 
 interface PitchMapOverlayProps {
   lbw: LBWData;
@@ -50,6 +50,30 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
 
   // Authoritative continuous 3D delivery trajectory & projection for CAM 03 Hawk-Eye
   const trajectoryStages = useMemo(() => getHawkEyeTrajectoryStages(lbw), [lbw]);
+
+  // Mini UltraEdge waveform trace for Gate 0B forensic interpretation
+  const ultraEdgeWaveformPath = useMemo(() => {
+    const points: string[] = [];
+    const hasSpike = lbw.ultraEdgeSpikeAtBatFrame;
+    const w = 110;
+    const midX = 55;
+    const baselineY = 11;
+    for (let x = 0; x <= w; x += 1.2) {
+      const noise = ((Math.sin(x * 12.37 + (hasSpike ? 5.2 : 1.1)) * 10000) % 1) * 1.6;
+      let amp = noise;
+      if (hasSpike) {
+        const dist = Math.abs(x - midX);
+        if (dist < 12) {
+          const envelope = Math.cos((dist / 12) * (Math.PI / 2));
+          const freq = Math.sin(x * 1.9) * 8.5 * envelope;
+          amp = freq + noise * 0.4;
+        }
+      }
+      const y = Math.max(1.5, Math.min(20.5, baselineY + amp));
+      points.push(`${x === 0 ? "M" : "L"} ${x.toFixed(1)},${y.toFixed(1)}`);
+    }
+    return points.join(" ");
+  }, [lbw.ultraEdgeSpikeAtBatFrame]);
 
   // Neutral evidence colour: physical measurements only
   const EVIDENCE_COLOR = "#38BDF8";
@@ -158,9 +182,9 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
 
           {/* Pitch Surface Overlay Group — Strictly clipped to pitch boundaries */}
           <g clipPath="url(#pitchClip)">
-            {/* Wicket-to-Wicket In-Line Corridor (Between Stumps) */}
+            {/* Wicket-to-Wicket In-Line Corridor dynamically derived from HAWKEYE_GEOMETRY */}
             <polygon
-              points="260,335 340,335 315,65 285,65"
+              points={`${(HAWKEYE_GEOMETRY.PITCH_CENTER_X - HAWKEYE_GEOMETRY.BOWLER_WICKET_HALF_WIDTH_PX).toFixed(1)},${HAWKEYE_GEOMETRY.BOWLER_GROUND_Y} ${(HAWKEYE_GEOMETRY.PITCH_CENTER_X + HAWKEYE_GEOMETRY.BOWLER_WICKET_HALF_WIDTH_PX).toFixed(1)},${HAWKEYE_GEOMETRY.BOWLER_GROUND_Y} ${(HAWKEYE_GEOMETRY.PITCH_CENTER_X + HAWKEYE_GEOMETRY.STRIKER_WICKET_HALF_WIDTH_PX).toFixed(2)},${HAWKEYE_GEOMETRY.STRIKER_GROUND_Y} ${(HAWKEYE_GEOMETRY.PITCH_CENTER_X - HAWKEYE_GEOMETRY.STRIKER_WICKET_HALF_WIDTH_PX).toFixed(2)},${HAWKEYE_GEOMETRY.STRIKER_GROUND_Y}`}
               fill="url(#corridorGlow)"
               stroke="#0284C7"
               strokeWidth="1"
@@ -195,16 +219,15 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
             POPPING CREASE
           </text>
 
-          {/* Striker Wickets (Top End Target) */}
+          {/* Striker Wickets (Top End Target: true width 13.5px / ±6.75px = ±0.1143m) */}
           <g transform="translate(300, 65)">
-            <rect x="-26" y="0" width="52" height="2.5" fill="#1e293b" />
-            {/* 3 Stumps standing tall */}
-            <rect x="-20" y="-34" width="5" height="34" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
-            <rect x="-2.5" y="-36" width="5" height="36" fill="#f59e0b" stroke="#78350f" strokeWidth="0.5" />
-            <rect x="15" y="-34" width="5" height="34" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
+            <rect x="-8" y="0" width="16" height="2" fill="#1e293b" />
+            {/* 3 Stumps standing tall across ±6.75px */}
+            <rect x="-6.75" y="-36" width="2.2" height="36" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
+            <rect x="-1.1" y="-36" width="2.2" height="36" fill="#f59e0b" stroke="#78350f" strokeWidth="0.4" />
+            <rect x="4.55" y="-36" width="2.2" height="36" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
             {/* Bails */}
-            <rect x="-21" y="-38" width="21" height="3" fill="#f59e0b" rx="0.8" />
-            <rect x="0" y="-38" width="21" height="3" fill="#f59e0b" rx="0.8" />
+            <rect x="-7" y="-38" width="14" height="2" fill="#f59e0b" rx="0.5" />
           </g>
 
           {/* Batter Stance Silhouette (At Striker Popping Crease) */}
@@ -307,14 +330,14 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                   />
                   <circle cx={trajectoryStages.batContactPointSVG.x} cy={trajectoryStages.batContactPointSVG.y} r="4.5" fill="#FFFFFF" stroke="#0f172a" strokeWidth="1" />
                   <text
-                    x={trajectoryStages.batContactPointSVG.x > 300 ? trajectoryStages.batContactPointSVG.x - 220 : trajectoryStages.batContactPointSVG.x + 16}
+                    x={trajectoryStages.batContactPointSVG.x > 300 ? trajectoryStages.batContactPointSVG.x - 200 : trajectoryStages.batContactPointSVG.x + 16}
                     y={trajectoryStages.batContactPointSVG.y + 4}
                     fill="#38BDF8"
                     fontSize="11"
                     fontFamily="monospace"
                     fontWeight="900"
                   >
-                    BAT CONTACT DETECTED
+                    INTERCEPT POINT
                   </text>
                 </>
               ) : (
@@ -408,7 +431,7 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                 fontFamily="monospace"
                 fontWeight="bold"
               >
-                PRIOR BAT CONTACT • TRACKING INELIGIBLE
+                TRAJECTORY INTERCEPTED • NO PROJECTION AVAILABLE
               </text>
             </g>
           )}
@@ -427,12 +450,16 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
           )}
 
           {revealStage >= 2 && (
-            <div className="px-3 py-1.5 rounded-md text-[11px] font-mono border backdrop-blur-md flex items-center gap-2 shadow-lg animate-fadeIn bg-slate-950/90 border-cyan-500/50 text-cyan-200">
-              <Activity size={13} className="text-cyan-400" />
-              <div>
-                <span className="font-black">ULTRAEDGE: </span>
-                <span>{lbw.batContactBeforePad ? "BAT CONTACT SIGNAL" : "NO BAT SIGNAL"}</span>
+            <div className="px-3 py-1.5 rounded-md text-[11px] font-mono border backdrop-blur-md flex flex-col gap-1 shadow-lg animate-fadeIn bg-slate-950/90 border-cyan-500/50 text-cyan-200">
+              <div className="flex items-center gap-1.5">
+                <Activity size={13} className="text-cyan-400" />
+                <span className="font-black text-[10px]">ULTRAEDGE [BAT TRANSIT]:</span>
               </div>
+              <svg viewBox="0 0 110 22" className="w-28 h-5 bg-[#070c14] rounded border border-slate-800">
+                <line x1="0" y1="11" x2="110" y2="11" stroke="#334155" strokeWidth="0.8" />
+                <line x1="55" y1="0" x2="55" y2="22" stroke="#38bdf8" strokeWidth="1" strokeDasharray="2,2" />
+                <path d={ultraEdgeWaveformPath} fill="none" stroke="#38bdf8" strokeWidth="1.2" />
+              </svg>
             </div>
           )}
         </div>
@@ -447,14 +474,14 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
             <span className="text-slate-200">
               {revealStage >= 5
                 ? lbw.batContactBeforePad
-                  ? "INELIGIBLE"
+                  ? "--.- cm"
                   : `${lbw.stumpHitHeightCm.toFixed(1)} cm`
                 : "--.- cm"}
             </span>
           </div>
 
           <svg viewBox="0 0 100 80" className="w-full h-20 bg-[#070b14] rounded border border-slate-800">
-            {/* 3 Wooden Stumps */}
+            {/* 3 Wooden Stumps (x=27 to x=73, center 50, half-width 23px = 0.1143m) */}
             <rect x="27" y="18" width="5" height="58" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
             <rect x="47.5" y="15" width="5" height="61" fill="#f59e0b" stroke="#78350f" strokeWidth="0.5" />
             <rect x="68" y="18" width="5" height="58" fill="#d97706" stroke="#78350f" strokeWidth="0.5" />
@@ -478,7 +505,7 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
             {revealStage >= 5 && !lbw.batContactBeforePad ? (
               <g className="animate-fadeIn">
                 <circle
-                  cx={50 + lbw.stumpHitX * 90}
+                  cx={50 + lbw.stumpHitX * (23 / 0.1143)}
                   cy={76 - (lbw.stumpHitHeightCm / 71.1) * 58}
                   r="7"
                   fill={EVIDENCE_COLOR}
@@ -488,8 +515,8 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                 />
               </g>
             ) : revealStage >= 5 && lbw.batContactBeforePad ? (
-              <text x="50" y="48" textAnchor="middle" fill="#38bdf8" fontSize="7.5" fontFamily="monospace" fontWeight="bold">
-                BAT CONTACT
+              <text x="50" y="48" textAnchor="middle" fill="#64748b" fontSize="7.5" fontFamily="monospace" fontWeight="bold">
+                NO PROJECTION
               </text>
             ) : (
               <text x="50" y="48" textAnchor="middle" fill="#64748b" fontSize="8" fontFamily="monospace" fontWeight="bold">
@@ -502,13 +529,9 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
           <div className="mt-1.5 text-center text-[10px] font-black tracking-wider">
             {revealStage < 5 ? (
               <span className="text-slate-500">STAGE PENDING</span>
-            ) : lbw.batContactBeforePad ? (
-              <span className="text-cyan-300 bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-600/40">
-                BAT CONTACT • NOT OUT
-              </span>
             ) : (
               <span className="text-cyan-300 bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-600/40">
-                PROJECTION SHOWN • MAKE YOUR CALL
+                EVIDENCE READY • MAKE YOUR CALL
               </span>
             )}
           </div>
