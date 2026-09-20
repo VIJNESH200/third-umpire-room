@@ -677,7 +677,6 @@ console.log("\n--- Suite 10: LBW DRS Integration with 2024 T20 WC Final Fixture 
     impactX: 0.01,
     stumpHitX: -0.02,
     stumpHitHeightCm: 46.5,
-    hawkeyeTrajectory: [],
   };
 
   // 1. Evaluate verdict using canonical DRS engine
@@ -786,7 +785,6 @@ console.log("\n--- Suite 10: LBW DRS Integration with 2024 T20 WC Final Fixture 
     impactX: 0.12,
     stumpHitX: 0.28,
     stumpHitHeightCm: 45,
-    hawkeyeTrajectory: [],
   };
 
   const drsEvalNotOut = evaluateDRSLBW(lbwNotOutData, "NOT_OUT");

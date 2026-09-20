@@ -14,7 +14,7 @@
 
 import { generateScenario } from "../engine/scenarioGenerator";
 import { projectLBWPointToHawkEyeSVG, HAWKEYE_GEOMETRY } from "../engine/lbwPhysics";
-import { RealMatchPlaybackSession, computePlaybackState } from "../engine/realMatchPlayback";
+import { RealMatchPlaybackSession } from "../engine/realMatchPlayback";
 import { RealMatchGameSession } from "../engine/realMatchGameSession";
 import { T20_WC_2024_FINAL } from "../data/realMatches/t20Wc2024Final";
 import { computeSessionStats } from "../engine/scoring";

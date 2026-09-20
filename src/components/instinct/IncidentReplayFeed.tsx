@@ -7,9 +7,6 @@ import {
 } from "../../engine/runOutPhysics";
 import { projectToPhase1 } from "../../engine/cameraProjections";
 import {
-  solveCaughtBehindBallState,
-  solveCaughtBehindDeliveryTrajectory,
-  getKeeperCatchPosition,
   solveCaughtBehindSlipCorridor,
 } from "../../engine/caughtBehindPhysics";
 import {
@@ -21,12 +18,10 @@ import {
   solveCaughtBehindBatterKinematics,
   solveCaughtBehindKeeperKinematics,
   solveRunOutRunnerKinematics,
-  solveBoundaryFielderKinematics,
   drawArticulatedBatter,
   drawArticulatedRunner,
   drawArticulatedBowler,
   drawArticulatedWicketkeeper,
-  drawArticulatedFielder,
   drawAthleticBoundaryFielder,
   drawStumpsAndBails,
   drawCricketBall,
@@ -105,7 +100,10 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
         renderBoundaryBroadcast(ctx, width, height, progress, scenario);
       }
 
-      animId = requestAnimationFrame(render);
+      const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!prefersReducedMotion) {
+        animId = requestAnimationFrame(render);
+      }
     };
 
     animId = requestAnimationFrame(render);

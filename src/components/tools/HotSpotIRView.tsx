@@ -8,7 +8,6 @@ import {
   HOTSPOT_WINDOW_END_MS,
   OUTSIDE_EDGE_X_MM,
 } from "../../engine/hotspotThermal";
-import { solveCaughtBehindDeliveryTrajectory } from "../../engine/caughtBehindPhysics";
 
 interface HotSpotIRViewProps {
   caughtBehind: CaughtBehindData;
@@ -63,12 +62,6 @@ export const HotSpotIRView: React.FC<HotSpotIRViewProps> = ({
   const progress = Math.max(
     0,
     Math.min(1, (clampedTime - HOTSPOT_WINDOW_START_MS) / windowSpanMs)
-  );
-
-  // Authoritative 3D trajectory sample for current playback time
-  const delivery3D = useMemo(
-    () => solveCaughtBehindDeliveryTrajectory(caughtBehind, currentTimeMs),
-    [caughtBehind, currentTimeMs]
   );
 
   // Ball vertical travel down the outside edge corridor (top to bottom)

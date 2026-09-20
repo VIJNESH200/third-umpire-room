@@ -44,7 +44,7 @@ export const ReplayViewport: React.FC<ReplayViewportProps> = ({
           />
         );
       }
-      if (activeTool === "STUMP_PROJ") {
+      if (activeTool === "STUMP_PROJ" || activeTool === "STUMP_PROJECTION") {
         return (
           <StumpProjectionView
             lbw={scenario.lbw}

@@ -24,7 +24,7 @@ export interface CAM10Projection {
   isValid: boolean;
 }
 
-export function getPointDepth(worldX: number, worldY: number, worldZ: number = 0): number {
+function getPointDepth(worldX: number, worldY: number, worldZ: number = 0): number {
   const camX = -1100;
   const camY = -1800;
   const camZ = 380;

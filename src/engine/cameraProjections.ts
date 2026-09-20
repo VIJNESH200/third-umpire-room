@@ -118,7 +118,7 @@ export function projectToCAM02(
 export function projectToCAM07(
   worldX: number,
   worldY: number,
-  worldZ: number
+  _worldZ: number
 ): { screenX: number; screenY: number; scale: number } {
   // CAM 07 viewport is 500x320 SVG
   // Crease at screenX=250 corresponds to worldX=1220mm

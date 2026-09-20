@@ -202,6 +202,51 @@ export function computePlaybackState(
 }
 
 /**
+ * Computes the authoritative delivery index where an innings effectively terminates
+ * (due to 10 wickets all-out, target reached in 2nd innings, or end of delivery list).
+ */
+export function getInningsTerminationDeliveryIndex(
+  match: RealMatch,
+  inningsIndex: number,
+  overlayMap?: DrsOverlayMap
+): number {
+  const innings = match.innings[inningsIndex];
+  if (!innings || innings.deliveries.length === 0) return 0;
+
+  const deliveries = innings.deliveries;
+  let target: number | null = null;
+  if (inningsIndex > 0 && match.innings[0]) {
+    let inn1Score = 0;
+    let inn1Wkts = 0;
+    for (const d of match.innings[0].deliveries) {
+      if (inn1Wkts >= 10) break;
+      const outcome = deriveEffectiveOutcome(d, overlayMap);
+      inn1Score += outcome.runsBatter + (outcome.runsExtras ?? 0);
+      if (outcome.wicket && inn1Wkts < 10) {
+        inn1Wkts += 1;
+      }
+    }
+    target = inn1Score + 1;
+  }
+
+  let totalScore = 0;
+  let totalWickets = 0;
+  for (let i = 0; i < deliveries.length; i++) {
+    const d = deliveries[i];
+    const outcome = deriveEffectiveOutcome(d, overlayMap);
+    totalScore += outcome.runsBatter + (outcome.runsExtras ?? 0);
+    if (outcome.wicket && totalWickets < 10) {
+      totalWickets += 1;
+    }
+    if (totalWickets >= 10 || (target !== null && totalScore >= target)) {
+      return i;
+    }
+  }
+
+  return deliveries.length - 1;
+}
+
+/**
  * Lightweight, stateful session controller for stepping through real match deliveries
  * with dynamic zero-copy DRS overlays.
  */
@@ -240,6 +285,20 @@ export class RealMatchPlaybackSession {
       inningsIndex: this._inningsIndex,
       deliveryIndex: this._deliveryIndex,
     };
+  }
+
+  /**
+   * Returns current 0-based innings index.
+   */
+  public getInningsIndex(): number {
+    return this._inningsIndex;
+  }
+
+  /**
+   * Returns current 0-based delivery index within the active innings.
+   */
+  public getDeliveryIndex(): number {
+    return this._deliveryIndex;
   }
 
   /**
@@ -285,8 +344,14 @@ export class RealMatchPlaybackSession {
       return false;
     }
 
+    const maxDeliveryIndex = getInningsTerminationDeliveryIndex(
+      this.match,
+      this._inningsIndex,
+      this._overlays
+    );
+
     const isCurrentInningsEnded =
-      this._deliveryIndex >= currentInnings.deliveries.length - 1 ||
+      this._deliveryIndex >= maxDeliveryIndex ||
       state.wickets >= 10;
 
     if (!isCurrentInningsEnded) {
@@ -307,6 +372,7 @@ export class RealMatchPlaybackSession {
   /**
    * Steps cursor backward to the previous delivery.
    * Seamlessly transitions backward across innings if available.
+   * Clamps backward step into previous innings to its authoritative termination delivery index.
    * Returns true if stepped back, or false if already at the first delivery.
    */
   public stepBackward(): boolean {
@@ -318,8 +384,11 @@ export class RealMatchPlaybackSession {
     // At start of current innings; check if we can step back into previous innings
     if (this._inningsIndex > 0) {
       this._inningsIndex -= 1;
-      const prevInnings = this.match.innings[this._inningsIndex];
-      this._deliveryIndex = Math.max(0, prevInnings.deliveries.length - 1);
+      this._deliveryIndex = getInningsTerminationDeliveryIndex(
+        this.match,
+        this._inningsIndex,
+        this._overlays
+      );
       return true;
     }
 
@@ -328,17 +397,23 @@ export class RealMatchPlaybackSession {
 
   /**
    * Jumps the playback cursor directly to a specific innings and delivery index.
+   * Strictly clamps deliveryIndex to the authoritative innings endpoint.
    */
   public seekTo(inningsIndex: number, deliveryIndex: number): boolean {
     if (inningsIndex < 0 || inningsIndex >= this.match.innings.length) {
       return false;
     }
     const innings = this.match.innings[inningsIndex];
-    if (deliveryIndex < 0 || deliveryIndex >= innings.deliveries.length) {
+    if (!innings || deliveryIndex < 0) {
       return false;
     }
+    const maxDeliveryIndex = getInningsTerminationDeliveryIndex(
+      this.match,
+      inningsIndex,
+      this._overlays
+    );
     this._inningsIndex = inningsIndex;
-    this._deliveryIndex = deliveryIndex;
+    this._deliveryIndex = Math.min(deliveryIndex, maxDeliveryIndex);
     return true;
   }
 
@@ -466,6 +541,8 @@ export interface LbwDrsConsequenceParams {
   readonly reason?: string;
   /** Whether the review was deemed Umpire's Call by the DRS engine */
   readonly isUmpiresCall?: boolean;
+  /** Remaining review quota for the reviewing team (if <= 0, review cannot be accepted) */
+  readonly remainingQuota?: number;
 }
 
 /**
@@ -515,6 +592,19 @@ export function createLbwDrsConsequence(
     reviewingSide: explicitSide,
     isUmpiresCall,
   });
+
+  if (params.remainingQuota !== undefined && params.remainingQuota <= 0) {
+    return {
+      ballId: delivery.id,
+      incidentType: "LBW",
+      originalOutcome: delivery.outcome,
+      drsOutcome: delivery.outcome,
+      applied: false,
+      reviewingSide,
+      reviewRetained: false,
+      reason: `LBW: Review rejected (no reviews remaining for ${reviewingSide ?? "reviewing"} side)`,
+    };
+  }
 
   if (effectiveVerdict === "OUT") {
     // Effective delivery becomes an LBW wicket for the striker facing the ball.
@@ -889,6 +979,8 @@ export interface CaughtBehindDrsConsequenceParams {
   readonly isNoBall?: boolean;
   /** Optional rule explanation or citation from the DRS engine */
   readonly reason?: string;
+  /** Remaining review quota for the reviewing team (if <= 0, review cannot be accepted) */
+  readonly remainingQuota?: number;
 }
 
 /**
@@ -940,6 +1032,19 @@ export function createCaughtBehindDrsConsequence(
     reviewingSide: explicitSide,
     isUmpiresCall: false,
   });
+
+  if (params.remainingQuota !== undefined && params.remainingQuota <= 0) {
+    return {
+      ballId: delivery.id,
+      incidentType: "CAUGHT_BEHIND",
+      originalOutcome: delivery.outcome,
+      drsOutcome: delivery.outcome,
+      applied: false,
+      reviewingSide,
+      reviewRetained: false,
+      reason: `Caught Behind: Review rejected (no reviews remaining for ${reviewingSide ?? "reviewing"} side)`,
+    };
+  }
 
   const effectiveFielders =
     catcher

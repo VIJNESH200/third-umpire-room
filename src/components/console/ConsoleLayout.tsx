@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import type {
   Scenario,
   DecisionVerdict,
@@ -157,7 +157,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   };
 
   // Determine key focal event timestamp for Rock & Roll shuttle looping
-  const getFocalEventTimeMs = (): number => {
+  const getFocalEventTimeMs = useCallback((): number => {
     if (scenario.incidentType === "STUMPING" && scenario.stumping) {
       return scenario.stumping.bailsDislodgedFrameMs;
     }
@@ -174,7 +174,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
       return 1500; // Pad impact frame
     }
     return 1400;
-  };
+  }, [scenario]);
 
   // High-Precision Real-time Transport Animation Loop
   useEffect(() => {
@@ -222,21 +222,26 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
       } else if (isRunOutTransport ? rockAndRollIntentRef.current : isRockAndRoll) {
         // Shuttle oscillation around the focal incident frame (+/- 160ms)
         const focalTime = getFocalEventTimeMs();
-        const rnrMin = Math.max(minTimeMs, focalTime - 160);
-        const rnrMax = Math.min(maxTimeMs, focalTime + 160);
-        const deltaReplayMs = deltaRealMs * playbackSpeed * 0.45 * rnrDirectionRef.current;
+        const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (prefersReducedMotion) {
+          queueReplayClockUpdate(() => focalTime);
+        } else {
+          const rnrMin = Math.max(minTimeMs, focalTime - 160);
+          const rnrMax = Math.min(maxTimeMs, focalTime + 160);
+          const deltaReplayMs = deltaRealMs * playbackSpeed * 0.45 * rnrDirectionRef.current;
 
-        queueReplayClockUpdate((prev) => {
-          let next = prev + deltaReplayMs;
-          if (next >= rnrMax) {
-            rnrDirectionRef.current = -1;
-            next = rnrMax;
-          } else if (next <= rnrMin) {
-            rnrDirectionRef.current = 1;
-            next = rnrMin;
-          }
-          return next;
-        });
+          queueReplayClockUpdate((prev) => {
+            let next = prev + deltaReplayMs;
+            if (next >= rnrMax) {
+              rnrDirectionRef.current = -1;
+              next = rnrMax;
+            } else if (next <= rnrMin) {
+              rnrDirectionRef.current = 1;
+              next = rnrMin;
+            }
+            return next;
+          });
+        }
       }
 
       animFrameRef.current = requestAnimationFrame(loop);
@@ -247,7 +252,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, isRockAndRoll, playbackSpeed, maxTimeMs, minTimeMs, scenario]);
+  }, [isPlaying, isRockAndRoll, playbackSpeed, maxTimeMs, minTimeMs, scenario, getFocalEventTimeMs]);
 
   // Keyboard shortcuts for the canonical replay transport (SPACE, arrows,
   // Shift+arrows). Active only on a replay-capable screen — the forensic

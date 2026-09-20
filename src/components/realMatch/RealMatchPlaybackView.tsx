@@ -115,10 +115,6 @@ export const RealMatchPlaybackView: React.FC<RealMatchPlaybackViewProps> = ({
     setIsPlaying((prev) => !prev);
   };
 
-  const handleRemoveOverlay = (deliveryId: string) => {
-    session.removeOverlay(deliveryId);
-    forceUpdate();
-  };
 
   // Helper for delivery outcome label
   const renderOutcomeBadge = () => {
@@ -288,8 +284,9 @@ export const RealMatchPlaybackView: React.FC<RealMatchPlaybackViewProps> = ({
               <button
                 type="button"
                 onClick={onToggleMute}
-                className="p-1.5 rounded-lg bg-[#141B28] hover:bg-[#1E283C] text-slate-400 hover:text-white border border-[#243147] transition-colors cursor-pointer"
                 title={isMuted ? "Unmute Audio" : "Mute Audio"}
+                aria-label={isMuted ? "Unmute audio" : "Mute audio"}
+                className="p-1.5 rounded-lg bg-[#141B28] hover:bg-[#1E283C] text-slate-400 hover:text-white border border-[#243147] transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
               >
                 {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} className="text-emerald-400" />}
               </button>
@@ -379,7 +376,7 @@ export const RealMatchPlaybackView: React.FC<RealMatchPlaybackViewProps> = ({
             </div>
           </div>
 
-          {/* Active Override details with revert button */}
+          {/* Active Override details — Official DRS consequence is permanent & immutable */}
           {currentBall?.isOverridden && (
             <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-lg flex items-center justify-between">
               <div className="flex items-center space-x-2">
@@ -388,13 +385,9 @@ export const RealMatchPlaybackView: React.FC<RealMatchPlaybackViewProps> = ({
                   DRS Consequence Active: {session.getOverlays().get(currentBall.delivery.id)?.reason ?? "Decision Overridden"}
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => handleRemoveOverlay(currentBall.delivery.id)}
-                className="px-2 py-1 rounded bg-amber-900/60 hover:bg-amber-800 text-amber-200 text-[10px] font-mono font-bold uppercase transition-colors cursor-pointer"
-              >
-                Revert Baseline
-              </button>
+              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-mono uppercase font-bold border border-slate-700">
+                OFFICIAL • IMMUTABLE
+              </span>
             </div>
           )}
         </div>

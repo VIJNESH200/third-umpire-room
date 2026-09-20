@@ -694,7 +694,7 @@ export function solveRunOutRunnerKinematics(
  */
 export function solveRunOutKeeperKinematics(
   gatherProgress: number,
-  isGlovesAtStumps: boolean
+  _isGlovesAtStumps: boolean
 ): KeeperKinematics {
   const gp = clamp(gatherProgress, 0, 1);
 
@@ -752,7 +752,9 @@ export function solveRunOutKeeperKinematics(
 export function solveStumpingBatterKinematics(
   p: number,
   creaseX: number,
-  marginPx: number
+  marginPx: number,
+  toeAltitudeMm?: number,
+  toeCreaseOffsetMm?: number
 ): { batterX: number; batterY: number; batterK: BatterKinematics } {
   // Batter maintains a fixed stationary upper body stance in the crease box.
   // Torso, head, shoulders, arms, bat, and front leg remain STILL.
@@ -776,13 +778,29 @@ export function solveStumpingBatterKinematics(
   //   OUT: toe remains airborne or short of crease.
   //   NOT OUT: toe taps down flat behind popping crease.
   // Post-break (p > 0.65): batter reaches/drags back towards crease for recovery.
-  const isOut = marginPx > 0;
+  const isOut = toeCreaseOffsetMm !== undefined ? toeCreaseOffsetMm < 0 : marginPx > 0;
 
   // 1. Horizontal position backLegX:
-  // Smoothly transfer from -18 (stance) to target position at wicket break (p=0.65), then to -22 (recovery drag)
-  const targetBreakX = isOut
-    ? (-17.5 + Math.min(2, marginPx * 0.04))
-    : (-18.5 - Math.min(2, Math.abs(marginPx) * 0.05));
+  // Smoothly transfer from -18 (stance) to target position at wicket break (p=0.65), then to recovery drag.
+  // Popping crease is at local X = -10 (batterX = creaseX + 10). With boot length half = 7.5,
+  // backLegX = -17.5 places toe tip exactly at -10 (on the crease line).
+  let targetBreakX: number;
+  if (toeCreaseOffsetMm !== undefined) {
+    if (isOut) {
+      // Negative offset: toe short of crease. Scale continuously with high visual gain (>= 8-15px rendered travel).
+      const shortDistancePx = (Math.min(300, Math.abs(toeCreaseOffsetMm)) / 300) * 11;
+      targetBreakX = -17.5 + 1.2 + shortDistancePx;
+    } else {
+      // Positive offset: toe safely behind crease.
+      const safeDistancePx = (Math.min(300, toeCreaseOffsetMm) / 300) * 9;
+      targetBreakX = -17.5 - 1.5 - safeDistancePx;
+    }
+  } else {
+    // Exact backward compatibility for legacy callers without physical toe offset
+    targetBreakX = isOut
+      ? (-17.5 + Math.min(2, marginPx * 0.04))
+      : (-18.5 - Math.min(2, Math.abs(marginPx) * 0.05));
+  }
 
   let backLegX = -18;
   if (p < 0.65) {
@@ -792,7 +810,8 @@ export function solveStumpingBatterKinematics(
     backLegX = lerp(-18, targetBreakX, easeInOutQuad(t)) + unweight;
   } else {
     const t = clamp((p - 0.65) / 0.35, 0, 1);
-    backLegX = lerp(targetBreakX, -22, easeOutCubic(t));
+    const recoveryX = toeCreaseOffsetMm !== undefined ? Math.min(-20, targetBreakX - 3) : -22;
+    backLegX = lerp(targetBreakX, recoveryX, easeOutCubic(t));
   }
 
   // 2. Vertical rear-leg lift and foot rotation:
@@ -800,7 +819,9 @@ export function solveStumpingBatterKinematics(
   let backLegFootAngleRad = 0;
 
   if (isOut) {
-    const breakLift = 6;
+    const breakLift = toeAltitudeMm !== undefined
+      ? Math.max(3.0, Math.min(18, (toeAltitudeMm / 20) * 14))
+      : 6;
     const breakAngle = -0.35;
     if (p < 0.65) {
       const t = p / 0.65;

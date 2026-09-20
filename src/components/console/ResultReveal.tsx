@@ -13,6 +13,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
+import { calculateReviewRetention } from "../../engine/realMatchPlayback";
 
 interface ResultRevealProps {
   scenario: Scenario;
@@ -39,17 +40,27 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
   const isLastIncident = incidentIndex >= totalIncidents - 1;
   const isProtocolBreach = !isVerdictCorrect && scenario.drsEvaluation.failedGate !== undefined && scenario.drsEvaluation.failedGate !== "NONE";
 
+  const retentionInfo = calculateReviewRetention({
+    verdict: result.finalVerdict,
+    onFieldSignal: scenario.onFieldSignal,
+    isUmpiresCall: scenario.drsEvaluation.isUmpiresCall,
+  });
+
   const handleNext = () => {
     sounds.playClick(900);
     onNextIncident();
   };
+
+  const isOverturn = scenario.onFieldSignal !== "REFERRED" && scenario.onFieldSignal !== result.finalVerdict;
 
   const getHeadline = () => {
     if (isProtocolBreach) {
       return "Verdict Breach: Protocol Error Recorded";
     }
     if (isVerdictCorrect) {
-      return "Verdict Verified: Official Decision Upheld";
+      return isOverturn
+        ? "Verdict Verified: Decision Overturned"
+        : "Verdict Verified: Official Decision Upheld";
     }
     return "Verdict Overruled: Protocol Gate Error";
   };
@@ -57,6 +68,9 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
   const getSubtext = () => {
     if (isProtocolBreach || !isVerdictCorrect) {
       return "Third umpire ruling diverges from conclusive physical evidence or protocol gate requirements.";
+    }
+    if (isOverturn) {
+      return "Third umpire adjudication correctly overturns the on-field decision in accordance with ICC playing conditions.";
     }
     return "Third umpire adjudication adheres to ICC playing conditions. Match record updated.";
   };
@@ -714,6 +728,44 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
                 <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-sans">
                   <span>{scenario.drsEvaluation.isUmpiresCall ? "Umpire's Call Enforced" : "Conclusive Evidence"}</span>
                   <Info size={14} className="text-neutral-400 shrink-0" />
+                </div>
+              </div>
+
+              <div className="border-t border-[#1e2738]" />
+
+              {/* Row 4: DRS Review Quota Retention */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[9.5px] font-bold text-neutral-400 tracking-wider uppercase font-sans">
+                    4. {retentionInfo.reviewingSide ? `${retentionInfo.reviewingSide} REVIEW QUOTA` : "REFERRAL QUOTA IMPACT"}
+                  </div>
+                  <div className="text-sm font-bold uppercase tracking-wide mt-0.5">
+                    {retentionInfo.reviewingSide ? (
+                      retentionInfo.reviewRetained ? (
+                        <span className="text-emerald-400">REVIEW RETAINED</span>
+                      ) : (
+                        <span className="text-rose-400">REVIEW LOST</span>
+                      )
+                    ) : (
+                      <span className="text-cyan-400">QUOTA UNAFFECTED</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-sans">
+                  <span>
+                    {retentionInfo.reviewingSide
+                      ? retentionInfo.reviewRetained
+                        ? scenario.drsEvaluation.isUmpiresCall
+                          ? "Umpire's Call • Quota Preserved"
+                          : "Decision Overturned • Quota Preserved"
+                        : "On-Field Call Upheld • 1 Review Deducted"
+                      : "Direct Umpire Referral • Quotas Preserved"}
+                  </span>
+                  {retentionInfo.reviewRetained ? (
+                    <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                  ) : (
+                    <XCircle size={14} className="text-rose-400 shrink-0" />
+                  )}
                 </div>
               </div>
             </div>

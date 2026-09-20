@@ -10,6 +10,7 @@ import {
   Eye,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
+import { LBW_TIMESTAMPS } from "../../engine/lbwPhysics";
 
 interface CameraSwitcherAnglesProps {
   scenario: Scenario;
@@ -190,6 +191,26 @@ export const CameraSwitcherAngles: React.FC<CameraSwitcherAnglesProps> = ({
               </svg>
             ),
           },
+          {
+            id: "STUMP_PROJ",
+            camCode: "CAM 06 STUMP FACE",
+            label: "Stump Face",
+            description: "True-scale overlap instrument",
+            icon: <Crosshair size={13} />,
+            renderThumbnail: () => (
+              <svg className="w-full h-full" viewBox="0 0 160 100" fill="none" preserveAspectRatio="none">
+                <rect width="160" height="100" fill="#09111c" />
+                {/* 50% zone box */}
+                <rect x="55" y="25" width="50" height="60" stroke="#f59e0b" strokeWidth="1" strokeDasharray="3,2" fill="rgba(245,158,11,0.08)" />
+                {/* Stumps */}
+                <rect x="63" y="28" width="6" height="57" fill="#d97706" rx="1" />
+                <rect x="77" y="28" width="6" height="57" fill="#d97706" rx="1" />
+                <rect x="91" y="28" width="6" height="57" fill="#d97706" rx="1" />
+                {/* Projected Ball */}
+                <circle cx="98" cy="45" r="7" fill="#dc2626" stroke="#fff" strokeWidth="1" />
+              </svg>
+            ),
+          },
         ];
 
       case "STUMPING":
@@ -326,7 +347,7 @@ export const CameraSwitcherAngles: React.FC<CameraSwitcherAnglesProps> = ({
           { id: "kf-release", frameNum: 40, timeMs: 800, label: "Bowler release" },
           { id: "kf-bounce", frameNum: 60, timeMs: 1200, label: "Pitch bounce" },
           { id: "kf-impact", frameNum: 75, timeMs: 1500, label: "Pad impact" },
-          { id: "kf-wickets", frameNum: 90, timeMs: 1800, label: "Stump arrival" },
+          { id: "kf-wickets", frameNum: Math.round((LBW_TIMESTAMPS.T_STUMPS / 1000) * fps), timeMs: LBW_TIMESTAMPS.T_STUMPS, label: "Stump arrival" },
         ];
       case "RUN_OUT":
         return [];

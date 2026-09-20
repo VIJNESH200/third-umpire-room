@@ -1,6 +1,7 @@
 import React from "react";
 import type { LBWData } from "../../types/scenario";
 import { Crosshair } from "lucide-react";
+import { LBW_TIMESTAMPS } from "../../engine/lbwPhysics";
 
 interface StumpProjectionViewProps {
   lbw: LBWData;
@@ -27,15 +28,15 @@ interface StumpProjectionViewProps {
        with a 1 cm comparator scale across the gap.
 
    Sync: the shared canonical transport drives the projection marker
-   1200ms pitch bounce → 1500ms pad impact → 1800ms stump-plane
+   1200ms pitch bounce → 1500ms pad impact → 1680ms stump-plane
    arrival. Position comes from raw scenario physics only; no
    classification, outcome or verdict colour is ever rendered.
    ================================================================ */
 
-// Canonical anchors (ms) — shared transport.
-const T_BOUNCE = 1200;
-const T_IMPACT = 1500;
-const T_ARRIVAL = 1800;
+// Canonical anchors (ms) — shared transport from LBW_TIMESTAMPS.
+const T_BOUNCE = LBW_TIMESTAMPS.T_BOUNCE;
+const T_IMPACT = LBW_TIMESTAMPS.T_IMPACT;
+const T_ARRIVAL = LBW_TIMESTAMPS.T_STUMPS;
 
 // True elevation scale: everything below uses CM→PX through this.
 const PX_PER_CM = 3.094; // stump height 71.1cm → 220px hero

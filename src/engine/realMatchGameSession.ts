@@ -71,6 +71,8 @@ export class RealMatchGameSession {
   private readonly _playbackSession: RealMatchPlaybackSession;
   private readonly _scheduledIncidents: Map<string, RealMatchDrsIncident>;
   private readonly _decisions: Map<string, DecisionRecord>;
+  private readonly _decidedDeliveries: Set<string>;
+  private readonly _auditHistory: DecisionRecord[];
   private _status: RealMatchGameStatus;
 
   constructor(
@@ -83,6 +85,8 @@ export class RealMatchGameSession {
     this.incidentCount = options?.incidentCount ?? 8;
     this._playbackSession = new RealMatchPlaybackSession(match);
     this._decisions = new Map<string, DecisionRecord>();
+    this._decidedDeliveries = new Set<string>();
+    this._auditHistory = [];
     this._scheduledIncidents = new Map<string, RealMatchDrsIncident>();
 
     // 1. Register incidents (either custom or deterministically scheduled)
@@ -118,7 +122,22 @@ export class RealMatchGameSession {
     }
 
     const scheduled = this._scheduledIncidents.get(currentBall.delivery.id);
-    if (scheduled && !this._decisions.has(scheduled.deliveryId)) {
+    if (scheduled && !this._decidedDeliveries.has(scheduled.deliveryId)) {
+      // Quota check for team reviews (LBW, CAUGHT_BEHIND)
+      const isTeamReview = scheduled.incidentType === "LBW" || scheduled.incidentType === "CAUGHT_BEHIND";
+      if (isTeamReview) {
+        const onFieldSignal = scheduled.scenario.onFieldSignal;
+        const reviewingSide = onFieldSignal === "OUT" ? "BATTING" : "BOWLING";
+        const state = this._playbackSession.getCurrentState();
+        const reviews = state.remainingReviews ?? { batting: 2, bowling: 2 };
+        const quota = reviewingSide === "BATTING" ? reviews.batting : reviews.bowling;
+        if (quota <= 0) {
+          // Quota exhausted: team review cannot be taken under DRS rules
+          this._status = "NORMAL_PLAYBACK";
+          return;
+        }
+      }
+
       this._status = "REVIEW_REQUIRED";
       return;
     }
@@ -224,6 +243,9 @@ export class RealMatchGameSession {
    * Jumps the playback cursor directly to a specific delivery.
    */
   public seekTo(inningsIndex: number, deliveryIndex: number): boolean {
+    if (this.isPausedForReview()) {
+      return false;
+    }
     const jumped = this._playbackSession.seekTo(inningsIndex, deliveryIndex);
     if (jumped) {
       this._syncStatus();
@@ -298,6 +320,19 @@ export class RealMatchGameSession {
       };
     }
 
+    // 1. Once-only decision invariant: If a decision has already been submitted for this delivery, return it idempotently without re-applying or modifying history
+    if (this._decidedDeliveries.has(currentBall.delivery.id)) {
+      console.warn(`Decision already submitted for delivery ${currentBall.delivery.id}: official match DRS decisions are immutable`);
+      const existingDecision = this._decisions.get(currentBall.delivery.id) ?? this._auditHistory.find((d) => d.deliveryId === currentBall.delivery.id);
+      return existingDecision ? existingDecision.override : this._playbackSession.getOverlays().get(currentBall.delivery.id) ?? {
+        ballId: currentBall.delivery.id,
+        originalOutcome: currentBall.delivery.outcome,
+        drsOutcome: currentBall.delivery.outcome,
+        applied: false,
+        reason: "Decision already rendered for this delivery",
+      };
+    }
+
     const delivery = currentBall.delivery;
     const scenario = incident.scenario;
     const onFieldSignal = scenario.onFieldSignal;
@@ -307,6 +342,31 @@ export class RealMatchGameSession {
       options.reason.trim().toUpperCase() !== "STANDARD"
         ? options.reason.trim()
         : scenario.drsEvaluation.explanation;
+
+    // 2. Quota check for team reviews (LBW, CAUGHT_BEHIND)
+    const state = this._playbackSession.getCurrentState();
+    const isTeamReview = incident.incidentType === "LBW" || incident.incidentType === "CAUGHT_BEHIND";
+    const reviewingSide: "BATTING" | "BOWLING" | undefined = isTeamReview
+      ? (onFieldSignal === "OUT" ? "BATTING" : onFieldSignal === "NOT_OUT" ? "BOWLING" : undefined)
+      : undefined;
+
+    const reviews = state.remainingReviews ?? { batting: 2, bowling: 2 };
+    const remainingQuota = reviewingSide
+      ? (reviewingSide === "BATTING" ? reviews.batting : reviews.bowling)
+      : undefined;
+
+    if (reviewingSide && remainingQuota !== undefined && remainingQuota <= 0) {
+      return {
+        ballId: delivery.id,
+        incidentType: incident.incidentType,
+        originalOutcome: delivery.outcome,
+        drsOutcome: delivery.outcome,
+        applied: false,
+        reviewingSide,
+        reviewRetained: false,
+        reason: `Review rejected: ${reviewingSide} team has 0 reviews remaining`,
+      };
+    }
 
     let params: DrsConsequenceParams;
 
@@ -319,6 +379,7 @@ export class RealMatchGameSession {
           onFieldSignal,
           isNoBall: scenario.lbw?.isNoBall,
           isUmpiresCall: scenario.drsEvaluation.isUmpiresCall,
+          remainingQuota,
           reason,
         };
         break;
@@ -352,6 +413,7 @@ export class RealMatchGameSession {
           verdict,
           onFieldSignal,
           dismissedBatter: options?.dismissedBatter ?? delivery.striker,
+          remainingQuota,
           reason,
         };
         break;
@@ -383,6 +445,8 @@ export class RealMatchGameSession {
       timestampMs: Date.now(),
     };
     this._decisions.set(delivery.id, record);
+    this._decidedDeliveries.add(delivery.id);
+    this._auditHistory.push(record);
 
     // Synchronize status (unpauses review)
     this._syncStatus();
@@ -391,13 +455,24 @@ export class RealMatchGameSession {
   }
 
   /**
-   * Removes a DRS consequence overlay for a delivery, reverting it to canonical real baseline.
+   * Removes a DRS consequence overlay from the playback simulation engine (e.g. for hypothetical projections).
+   * Official match decision records and audit history remain immutable, preventing re-review
+   * or quota manipulation.
    */
   public removeOverlay(deliveryId: string): boolean {
     const removed = this._playbackSession.removeOverlay(deliveryId);
     this._decisions.delete(deliveryId);
+    // Note: this._decidedDeliveries and this._auditHistory are intentionally preserved
+    // so this delivery cannot be re-reviewed or have quotas manipulated.
     this._syncStatus();
     return removed;
+  }
+
+  /**
+   * Returns the immutable chronological audit history of all DRS decisions submitted during this match.
+   */
+  public getAuditHistory(): readonly DecisionRecord[] {
+    return [...this._auditHistory];
   }
 
   /**
@@ -487,7 +562,7 @@ export class RealMatchGameSession {
     // Review counts: check if final DRS outcome altered the on-field decision or baseline wicket outcome
     let reviewsOverturned = 0;
     let reviewsUpheld = 0;
-    for (const d of this._decisions.values()) {
+    for (const d of this._auditHistory) {
       const onField = d.incident.scenario.onFieldSignal;
       let overturned = false;
       if (onField === "OUT") {
@@ -516,7 +591,7 @@ export class RealMatchGameSession {
       innings2Wickets: inn2Wickets,
       winnerTeamId,
       marginDescription,
-      totalReviewsConducted: this._decisions.size,
+      totalReviewsConducted: this._auditHistory.length,
       reviewsOverturned,
       reviewsUpheld,
     };

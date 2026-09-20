@@ -19,9 +19,7 @@ import {
   lerp,
   clamp,
   easeInQuad,
-  easeInOutQuad,
   easeOutCubic,
-  smoothstep,
   FielderKinematics,
   solveBoundaryFielderKinematics,
 } from "../components/instinct/actorRigs";
@@ -609,8 +607,8 @@ export function projectWideRelayCoords(
   worldX: number,
   worldY: number,
   worldZ: number,
-  viewWidth: number = 500,
-  viewHeight: number = 320
+  _viewWidth: number = 500,
+  _viewHeight: number = 320
 ): { screenX: number; screenY: number; radiusPx: number } {
   // Cushion front edge (worldX = 0) maps to screenX = 350
   // Field of play extends left (worldX < 0 -> screenX < 350)

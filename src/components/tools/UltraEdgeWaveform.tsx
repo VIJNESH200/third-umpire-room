@@ -5,7 +5,6 @@ import { sounds } from "../../engine/audioSynth";
 import {
   solveUltraEdgeSignal,
   sampleUltraEdgeAmplitude,
-  findNearestTransient,
   solveCaughtBehindSlipCorridor,
 } from "../../engine/caughtBehindPhysics";
 import {
@@ -45,7 +44,6 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
   const [audioNotice, setAudioNotice] = useState<string | null>(null);
 
   const signal = useMemo(() => solveUltraEdgeSignal(caughtBehind), [caughtBehind]);
-  const nearest = useMemo(() => findNearestTransient(signal), [signal]);
 
   const minTime = signal.windowStartMs;
   const maxTime = signal.windowEndMs;
@@ -54,7 +52,6 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
   // Exact Canonical Frame Indexing (50 FPS, 20ms/frame)
   // F59 = 1180ms, F60 = 1200ms (Bat Transit), F61 = 1220ms
   const currentFrame = Math.round(currentTimeMs / 20);
-  const transitFrame = Math.round(transitTime / 20);
   const isAtTransit = Math.abs(currentTimeMs - transitTime) <= 12;
 
   // Draw the synchronized stump-mic scope.
@@ -513,8 +510,6 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
     }
   }, [caughtBehind, currentTimeMs, scenario]);
 
-  const alignmentOffsetMs = nearest ? Math.round(nearest.offsetMs) : null;
-
   return (
     <div className="flex flex-col h-full monitor-frame rounded-xl border border-slate-700/80 p-1.5 select-none font-mono text-slate-200">
       {/* Top Monitor Bar */}
@@ -525,7 +520,7 @@ export const UltraEdgeWaveform: React.FC<UltraEdgeWaveformProps> = ({
             ULTRAEDGE • BROADCAST AUDIO-VIDEO SYNCHRONIZER
           </span>
           <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-cyan-300 font-semibold">
-            500 FPS SHUTTER • STUMP MIC SYNC
+            500 FPS SENSOR CAPTURE • 50 FPS TRANSPORT (20ms/STEP)
           </span>
         </div>
 

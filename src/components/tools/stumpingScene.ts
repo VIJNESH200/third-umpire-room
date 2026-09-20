@@ -107,7 +107,13 @@ export function renderCanonicalStumpingScene(
 
   // --- 6. Batter Stationary Stance & Rear-Leg Pendulum Kinematics ---
   const marginPx = state.batter.isGrounded ? -10 : 10;
-  const stumpingResult = solveStumpingBatterKinematics(p, creaseX, marginPx);
+  const stumpingResult = solveStumpingBatterKinematics(
+    p,
+    creaseX,
+    marginPx,
+    state.batter.toeAltitudeMm,
+    state.batter.toeCreaseOffsetMm
+  );
 
   drawArticulatedBatter(
     ctx,

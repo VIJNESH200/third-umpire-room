@@ -219,15 +219,15 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
             POPPING CREASE
           </text>
 
-          {/* Striker Wickets (Top End Target: true width 13.5px / ±6.75px = ±0.1143m) */}
+          {/* Striker Wickets (Top End Target: true width 13.5px / ±6.75px = ±0.1143m, height 42px = 0.711m) */}
           <g transform="translate(300, 65)">
             <rect x="-8" y="0" width="16" height="2" fill="#1e293b" />
             {/* 3 Stumps standing tall across ±6.75px */}
-            <rect x="-6.75" y="-36" width="2.2" height="36" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
-            <rect x="-1.1" y="-36" width="2.2" height="36" fill="#f59e0b" stroke="#78350f" strokeWidth="0.4" />
-            <rect x="4.55" y="-36" width="2.2" height="36" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
+            <rect x="-6.75" y="-42" width="2.2" height="42" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
+            <rect x="-1.1" y="-42" width="2.2" height="42" fill="#f59e0b" stroke="#78350f" strokeWidth="0.4" />
+            <rect x="4.55" y="-42" width="2.2" height="42" fill="#d97706" stroke="#78350f" strokeWidth="0.4" />
             {/* Bails */}
-            <rect x="-7" y="-38" width="14" height="2" fill="#f59e0b" rx="0.5" />
+            <rect x="-7" y="-44" width="14" height="2" fill="#f59e0b" rx="0.5" />
           </g>
 
           {/* Batter Stance Silhouette (At Striker Popping Crease) */}
@@ -301,82 +301,39 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                 />
               </g>
 
-              {lbw.batContactBeforePad ? (
-                <>
-                  {/* Bounce Arc to Bat Contact */}
-                  <path
-                    d={trajectoryStages.bounceArcPath}
-                    fill="none"
-                    stroke="#FACC15"
-                    strokeWidth="3.2"
-                  />
-                  {/* Deflected Arc off Bat */}
-                  <path
-                    d={trajectoryStages.deflectedArcPath}
-                    fill="none"
-                    stroke="#38BDF8"
-                    strokeWidth="2.8"
-                    strokeDasharray="4 3"
-                  />
-                  {/* Bat Contact Marker */}
-                  <circle
-                    cx={trajectoryStages.batContactPointSVG.x}
-                    cy={trajectoryStages.batContactPointSVG.y}
-                    r="10"
-                    fill="#38BDF8"
-                    fillOpacity="0.45"
-                    stroke="#38BDF8"
-                    strokeWidth="2"
-                  />
-                  <circle cx={trajectoryStages.batContactPointSVG.x} cy={trajectoryStages.batContactPointSVG.y} r="4.5" fill="#FFFFFF" stroke="#0f172a" strokeWidth="1" />
-                  <text
-                    x={trajectoryStages.batContactPointSVG.x > 300 ? trajectoryStages.batContactPointSVG.x - 200 : trajectoryStages.batContactPointSVG.x + 16}
-                    y={trajectoryStages.batContactPointSVG.y + 4}
-                    fill="#38BDF8"
-                    fontSize="11"
-                    fontFamily="monospace"
-                    fontWeight="900"
-                  >
-                    INTERCEPT POINT
-                  </text>
-                </>
-              ) : (
-                <>
-                  {/* Bounce Arc to Pad Impact */}
-                  <path
-                    d={trajectoryStages.bounceArcPath}
-                    fill="none"
-                    stroke="#FACC15"
-                    strokeWidth="3.2"
-                  />
-                  {/* Pad Impact Circle */}
-                  <circle
-                    cx={trajectoryStages.impactPointSVG.x}
-                    cy={trajectoryStages.impactPointSVG.y}
-                    r="10"
-                    fill={EVIDENCE_COLOR}
-                    fillOpacity="0.45"
-                    stroke={EVIDENCE_COLOR}
-                    strokeWidth="2"
-                  />
-                  <circle cx={trajectoryStages.impactPointSVG.x} cy={trajectoryStages.impactPointSVG.y} r="4.5" fill="#FFFFFF" stroke="#0f172a" strokeWidth="1" />
-                  <text
-                    x={trajectoryStages.impactPointSVG.x > 300 ? trajectoryStages.impactPointSVG.x - 200 : trajectoryStages.impactPointSVG.x + 16}
-                    y={trajectoryStages.impactPointSVG.y + 4}
-                    fill={EVIDENCE_COLOR}
-                    fontSize="11"
-                    fontFamily="monospace"
-                    fontWeight="900"
-                  >
-                    IMPACT • {lbw.impactDistance}m FROM STUMPS
-                  </text>
-                </>
-              )}
+              {/* Bounce Arc to Impact */}
+              <path
+                d={trajectoryStages.bounceArcPath}
+                fill="none"
+                stroke="#FACC15"
+                strokeWidth="3.2"
+              />
+              {/* Pad / Equipment Impact Circle */}
+              <circle
+                cx={trajectoryStages.impactPointSVG.x}
+                cy={trajectoryStages.impactPointSVG.y}
+                r="10"
+                fill={EVIDENCE_COLOR}
+                fillOpacity="0.45"
+                stroke={EVIDENCE_COLOR}
+                strokeWidth="2"
+              />
+              <circle cx={trajectoryStages.impactPointSVG.x} cy={trajectoryStages.impactPointSVG.y} r="4.5" fill="#FFFFFF" stroke="#0f172a" strokeWidth="1" />
+              <text
+                x={trajectoryStages.impactPointSVG.x > 300 ? trajectoryStages.impactPointSVG.x - 200 : trajectoryStages.impactPointSVG.x + 16}
+                y={trajectoryStages.impactPointSVG.y + 4}
+                fill={EVIDENCE_COLOR}
+                fontSize="11"
+                fontFamily="monospace"
+                fontWeight="900"
+              >
+                IMPACT • {lbw.impactDistance}m FROM STUMPS
+              </text>
             </g>
           )}
 
-          {/* STAGE 5: Projected Path to Striker Stumps (Only if no prior bat contact) */}
-          {revealStage >= 5 && !lbw.batContactBeforePad && (
+          {/* STAGE 5: Projected Path to Striker Stumps */}
+          {revealStage >= 5 && (
             <g className="animate-fadeIn">
               {/* Virtual Projected Shadow */}
               <g clipPath="url(#pitchClip)">
@@ -395,44 +352,16 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                 stroke={EVIDENCE_COLOR}
                 strokeWidth="3.5"
               />
-              {/* Target Impact Marker on Stumps */}
+              {/* Target Impact Marker on Stumps — physically scaled ball radius */}
               <circle
                 cx={trajectoryStages.stumpsPointSVG.x}
                 cy={trajectoryStages.stumpsPointSVG.y}
-                r="7.5"
+                r={HAWKEYE_GEOMETRY.STRIKER_BALL_RADIUS_PX}
                 fill={EVIDENCE_COLOR}
                 fillOpacity="0.85"
                 stroke="#FFFFFF"
-                strokeWidth="2"
+                strokeWidth="0.6"
               />
-            </g>
-          )}
-
-          {/* STAGE 5 (If prior bat contact): Invalidation Banner */}
-          {revealStage >= 5 && lbw.batContactBeforePad && (
-            <g className="animate-fadeIn">
-              <rect
-                x="150"
-                y="15"
-                width="300"
-                height="30"
-                rx="6"
-                fill="#0F172A"
-                fillOpacity="0.92"
-                stroke="#38BDF8"
-                strokeWidth="1.5"
-              />
-              <text
-                x="300"
-                y="34"
-                textAnchor="middle"
-                fill="#38BDF8"
-                fontSize="11"
-                fontFamily="monospace"
-                fontWeight="bold"
-              >
-                TRAJECTORY INTERCEPTED • NO PROJECTION AVAILABLE
-              </text>
             </g>
           )}
         </svg>
@@ -473,9 +402,7 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
             </span>
             <span className="text-slate-200">
               {revealStage >= 5
-                ? lbw.batContactBeforePad
-                  ? "--.- cm"
-                  : `${lbw.stumpHitHeightCm.toFixed(1)} cm`
+                ? `${lbw.stumpHitHeightCm.toFixed(1)} cm`
                 : "--.- cm"}
             </span>
           </div>
@@ -502,7 +429,7 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
               opacity="0.8"
             />
 
-            {revealStage >= 5 && !lbw.batContactBeforePad ? (
+            {revealStage >= 5 ? (
               <g className="animate-fadeIn">
                 <circle
                   cx={50 + lbw.stumpHitX * (23 / 0.1143)}
@@ -514,10 +441,6 @@ export const PitchMapOverlay: React.FC<PitchMapOverlayProps> = ({
                   strokeWidth="1.5"
                 />
               </g>
-            ) : revealStage >= 5 && lbw.batContactBeforePad ? (
-              <text x="50" y="48" textAnchor="middle" fill="#64748b" fontSize="7.5" fontFamily="monospace" fontWeight="bold">
-                NO PROJECTION
-              </text>
             ) : (
               <text x="50" y="48" textAnchor="middle" fill="#64748b" fontSize="8" fontFamily="monospace" fontWeight="bold">
                 PROJECTION PENDING

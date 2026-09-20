@@ -7,8 +7,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Clock,
-  Crosshair,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
@@ -77,12 +75,13 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
       <div className="relative w-full h-3 flex items-center">
         <input
           type="range"
+          aria-label="Replay timeline scrubber"
           min={minTimeMs}
           max={maxTimeMs}
           step={frameStepMs}
           value={currentTimeMs}
           onChange={handleSliderChange}
-          className="w-full h-1 bg-[#27272a] rounded-none appearance-none cursor-pointer accent-white focus:outline-none z-10"
+          className="w-full h-1 bg-[#27272a] rounded-none appearance-none cursor-pointer accent-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 z-10"
         />
 
         {/* Keyframe Interactive Marker Layer — clickable diamond pips overlaid directly on track */}
@@ -99,7 +98,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
               type="button"
               onClick={() => handleMarkerClick(marker.timeMs)}
               title={`Seek to ${marker.label} (${marker.timeMs}ms)`}
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group cursor-pointer pointer-events-auto transition-transform hover:scale-125 focus:outline-none z-20"
+              aria-label={`Seek to ${marker.label} (${marker.timeMs}ms)`}
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group cursor-pointer pointer-events-auto transition-transform hover:scale-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 z-20"
               style={{ left: `${markerPos}%` }}
             >
               {/* Diamond Marker Pin */}
@@ -128,7 +128,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(-5)}
             title={`Step back 5 frames (${5 * frameStepMs}ms)`}
-            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1"
+            aria-label="Step back 5 frames"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <ChevronsLeft size={12} />
             <span>-5F</span>
@@ -139,7 +140,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(-1)}
             title={`Step back 1 frame (${frameStepMs}ms)`}
-            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-300 hover:text-white flex items-center gap-1"
+            aria-label="Step back 1 frame"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-300 hover:text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <ChevronLeft size={12} />
             <span>-1F</span>
@@ -150,7 +152,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={onTogglePlay}
             title={isPlaying ? "Pause Replay" : "Play Replay"}
-            className={`px-3.5 py-0.5 rounded-sm text-xs font-bold tracking-wider transition-all uppercase cursor-pointer flex items-center gap-1.5 ${
+            aria-label={isPlaying ? "Pause replay" : "Play replay"}
+            className={`px-3.5 py-0.5 rounded-sm text-xs font-bold tracking-wider transition-all uppercase cursor-pointer flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
               isPlaying
                 ? "bg-white text-black hover:bg-neutral-200"
                 : "bg-white text-black hover:bg-neutral-200"
@@ -165,7 +168,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(1)}
             title={`Step forward 1 frame (${frameStepMs}ms)`}
-            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-300 hover:text-white flex items-center gap-1"
+            aria-label="Step forward 1 frame"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-300 hover:text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <span>+1F</span>
             <ChevronRight size={12} />
@@ -176,7 +180,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={() => onStep(5)}
             title={`Step forward 5 frames (${5 * frameStepMs}ms)`}
-            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1"
+            aria-label="Step forward 5 frames"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <span>+5F</span>
             <ChevronsRight size={12} />
@@ -187,7 +192,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
             type="button"
             onClick={onToggleRockAndRoll}
             title="Rock & Roll: Continuously shuttle-loop around decisive impact/bail frame"
-            className={`px-2.5 py-0.5 rounded-sm text-xs font-semibold tracking-wide transition-colors uppercase cursor-pointer flex items-center gap-1.5 border ${
+            aria-label="Toggle rock and roll playback"
+            className={`px-2.5 py-0.5 rounded-sm text-xs font-semibold tracking-wide transition-colors uppercase cursor-pointer flex items-center gap-1.5 border focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
               isRockAndRoll
                 ? "bg-amber-600 border-amber-500 text-white font-bold"
                 : "bg-[#1a1a1b] hover:bg-[#27272a] border-[#27272a] text-amber-400 hover:text-amber-300"
@@ -210,7 +216,8 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
                 key={spd}
                 type="button"
                 onClick={() => onSpeedChange(spd)}
-                className={`px-1.5 py-0.5 rounded-sm text-xs font-mono transition-colors cursor-pointer ${
+                aria-label={`Playback speed ${spd}x`}
+                className={`px-1.5 py-0.5 rounded-sm text-xs font-mono transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
                   playbackSpeed === spd
                     ? "bg-[#27272a] text-white font-bold border border-[#3f3f46]"
                     : "text-neutral-400 hover:text-neutral-200"

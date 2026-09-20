@@ -210,7 +210,7 @@ recordEvidence(
 // ----------------------------------------------------------------------------
 const canvasWidths = [320, 480, 600, 720, 960, 1280, 1920];
 const MIN_T = 800;
-const MAX_T = 1600;
+const _MAX_T = 1600;
 const SPAN_T = 800;
 const TRANSIT_T = 1200;
 

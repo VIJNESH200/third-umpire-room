@@ -44,6 +44,7 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   reviewChecklist,
 }) => {
   const [selectedVerdict, setSelectedVerdict] = useState<DecisionVerdict | null>(null);
+  const [hasSubmitted, setHasSubmitted] = useState<boolean>(false);
   const dismissalReason = "STANDARD";
 
   const isRunOutOrStumping = incidentType === "RUN_OUT" || incidentType === "STUMPING";
@@ -53,15 +54,17 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
       ? true
       : reviewChecklist.replay &&
         reviewChecklist.trackStage >= TRACK_REVIEW_COMPLETE_STAGE;
-  const canTransmit = selectedVerdict !== null && areMarkersPlaced && evidenceReviewComplete;
+  const canTransmit = selectedVerdict !== null && areMarkersPlaced && evidenceReviewComplete && !hasSubmitted;
 
   const handleSelectVerdict = (verdict: DecisionVerdict) => {
+    if (hasSubmitted) return;
     setSelectedVerdict(verdict);
     sounds.playClick(verdict === "OUT" ? 650 : 850);
   };
 
   const handleTransmit = () => {
-    if (!canTransmit || !selectedVerdict) return;
+    if (!canTransmit || !selectedVerdict || hasSubmitted) return;
+    setHasSubmitted(true);
     sounds.playVerdictReveal(true);
     onVerdictSubmit(selectedVerdict, dismissalReason, {
       playerBatGroundedMs,

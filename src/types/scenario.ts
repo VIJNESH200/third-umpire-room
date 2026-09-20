@@ -77,7 +77,6 @@ export interface LBWData {
   impactX: number; // Lateral offset in metres at pad/bat impact point
   stumpHitX: number; // Lateral offset in metres at striker stumps plane (±0.1143m = outer edge of stumps)
   stumpHitHeightCm: number; // stump height 71.1cm
-  hawkeyeTrajectory: { x: number; y: number; z: number }[]; // 3D coordinates
 }
 
 export interface RunOutData {

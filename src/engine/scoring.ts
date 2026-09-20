@@ -1,7 +1,6 @@
 import type {
   IncidentResult,
   SessionStats,
-  RankTier,
   RankInfo,
 } from "../types/scenario";
 
@@ -87,10 +86,16 @@ export function computeSessionStats(history: IncidentResult[]): SessionStats {
     (h) => h.softSignal !== null && h.softSignal !== "SEND_UPSTAIRS"
   );
   const softCorrect = softSignalEvaluated.filter((h) => h.softSignalCorrect).length;
-  const softSignalInstinct =
-    softSignalEvaluated.length > 0
-      ? Math.round((softCorrect / softSignalEvaluated.length) * 100)
-      : 0;
+  const abstainedCount = history.filter((h) => h.softSignal === "SEND_UPSTAIRS").length;
+  const assessedCount = softSignalEvaluated.length;
+
+  // Each correct call awards 100%, each neutral abstention awards 50% (neutral referral),
+  // each incorrect call awards 0%. If player never made any correct on-field call, instinct is 0.
+  let softSignalInstinct = 0;
+  if (softCorrect > 0) {
+    const totalInstinctPoints = softCorrect * 100 + abstainedCount * 50;
+    softSignalInstinct = Math.round(totalInstinctPoints / total);
+  }
 
   // 2. Review Precision: % final verdicts correct
   const correctVerdicts = history.filter((h) => h.finalVerdictCorrect).length;
@@ -106,19 +111,21 @@ export function computeSessionStats(history: IncidentResult[]): SessionStats {
       ? Math.round((ucComplied / qualifyingUCI.length) * 100)
       : 100; // If no qualifying incidents occurred, default to 100%
 
-  // 4. Reaction Time & Score (only genuine soft-signal calls evaluated, excluding SEND_UPSTAIRS dodges)
+  // 4. Reaction Time & Score (evaluated on genuine soft-signal calls, scaled by decision coverage)
   const validReactionTimes = softSignalEvaluated.map((h) => h.softSignalTimeMs / 1000);
   const avgReactionTimeSeconds =
     validReactionTimes.length > 0
       ? validReactionTimes.reduce((a, b) => a + b, 0) / validReactionTimes.length
       : 0;
 
+  const coverage = total > 0 ? assessedCount / total : 0;
+  const coverageFactor = coverage;
   const instinctFactor = softSignalInstinct / 100;
   const rawSpeedScore =
     validReactionTimes.length > 0
       ? Math.max(0, Math.min(100, 100 - (avgReactionTimeSeconds / 10) * 50))
       : 0;
-  const reactionTimeScore = Math.round(rawSpeedScore * (0.5 + 0.5 * instinctFactor));
+  const reactionTimeScore = Math.round(rawSpeedScore * (0.5 + 0.5 * instinctFactor) * coverageFactor);
 
   // 5. Longest correct streak & Consistency
   let longestStreak = 0;
@@ -151,7 +158,20 @@ export function computeSessionStats(history: IncidentResult[]): SessionStats {
     reactionTimeScore * 0.10 +
     consistency * 0.10;
 
-  const overallRating = Math.round(Math.max(10, Math.min(99, rawOVR)));
+  // Stricter decision coverage scaling and on-field error penalties:
+  // - 0% coverage (all abstentions) drops to Trainee (<= 40)
+  // - 50% coverage (4 correct + 4 abstain) falls in Senior/Regional tier (~70-78)
+  // - 100% coverage (8 correct) reaches Elite (>= 90)
+  // - Strictly preserves: correct > incorrect, fast > slow, abstain > wrong
+  const softIncorrect = softSignalEvaluated.filter((h) => !h.softSignalCorrect).length;
+  const coverageScale = 0.48 + 0.52 * Math.pow(coverage, 0.65);
+  const onFieldErrorPenalty = softIncorrect * 5.0;
+
+  const maxOVRByCoverage = coverage === 0 ? 40 : Math.round(40 + coverage * 76);
+  const scaledOVR = rawOVR * coverageScale - onFieldErrorPenalty;
+  const overallRating = Math.round(
+    Math.max(10, Math.min(99, Math.min(maxOVRByCoverage, scaledOVR)))
+  );
   const rankInfo = getRankInfo(overallRating);
 
   return {

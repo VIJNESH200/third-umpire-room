@@ -140,8 +140,9 @@ export const MatchLogBar: React.FC<MatchLogBarProps> = ({
         <button
           type="button"
           onClick={onToggleMute}
-          className="p-1 rounded-sm bg-[#1a1a1b] hover:bg-[#27272a] text-neutral-300 border border-[#27272a] transition-colors cursor-pointer"
           title={isMuted ? "Unmute audio" : "Mute audio"}
+          aria-label={isMuted ? "Unmute audio" : "Mute audio"}
+          className="p-1 rounded-sm bg-[#1a1a1b] hover:bg-[#27272a] text-neutral-300 border border-[#27272a] transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
         >
           {isMuted ? <VolumeX size={13} className="text-red-400" /> : <Volume2 size={13} className="text-neutral-300" />}
         </button>

@@ -8,7 +8,6 @@ import type {
   StumpingData,
   CaughtBehindData,
   BoundaryData,
-  BoundaryArchetype,
   PitchingZone,
   ImpactZone,
   ProjectedStumpHit,
@@ -28,6 +27,7 @@ import {
   evaluateCaughtBehind,
   evaluateBoundary,
 } from "./drsRules";
+import { classifyProjectedStumpHit } from "./lbwPhysics";
 import { MATCH_POOLS, generateDynamicMatchSituation } from "../data/matchContextPool";
 
 // Deterministic pseudo-random generator with seed support
@@ -277,10 +277,10 @@ export function generateScenario(
       const isHeightClipping = rng.boolean(0.4);
       if (isHeightClipping) {
         stumpHitX = rng.range(-0.07, 0.07);
-        stumpHitHeightCm = rng.range(70.5, 72.8);
+        stumpHitHeightCm = rng.range(71.4, 73.4);
       } else {
         const side = rng.boolean(0.5) ? offSign : legSign;
-        stumpHitX = side * rng.range(0.095, 0.13);
+        stumpHitX = side * rng.range(0.118, 0.142);
         stumpHitHeightCm = rng.range(35, 60);
       }
     } else {
@@ -288,13 +288,16 @@ export function generateScenario(
       const isGoingOver = rng.boolean(0.6);
       if (isGoingOver) {
         stumpHitX = rng.range(-0.07, 0.07);
-        stumpHitHeightCm = rng.range(77, 92);
+        stumpHitHeightCm = rng.range(76.5, 90);
       } else {
         const side = rng.boolean(0.5) ? offSign : legSign;
-        stumpHitX = side * rng.range(0.22, 0.42);
+        stumpHitX = side * rng.range(0.165, 0.38);
         stumpHitHeightCm = rng.range(30, 60);
       }
     }
+
+    // Single source of truth: authoritative classification directly from physical geometry
+    projectedStumpHit = classifyProjectedStumpHit(stumpHitX, stumpHitHeightCm);
 
     // Generate pitching point consistent with pitchingZone
     let pitchX = 0;
@@ -329,14 +332,6 @@ export function generateScenario(
     const impactHeightM = u1 * u1 * 0.036 + 2 * u1 * uImpact * yApex + uImpact * uImpact * yStumpM;
     const impactHeight = Math.round(impactHeightM * 100);
 
-    const trajectory = [
-      { x: pitchX * 0.4, y: 0, z: 1.8 },
-      { x: pitchX * 0.7, y: 10, z: 0.6 },
-      { x: pitchX, y: 15.5, z: 0.05 },
-      { x: impactX, y: 18.2, z: impactHeightM },
-      { x: stumpHitX, y: 20.12, z: stumpHitHeightCm / 100 },
-    ];
-
     lbwData = {
       isNoBall,
       frontFootOverstepMm,
@@ -356,7 +351,6 @@ export function generateScenario(
       impactX,
       stumpHitX,
       stumpHitHeightCm,
-      hawkeyeTrajectory: trajectory,
     };
 
     // Phase 1 Initial Evidence Synthesis
@@ -614,7 +608,6 @@ export function generateScenario(
       impactX: 0,
       stumpHitX: 0,
       stumpHitHeightCm: 45,
-      hawkeyeTrajectory: [],
     },
     onFieldSignal
   );

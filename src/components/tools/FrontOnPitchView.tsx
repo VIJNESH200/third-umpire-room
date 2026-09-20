@@ -623,9 +623,7 @@ export const FrontOnPitchView: React.FC<FrontOnPitchViewProps> = ({
       ? "DELIVERY IN FLIGHT"
       : statusTime < LBW_TIMESTAMPS.T_IMPACT
       ? "OFF THE PITCH"
-      : lbw.batContactBeforePad
-      ? "BAT CONTACT • DEFLECTED"
-      : "PAD CONTACT • DEAD BALL";
+      : "POINT OF IMPACT";
 
   const currentFrame = Math.round((currentTimeMs / 1000) * 50);
 

@@ -272,7 +272,9 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={handleToggleMute}
-              className="p-1.5 rounded-lg bg-[#141B28] hover:bg-[#1E283C] text-slate-400 hover:text-white border border-[#243147] transition-colors cursor-pointer"
+              title={isMuted ? "Unmute audio" : "Mute audio"}
+              aria-label={isMuted ? "Unmute audio" : "Mute audio"}
+              className="p-1.5 rounded-lg bg-[#141B28] hover:bg-[#1E283C] text-slate-400 hover:text-white border border-[#243147] transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
             >
               {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} className="text-emerald-400" />}
             </button>

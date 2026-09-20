@@ -9,7 +9,7 @@
  * 4. Coordinate projection to CAM 01 3D world space and CAM 03 Hawk-Eye SVG space
  */
 
-import type { LBWData } from "../types/scenario";
+import type { LBWData, ProjectedStumpHit } from "../types/scenario";
 
 export interface Vec3 {
   x: number;
@@ -396,10 +396,14 @@ export const HAWKEYE_GEOMETRY = {
   BOWLER_GROUND_Y: 335,
   WICKET_WIDTH_M: 0.2286,
   WICKET_HALF_WIDTH_M: 0.1143,
+  BALL_RADIUS_M: 0.036,
+  STUMP_HEIGHT_M: 0.711,
   STRIKER_SCALE_PX_PER_M: 59.0551,
   BOWLER_SCALE_PX_PER_M: 167.3228,
   STRIKER_WICKET_HALF_WIDTH_PX: 0.1143 * 59.0551, // ≈ 6.75 px
   BOWLER_WICKET_HALF_WIDTH_PX: 0.1143 * 167.3228, // ≈ 19.12 px
+  STRIKER_BALL_RADIUS_PX: 0.036 * 59.0551, // ≈ 2.126 px
+  STRIKER_STUMP_HEIGHT_PX: 0.711 * 59.07, // ≈ 42.00 px
 } as const;
 
 /**
@@ -473,15 +477,14 @@ export function getHawkEyeTrajectoryStages(lbw: LBWData) {
   }
 
   // Stage 5: Virtual Projected Path to Striker Stumps (Impact -> Stumps)
-  // Continuous continuation along the exact same post-bounce path
+  // Continuous unhindered trajectory to striker stumps regardless of contact,
+  // letting UltraEdge waveform (Stage 2) provide the evidence for Gate 0B.
   const projectedPoints: { x: number; y: number }[] = [];
   const projectedShadow: { x: number; y: number }[] = [];
-  if (!lbw.batContactBeforePad) {
-    for (let t = T_IMPACT; t <= T_STUMPS; t += 15) {
-      const s = solveUnhinderedBallTrajectory(lbw, t);
-      projectedPoints.push(projectLBWPointToHawkEyeSVG(s.pos));
-      projectedShadow.push(projectLBWPointToHawkEyeSVG({ x: s.pos.x, y: 0, z: s.pos.z }));
-    }
+  for (let t = T_IMPACT; t <= T_STUMPS; t += 15) {
+    const s = solveUnhinderedBallTrajectory(lbw, t);
+    projectedPoints.push(projectLBWPointToHawkEyeSVG(s.pos));
+    projectedShadow.push(projectLBWPointToHawkEyeSVG({ x: s.pos.x, y: 0, z: s.pos.z }));
   }
 
   const releasePointSVG = projectLBWPointToHawkEyeSVG(waypoints.release);
@@ -540,4 +543,53 @@ export function getBallStateLog(lbw: LBWData) {
       },
     };
   });
+}
+
+/**
+ * Authoritative DRS Wicket Zone classification function.
+ * Evaluates the projected ball cylinder/sphere against the 3D wicket envelope.
+ *
+ * ICC DRS Wickets Zone:
+ * - Lateral boundaries: outer edge of off and leg stumps = ±WICKET_HALF_WIDTH_M (±0.1143m).
+ * - Vertical boundaries: base of stumps (0m) to top of stumps/bails = STUMP_HEIGHT_M (0.711m / 71.1cm).
+ * - Ball radius: BALL_RADIUS_M = 0.036m (3.6cm).
+ *
+ * Rules:
+ * 1. CLEARLY_HITTING: Ball centre is inside the wicket boundaries (|x| <= 0.1143m and height <= 71.1cm).
+ *    This corresponds to >= 50% ball overlap on the wicket zone.
+ * 2. UMPIRES_CALL: Ball overlaps/touches the wicket zone, but the ball centre is outside the wicket boundaries
+ *    (0.1143m < |x| < 0.1503m or 71.1cm < height < 74.7cm, while the other dimension is within touching range).
+ *    This corresponds to > 0% but < 50% ball overlap.
+ * 3. MISSING: Ball misses the wicket zone entirely (zero overlap).
+ */
+export function classifyProjectedStumpHit(stumpHitX: number, stumpHitHeightCm: number): ProjectedStumpHit {
+  const wicketHalfW = HAWKEYE_GEOMETRY.WICKET_HALF_WIDTH_M; // 0.1143m
+  const ballRadiusM = HAWKEYE_GEOMETRY.BALL_RADIUS_M; // 0.036m
+  const stumpHeightCm = HAWKEYE_GEOMETRY.STUMP_HEIGHT_M * 100; // 71.1cm
+  const ballRadiusCm = HAWKEYE_GEOMETRY.BALL_RADIUS_M * 100; // 3.6cm
+
+  const absX = Math.abs(stumpHitX);
+
+  // 1. Missing: ball completely misses lateral OR vertical envelope
+  if (absX >= wicketHalfW + ballRadiusM || stumpHitHeightCm >= stumpHeightCm + ballRadiusCm || stumpHitHeightCm < 0) {
+    return "MISSING";
+  }
+
+  // Check top-corner bail clipping (ball center outside both lateral and vertical bounds)
+  if (absX > wicketHalfW && stumpHitHeightCm > stumpHeightCm) {
+    const dx = absX - wicketHalfW;
+    const dy = (stumpHitHeightCm - stumpHeightCm) / 100;
+    if (Math.hypot(dx, dy) >= ballRadiusM) {
+      return "MISSING";
+    }
+    return "UMPIRES_CALL";
+  }
+
+  // 2. Clearly Hitting: ball center is inside wicket boundaries (>= 50% overlap)
+  if (absX <= wicketHalfW && stumpHitHeightCm <= stumpHeightCm) {
+    return "CLEARLY_HITTING";
+  }
+
+  // 3. Umpire's Call: ball touches stumps envelope, but center is beyond boundary (< 50% overlap)
+  return "UMPIRES_CALL";
 }

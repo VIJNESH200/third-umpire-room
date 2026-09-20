@@ -14,7 +14,6 @@ import {
   RunnerKinematics,
   KeeperKinematics,
   easeInOutQuad,
-  easeOutCubic,
   lerp,
   clamp,
   solveRunOutKeeperKinematics,

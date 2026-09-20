@@ -252,7 +252,7 @@ record(
 // 2.5 Stepping Drift under Unsnapped click vs Snapped click
 const xClick = 245;
 const rawTimeClick = MIN_TIME + (xClick / 480) * SPAN_TIME; // 1208.3333333333333 ms
-const snappedTimeClick = Math.round(rawTimeClick / 20) * 20; // 1200 ms
+const _snappedTimeClick = Math.round(rawTimeClick / 20) * 20; // 1200 ms
 
 let rawStepDrift = true;
 let currentRaw = rawTimeClick;

@@ -6,7 +6,6 @@ import {
   Camera,
   Layers,
   ZoomIn,
-  Flame,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
@@ -35,6 +34,7 @@ export const ToolPalette: React.FC<ToolPaletteProps> = ({
         return [
           { id: "BROADCAST_FRONT", camCode: "CAM 01", label: "Impact Replay", icon: <Camera size={13} /> },
           { id: "PITCH_MAP", camCode: "CAM 03", label: "Hawk-Eye 3D", icon: <Crosshair size={13} /> },
+          { id: "STUMP_PROJ", camCode: "CAM 06", label: "Stump Face", icon: <Crosshair size={13} /> },
         ];
       case "RUN_OUT":
         return [

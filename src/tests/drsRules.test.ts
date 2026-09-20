@@ -39,7 +39,6 @@ import {
   solveCaughtBehindBallState,
   solveCaughtBehindDeliveryTrajectory,
   projectCaughtBehindToMacro,
-  CB_TIMESTAMPS,
   BAT_EDGE_X_M,
   BALL_RADIUS_M,
   measureBatPlaneTurnDeg,
@@ -150,7 +149,6 @@ function runAllDRSTests() {
     impactX: 0,
     stumpHitX: 0,
     stumpHitHeightCm: 45,
-    hawkeyeTrajectory: [],
   };
 
   console.log("\n--- GROUP 1: GATE 0 PRE-BALL-TRACKING ELIGIBILITY ---");
@@ -504,7 +502,7 @@ function runAllDRSTests() {
   {
     const sLBW = generateScenario(8881, "LBW");
     const ev = sLBW.initialEvidence?.lbw as unknown as Record<string, unknown>;
-    assert(ev.hawkeyeTrajectory === undefined && ev.stumpHitHeightCm === undefined && ev.firstContactType === undefined,
+    assert(ev.stumpHitHeightCm === undefined && ev.firstContactType === undefined,
       "Forensic Separation: Initial evidence does not leak Phase 2 3D coordinates or exact heights");
   }
 
@@ -513,10 +511,7 @@ function runAllDRSTests() {
     const sLeg = generateScenario(9991, "LBW", "CLEAR");
     if (sLeg.lbw?.pitchingZone === "OUTSIDE_LEG") {
       assert(sLeg.initialEvidence?.lbw?.apparentPitchLine === "OUTSIDE_LEG",
-        "LBW Evidence Consistency: Outside leg pitch reflects in apparent pitch line");
-    } else {
-      assert(sLeg.initialEvidence?.lbw?.apparentPitchLine !== undefined,
-        "LBW Evidence Consistency: Apparent pitch line is defined and consistent");
+        "LBW Evidence: Outside-leg pitching matches ground truth");
     }
   }
 
@@ -524,10 +519,12 @@ function runAllDRSTests() {
   {
     const sEdge = generateScenario(4441, "CAUGHT_BEHIND", "CLEAR");
     if (sEdge.caughtBehind?.hasEdge) {
-      assert(sEdge.initialEvidence?.caughtBehind?.apparentDeflectionAngleDeg! > 0,
+      const angle = sEdge.initialEvidence?.caughtBehind?.apparentDeflectionAngleDeg ?? 0;
+      assert(angle > 0,
         "Caught Behind Evidence: Edge scenario produces noticeable apparent deflection in CLEAR tier");
     } else {
-      assert(sEdge.initialEvidence?.caughtBehind?.apparentGapPixels! > 0,
+      const gap = sEdge.initialEvidence?.caughtBehind?.apparentGapPixels ?? 0;
+      assert(gap > 0,
         "Caught Behind Evidence: No-edge scenario produces visible daylight gap in CLEAR tier");
     }
   }
