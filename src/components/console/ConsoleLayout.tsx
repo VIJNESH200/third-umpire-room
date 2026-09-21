@@ -257,26 +257,43 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
       if (isRunOutTransport ? playbackIntentRef.current : isPlaying) {
         // Linear forward replay at chosen playback speed
         const deltaReplayMs = deltaRealMs * playbackSpeed;
-        queueReplayClockUpdate((prev) => {
-          const next = prev + deltaReplayMs;
+        
+        if (!isRunOutTransport) {
+          // Direct update using ref for authoritative clock (avoids functional updater batching issues)
+          const next = currentTimeMsRef.current + deltaReplayMs;
           if (next >= maxTimeMs) {
-            return minTimeMs; // Seamless broadcast loop
+            setCurrentTimeMs(maxTimeMs);
+            setIsPlaying(false);
+          } else {
+            setCurrentTimeMs(next);
           }
-          return next;
-        });
+        } else {
+          // Run-out transport (kept intact as per physics)
+          queueReplayClockUpdate((prev) => {
+            const next = prev + deltaReplayMs;
+            if (next >= maxTimeMs) {
+              return minTimeMs;
+            }
+            return next;
+          });
+        }
       } else if (isRunOutTransport ? rockAndRollIntentRef.current : isRockAndRoll) {
         // Shuttle oscillation around the focal incident frame (+/- 160ms)
         const focalTime = getFocalEventTimeMs();
         const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         if (prefersReducedMotion) {
-          queueReplayClockUpdate(() => focalTime);
+          if (!isRunOutTransport) {
+            setCurrentTimeMs(focalTime);
+          } else {
+            queueReplayClockUpdate(() => focalTime);
+          }
         } else {
           const rnrMin = Math.max(minTimeMs, focalTime - 160);
           const rnrMax = Math.min(maxTimeMs, focalTime + 160);
           const deltaReplayMs = deltaRealMs * playbackSpeed * 0.45 * rnrDirectionRef.current;
 
-          queueReplayClockUpdate((prev) => {
-            let next = prev + deltaReplayMs;
+          if (!isRunOutTransport) {
+            let next = currentTimeMsRef.current + deltaReplayMs;
             if (next >= rnrMax) {
               rnrDirectionRef.current = -1;
               next = rnrMax;
@@ -284,8 +301,20 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
               rnrDirectionRef.current = 1;
               next = rnrMin;
             }
-            return next;
-          });
+            setCurrentTimeMs(next);
+          } else {
+            queueReplayClockUpdate((prev) => {
+              let next = prev + deltaReplayMs;
+              if (next >= rnrMax) {
+                rnrDirectionRef.current = -1;
+                next = rnrMax;
+              } else if (next <= rnrMin) {
+                rnrDirectionRef.current = 1;
+                next = rnrMin;
+              }
+              return next;
+            });
+          }
         }
       }
 
