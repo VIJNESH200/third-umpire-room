@@ -23,6 +23,7 @@ import type {
   DrsOverlayMap,
   RealMatchDrsIncident,
 } from "../types/realMatch";
+import type { RemainingReviews } from "../types/matchContext";
 import type { DecisionVerdict } from "../types/scenario";
 import { RealMatchPlaybackSession, createDrsConsequence, type DrsConsequenceParams } from "./realMatchPlayback";
 import {
@@ -178,6 +179,14 @@ export class RealMatchGameSession {
    */
   public getPlaybackState(): MatchPlaybackState {
     return this._playbackSession.getCurrentState();
+  }
+
+  /**
+   * Returns remaining reviews for both teams at current playback cursor.
+   */
+  public getRemainingReviews(): RemainingReviews {
+    const state = this.getPlaybackState();
+    return state.remainingReviews ?? { batting: 2, bowling: 2 };
   }
 
   /**

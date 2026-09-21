@@ -1,8 +1,9 @@
 import React from "react";
 import type { LegacyMatchContext, DifficultyTier } from "../../types/scenario";
+import type { RemainingReviews } from "../../types/matchContext";
 import { Volume2, VolumeX } from "lucide-react";
 
-type PhaseIndicator = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
+type PhaseIndicator = "SOFT_SIGNAL" | "REVIEW" | "RESULT" | string;
 
 interface MatchLogBarProps {
   matchContext: LegacyMatchContext;
@@ -12,6 +13,7 @@ interface MatchLogBarProps {
   isMuted: boolean;
   isBlinded?: boolean;
   phase?: PhaseIndicator;
+  remainingReviews?: RemainingReviews;
   onToggleMute: () => void;
 }
 
@@ -23,6 +25,7 @@ export const MatchLogBar: React.FC<MatchLogBarProps> = ({
   isMuted,
   isBlinded = false,
   phase,
+  remainingReviews,
   onToggleMute,
 }) => {
   const displaySignal = isBlinded ? "REFERRED" : matchContext.onFieldSignal;
@@ -66,8 +69,25 @@ export const MatchLogBar: React.FC<MatchLogBarProps> = ({
                 }`}
               />
               <span className="text-[11px] font-mono uppercase text-neutral-400">
-                {phase === "SOFT_SIGNAL" ? "PHASE 1" : phase === "REVIEW" ? "PHASE 2" : "PHASE 3"}
+                {phase === "SOFT_SIGNAL" || phase === "INCIDENT_INTRO" || phase === "ON_FIELD_DECISION"
+                  ? "PHASE 1"
+                  : phase === "REVIEW" || phase === "REVIEW_ENTRY" || phase === "REVIEW_ACTIVE"
+                  ? "PHASE 2"
+                  : "PHASE 3"}
               </span>
+            </div>
+          </>
+        )}
+
+        {/* DRS Quota Pill */}
+        {remainingReviews && (
+          <>
+            <span className="text-neutral-700 select-none">•</span>
+            <div className="hidden sm:flex items-center space-x-1.5 text-[10.5px] font-mono bg-[#1a1a1b] border border-[#27272a] px-2 py-0.5 rounded-sm">
+              <span className="text-neutral-400">DRS:</span>
+              <span className="text-emerald-400 font-bold">{remainingReviews.batting}B</span>
+              <span className="text-neutral-600">/</span>
+              <span className="text-sky-400 font-bold">{remainingReviews.bowling}F</span>
             </div>
           </>
         )}

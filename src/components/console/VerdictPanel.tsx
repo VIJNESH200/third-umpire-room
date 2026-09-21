@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type {
   DecisionVerdict,
+  PlayerVerdictChoice,
   OnFieldSignal,
 } from "../../types/scenario";
 import { Send, AlertTriangle } from "lucide-react";
@@ -25,7 +26,7 @@ interface VerdictPanelProps {
   playerBatGroundedMs?: number | null;
   playerBailsDislodgedMs?: number | null;
   onVerdictSubmit: (
-    verdict: DecisionVerdict,
+    verdict: DecisionVerdict | PlayerVerdictChoice,
     dismissalReason: string,
     playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
   ) => void;
@@ -43,7 +44,7 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
   trainingMode = false,
   reviewChecklist,
 }) => {
-  const [selectedVerdict, setSelectedVerdict] = useState<DecisionVerdict | null>(null);
+  const [selectedVerdict, setSelectedVerdict] = useState<PlayerVerdictChoice | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState<boolean>(false);
   const dismissalReason = "STANDARD";
 
@@ -56,10 +57,10 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
         reviewChecklist.trackStage >= TRACK_REVIEW_COMPLETE_STAGE;
   const canTransmit = selectedVerdict !== null && areMarkersPlaced && evidenceReviewComplete && !hasSubmitted;
 
-  const handleSelectVerdict = (verdict: DecisionVerdict) => {
+  const handleSelectVerdict = (verdict: PlayerVerdictChoice) => {
     if (hasSubmitted) return;
     setSelectedVerdict(verdict);
-    sounds.playClick(verdict === "OUT" ? 650 : 850);
+    sounds.playClick(verdict === "OUT" ? 650 : verdict === "NOT_OUT" ? 850 : 750);
   };
 
   const handleTransmit = () => {
@@ -133,37 +134,58 @@ export const VerdictPanel: React.FC<VerdictPanelProps> = ({
         </div>
       )}
 
-      {/* Primary Verdict Selection Buttons (Wordle-inspired rectangular tiles) */}
-      <div className="grid grid-cols-2 gap-1.5">
-        {/* OUT Button */}
-        <button
-          type="button"
-          onClick={() => handleSelectVerdict("OUT")}
-          className={`py-2 px-3 rounded-sm border transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer active:scale-98 ${
-            selectedVerdict === "OUT"
-              ? "bg-[#b53b3b] border-red-500 text-white font-bold"
-              : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] hover:border-neutral-500 text-neutral-200"
-          }`}
-        >
-          <span className="text-sm sm:text-base font-bold tracking-widest uppercase">OUT</span>
-          <span className={`text-[10px] sm:text-[10.5px] leading-none ${selectedVerdict === "OUT" ? "text-white/80" : "text-neutral-400"}`}>
-            {onFieldSignal === "OUT" ? "Confirm On-Field" : "Overturn to OUT"}
-          </span>
-        </button>
+      {/* Primary Verdict Selection Buttons */}
+      <div className="space-y-1.5">
+        <div className="grid grid-cols-2 gap-1.5">
+          {/* OUT Button */}
+          <button
+            type="button"
+            aria-label={`Select OUT (${onFieldSignal === "OUT" ? "Confirm on-field decision" : "Overturn to OUT"})`}
+            onClick={() => handleSelectVerdict("OUT")}
+            className={`py-2 px-3 rounded-sm border transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer active:scale-98 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+              selectedVerdict === "OUT"
+                ? "bg-[#b53b3b] border-red-500 text-white font-bold"
+                : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] hover:border-neutral-500 text-neutral-200"
+            }`}
+          >
+            <span className="text-sm sm:text-base font-bold tracking-widest uppercase">OUT</span>
+            <span className={`text-[10px] sm:text-[10.5px] leading-none ${selectedVerdict === "OUT" ? "text-white/80" : "text-neutral-400"}`}>
+              {onFieldSignal === "OUT" ? "Confirm On-Field" : "Overturn to OUT"}
+            </span>
+          </button>
 
-        {/* NOT OUT Button */}
+          {/* NOT OUT Button */}
+          <button
+            type="button"
+            aria-label={`Select NOT OUT (${onFieldSignal === "NOT_OUT" ? "Confirm on-field decision" : "Overturn to NOT OUT"})`}
+            onClick={() => handleSelectVerdict("NOT_OUT")}
+            className={`py-2 px-3 rounded-sm border transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer active:scale-98 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+              selectedVerdict === "NOT_OUT"
+                ? "bg-[#538d4e] border-emerald-500 text-white font-bold"
+                : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] hover:border-neutral-500 text-neutral-200"
+            }`}
+          >
+            <span className="text-sm sm:text-base font-bold tracking-widest uppercase">NOT OUT</span>
+            <span className={`text-[10px] sm:text-[10.5px] leading-none ${selectedVerdict === "NOT_OUT" ? "text-white/80" : "text-neutral-400"}`}>
+              {onFieldSignal === "NOT_OUT" ? "Confirm On-Field" : "Overturn to NOT OUT"}
+            </span>
+          </button>
+        </div>
+
+        {/* SEND UPSTAIRS Button (Inconclusive / Umpire's Call referral) */}
         <button
           type="button"
-          onClick={() => handleSelectVerdict("NOT_OUT")}
-          className={`py-2 px-3 rounded-sm border transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer active:scale-98 ${
-            selectedVerdict === "NOT_OUT"
-              ? "bg-[#538d4e] border-emerald-500 text-white font-bold"
-              : "bg-[#1a1a1b] hover:bg-[#242426] border-[#27272a] hover:border-neutral-500 text-neutral-200"
+          aria-label="Send Upstairs: Inconclusive evidence, uphold on-field call"
+          onClick={() => handleSelectVerdict("SEND_UPSTAIRS")}
+          className={`w-full py-1.5 px-3 rounded-sm border transition-all flex items-center justify-between cursor-pointer active:scale-98 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+            selectedVerdict === "SEND_UPSTAIRS"
+              ? "bg-[#6d4c1b] border-amber-500 text-amber-100 font-bold"
+              : "bg-[#161618] hover:bg-[#222226] border-[#27272a] hover:border-amber-600/50 text-neutral-400 hover:text-neutral-200"
           }`}
         >
-          <span className="text-sm sm:text-base font-bold tracking-widest uppercase">NOT OUT</span>
-          <span className={`text-[10px] sm:text-[10.5px] leading-none ${selectedVerdict === "NOT_OUT" ? "text-white/80" : "text-neutral-400"}`}>
-            {onFieldSignal === "NOT_OUT" ? "Confirm On-Field" : "Overturn to NOT OUT"}
+          <span className="text-xs font-bold tracking-wider uppercase font-mono">SEND UPSTAIRS</span>
+          <span className="text-[10px] opacity-80">
+            Inconclusive • Uphold On-Field ({onFieldSignal})
           </span>
         </button>
       </div>

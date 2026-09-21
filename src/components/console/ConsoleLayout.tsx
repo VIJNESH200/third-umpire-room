@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import type {
   Scenario,
   DecisionVerdict,
+  PlayerVerdictChoice,
   IncidentResult,
 } from "../../types/scenario";
+import type { RemainingReviews } from "../../types/matchContext";
 import { MatchLogBar } from "./MatchLogBar";
 import { ReplayViewport } from "./ReplayViewport";
 import { ScrubBar, KeyframeMarker } from "./ScrubBar";
 import { CameraSwitcherAngles } from "./CameraSwitcherAngles";
-import { SoftSignalBar } from "./SoftSignalBar";
 import { VerdictPanel } from "./VerdictPanel";
 import { ResultReveal } from "./ResultReveal";
 import { IncidentReplayFeed } from "../instinct/IncidentReplayFeed";
@@ -16,7 +17,17 @@ import { sounds } from "../../engine/audioSynth";
 import { isTextEntryTarget, resolveReplayShortcut } from "../../engine/replayKeyboard";
 import { Radio, Crosshair, ChevronDown, ChevronUp, Zap } from "lucide-react";
 
-export type ConsolePhase = "SOFT_SIGNAL" | "REVIEW" | "RESULT";
+export type ConsolePhase =
+  | "SOFT_SIGNAL"
+  | "REVIEW"
+  | "RESULT"
+  | "INCIDENT_INTRO"
+  | "ON_FIELD_DECISION"
+  | "REVIEW_ENTRY"
+  | "REVIEW_ACTIVE"
+  | "VERDICT_SUBMITTED"
+  | "RESULT_REVEAL"
+  | "CONSEQUENCE";
 
 interface ConsoleLayoutProps {
   scenario: Scenario;
@@ -28,7 +39,7 @@ interface ConsoleLayoutProps {
   onToggleMute: () => void;
   onSoftSignalSubmit: (choice: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS", elapsedMs: number) => void;
   onFinalVerdictSubmit: (
-    verdict: DecisionVerdict,
+    verdict: DecisionVerdict | PlayerVerdictChoice,
     dismissalReason: string,
     playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null }
   ) => void;
@@ -36,6 +47,7 @@ interface ConsoleLayoutProps {
   trainingMode?: boolean;
   isRealMatch?: boolean;
   nextButtonLabel?: string;
+  remainingReviews?: RemainingReviews;
 }
 
 export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
@@ -52,6 +64,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   trainingMode = false,
   isRealMatch = false,
   nextButtonLabel,
+  remainingReviews,
 }) => {
   // Get initial primary tool for scenario
   const getDefaultTool = (type: string) => {
@@ -79,6 +92,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   // satisfies it.
   const [replayReviewed, setReplayReviewed] = useState<boolean>(false);
   const [trackStageReached, setTrackStageReached] = useState<number>(0);
+  const [introStage, setIntroStage] = useState<"INTRO" | "ON_FIELD" | "ENTRY">("INTRO");
   const isLbwReview = scenario.incidentType === "LBW" && phase === "REVIEW";
 
   // Reset active tool & markers whenever scenario changes
@@ -92,6 +106,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     setPlayerBailsDislodgedMs(null);
     setReplayReviewed(false);
     setTrackStageReached(0);
+    setIntroStage("INTRO");
   }, [scenario.id, scenario.incidentType]);
 
   // Central Shared Timeline & Transport Engine
@@ -420,6 +435,37 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     return [];
   };
 
+  const isPreReview =
+    phase === "SOFT_SIGNAL" ||
+    phase === "INCIDENT_INTRO" ||
+    phase === "ON_FIELD_DECISION" ||
+    phase === "REVIEW_ENTRY";
+  const isResult =
+    phase === "RESULT" ||
+    phase === "VERDICT_SUBMITTED" ||
+    phase === "RESULT_REVEAL" ||
+    phase === "CONSEQUENCE";
+
+  const currentPreStage =
+    phase === "INCIDENT_INTRO"
+      ? "INTRO"
+      : phase === "ON_FIELD_DECISION"
+      ? "ON_FIELD"
+      : phase === "REVIEW_ENTRY"
+      ? "ENTRY"
+      : introStage;
+
+  const isTeamReview = scenario.incidentType === "LBW" || scenario.incidentType === "CAUGHT_BEHIND";
+  const reviewingSide =
+    scenario.onFieldSignal === "OUT"
+      ? "BATTING"
+      : scenario.onFieldSignal === "NOT_OUT"
+      ? "BOWLING"
+      : undefined;
+  const currentQuota = reviewingSide
+    ? (reviewingSide === "BATTING" ? (remainingReviews?.batting ?? 2) : (remainingReviews?.bowling ?? 2))
+    : 99;
+  const canReview = !isTeamReview || scenario.onFieldSignal === "REFERRED" || currentQuota > 0;
 
   return (
     <div className="relative flex flex-col min-h-screen lg:h-screen w-screen bg-[#121213] text-neutral-200 overflow-y-auto lg:overflow-hidden font-sans select-none console-chassis">
@@ -428,31 +474,234 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
         <div className="pointer-events-none absolute inset-0 z-50 scanlines-overlay opacity-20 mix-blend-overlay" />
       )}
 
-      {/* Top Match Log Bar (Blinded during Phase 1) */}
+      {/* Top Match Log Bar */}
       <MatchLogBar
         matchContext={scenario.matchContext}
         difficultyTier={scenario.difficultyTier}
         incidentIndex={incidentIndex}
         totalIncidents={totalIncidents}
         isMuted={isMuted}
-        isBlinded={phase === "SOFT_SIGNAL"}
+        isBlinded={phase === "SOFT_SIGNAL" && introStage === "INTRO"}
         phase={phase}
+        remainingReviews={remainingReviews}
         onToggleMute={onToggleMute}
       />
 
       {/* Main Review Room Workstation Console */}
-      {phase === "SOFT_SIGNAL" ? (
-        /* PHASE 1: Full-width cinematic broadcast experience */
+      {isPreReview ? (
+        /* PRE-REVIEW WORKFLOW: Match Context -> On-Field Call -> Review Entry */
         <div className="flex-1 flex flex-col gap-2.5 p-3 overflow-y-auto min-h-0">
-          <div className="flex-1 min-h-[280px]">
+          {/* Top: Match Context & Incident Briefing Card */}
+          <div className="bg-[#0e131d] border border-[#1f293d] rounded-xl p-3.5 shadow-xl flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-[10.5px] font-mono font-bold text-amber-400 uppercase tracking-widest">
+                  INCIDENT BRIEFING • CASE {incidentIndex + 1}/{totalIncidents}
+                </span>
+                <span className="text-neutral-500">•</span>
+                <span className="text-[11px] font-mono text-neutral-300">
+                  {scenario.matchContext.tournament || "ICC CHAMPIONSHIP"}
+                </span>
+              </div>
+              <div className="text-sm font-bold text-white flex items-center gap-2">
+                <span className="text-amber-300 font-mono">
+                  {scenario.matchContext.battingTeam} {scenario.matchContext.battingTeamScore}
+                </span>
+                <span className="text-neutral-400 text-xs font-mono">
+                  ({scenario.matchContext.over}.{scenario.matchContext.ballInOver} ov)
+                </span>
+                <span className="text-neutral-600">vs</span>
+                <span className="text-neutral-300">{scenario.matchContext.bowlingTeam}</span>
+              </div>
+              <div className="text-neutral-400 text-[11px] flex items-center gap-2">
+                <span>Batter: <b className="text-neutral-200">{scenario.matchContext.batter} ({scenario.matchContext.batterScore})</b></span>
+                <span>•</span>
+                <span>Bowler: <b className="text-neutral-200">{scenario.matchContext.bowler} ({scenario.matchContext.bowlerFigures})</b></span>
+              </div>
+            </div>
+
+            {/* Quota Readout Banner */}
+            <div className="flex items-center gap-2 bg-[#080c14] border border-[#1e2738] px-3 py-2 rounded-lg text-[11px] font-mono">
+              <div className="text-neutral-400">
+                REVIEWS:
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 font-bold">
+                  {scenario.matchContext.battingTeam}: {remainingReviews?.batting ?? 2}
+                </span>
+                <span className="text-neutral-600">|</span>
+                <span className="text-sky-400 font-bold">
+                  {scenario.matchContext.bowlingTeam}: {remainingReviews?.bowling ?? 2}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Incident Replay Feed Viewport */}
+          <div className="flex-1 min-h-[260px] relative rounded-xl overflow-hidden border border-[#1f293d] bg-black">
             <IncidentReplayFeed scenario={scenario} />
           </div>
-          <SoftSignalBar
-            timeLimitSeconds={15}
-            onDecision={onSoftSignalSubmit}
-          />
+
+          {/* Dynamic Stage Controls: INTRO -> ON_FIELD -> ENTRY */}
+          {currentPreStage === "INTRO" && (
+            <div className="bg-[#0e131d] border border-[#1f293d] rounded-xl p-3.5 shadow-xl flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-bold text-white uppercase tracking-wide">
+                  {scenario.incidentTitle || "APPEAL ON THE FIELD"}
+                </div>
+                <p className="text-[11px] text-neutral-400 max-w-xl">
+                  {scenario.description || "The bowler and fielders have appealed loudly for a dismissal. The standing umpire is preparing to signal their decision."}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label="Receive on-field decision"
+                  onClick={() => {
+                    sounds.playClick(850);
+                    setIntroStage("ON_FIELD");
+                  }}
+                  className="py-2.5 px-5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  RECEIVE ON-FIELD DECISION →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {currentPreStage === "ON_FIELD" && (
+            <div className="bg-[#0e131d] border border-[#1f293d] rounded-xl p-3.5 shadow-xl space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[#1e2738]">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
+                    ON-FIELD SIGNAL:
+                  </span>
+                  <span className={`px-3 py-1 rounded text-sm font-black font-mono tracking-widest border ${
+                    scenario.onFieldSignal === "OUT"
+                      ? "bg-red-950/80 border-red-500 text-red-300"
+                      : scenario.onFieldSignal === "NOT_OUT"
+                      ? "bg-emerald-950/80 border-emerald-500 text-emerald-300"
+                      : "bg-amber-950/80 border-amber-500 text-amber-300"
+                  }`}>
+                    {scenario.onFieldSignal}
+                  </span>
+                </div>
+
+                {/* Review Request Status */}
+                <div className="text-xs font-mono">
+                  {canReview ? (
+                    <span className="text-amber-400 font-bold">
+                      {scenario.onFieldSignal === "NOT_OUT"
+                        ? `REVIEW REQUESTED BY ${scenario.matchContext.bowlingTeam} (${currentQuota} REVIEWS LEFT)`
+                        : scenario.onFieldSignal === "OUT"
+                        ? `REVIEW REQUESTED BY ${scenario.matchContext.battingTeam} (${currentQuota} REVIEWS LEFT)`
+                        : "DIRECT UMPIRE REFERRAL TO TV UMPIRE"}
+                    </span>
+                  ) : (
+                    <span className="text-rose-400 font-bold">
+                      REVIEW BLOCKED: 0 REVIEWS REMAINING
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-[11px] text-neutral-400 max-w-lg">
+                  {canReview
+                    ? "Review request validated under ICC DRS protocols. Enter the TV Umpire workstation to conduct forensic telemetry inspection."
+                    : `Under ICC Playing Conditions, ${reviewingSide} side has exhausted their review quota. Decision cannot be reviewed.`}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {canReview ? (
+                    <button
+                      type="button"
+                      aria-label="Commence DRS review"
+                      onClick={() => {
+                        sounds.playClick(900);
+                        setIntroStage("ENTRY");
+                      }}
+                      className="py-2.5 px-5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    >
+                      COMMENCE DRS REVIEW →
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label="Uphold on-field call due to zero reviews remaining"
+                      onClick={() => {
+                        sounds.playClick(600);
+                        onFinalVerdictSubmit(
+                          scenario.onFieldSignal === "OUT" ? "OUT" : "NOT_OUT",
+                          "Quota exhausted; on-field decision upheld"
+                        );
+                      }}
+                      className="py-2.5 px-5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    >
+                      UPHOLD ON-FIELD CALL (NO REVIEWS) →
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {currentPreStage === "ENTRY" && (
+            <div className="bg-[#0e131d] border border-[#1f293d] rounded-xl p-4 shadow-xl space-y-3">
+              <div className="flex items-center justify-between border-b border-[#1e2738] pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                  <span className="text-xs font-black tracking-widest text-cyan-400 uppercase font-mono">
+                    DRS REVIEW IN PROGRESS • CASE {incidentIndex + 1}
+                  </span>
+                </div>
+                <div className="text-[10.5px] font-mono text-neutral-400">
+                  ON-FIELD: <b className="text-white">{scenario.onFieldSignal}</b>
+                </div>
+              </div>
+
+              {/* Forensic Channels Available */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                <div className="p-2 bg-[#090d16] rounded border border-[#1e2738]">
+                  <span className="text-amber-400 text-[10px] block">FEED 1</span>
+                  <span className="text-neutral-200 font-bold">CAM 01 Broadcast</span>
+                </div>
+                <div className="p-2 bg-[#090d16] rounded border border-[#1e2738]">
+                  <span className="text-pink-400 text-[10px] block">FEED 2</span>
+                  <span className="text-neutral-200 font-bold">UltraEdge Telemetry</span>
+                </div>
+                <div className="p-2 bg-[#090d16] rounded border border-[#1e2738]">
+                  <span className="text-sky-400 text-[10px] block">FEED 3</span>
+                  <span className="text-neutral-200 font-bold">Hawk-Eye 3D Path</span>
+                </div>
+                <div className="p-2 bg-[#090d16] rounded border border-[#1e2738]">
+                  <span className="text-emerald-400 text-[10px] block">FEED 4</span>
+                  <span className="text-neutral-200 font-bold">CAM 06 Stump Face</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-neutral-400">
+                  Synchronized 1680ms forensic timeline ready for analysis.
+                </span>
+                <button
+                  type="button"
+                  aria-label="Open DRS Workstation"
+                  onClick={() => {
+                    sounds.playClick(950);
+                    onSoftSignalSubmit("SEND_UPSTAIRS", 4000);
+                  }}
+                  className="py-2.5 px-6 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  OPEN DRS WORKSTATION →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      ) : phase === "REVIEW" ? (
+      ) : !isResult ? (
         /* PHASE 2: Full-Width Stacked Forensic Workstation */
         <div className="flex-1 flex flex-col gap-1.5 p-2 overflow-hidden min-h-0">
           {/* Top Unit: Dominant Forensic Viewport + Transport Chassis */}
@@ -724,6 +973,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                 onNextIncident={onNextIncident}
                 isRealMatch={isRealMatch}
                 nextButtonLabel={nextButtonLabel}
+                remainingReviews={remainingReviews}
               />
             </div>
 

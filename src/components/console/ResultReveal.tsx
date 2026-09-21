@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 import { calculateReviewRetention } from "../../engine/realMatchPlayback";
+import type { RemainingReviews } from "../../types/matchContext";
 
 interface ResultRevealProps {
   scenario: Scenario;
@@ -23,6 +24,7 @@ interface ResultRevealProps {
   onNextIncident: () => void;
   isRealMatch?: boolean;
   nextButtonLabel?: string;
+  remainingReviews?: RemainingReviews;
 }
 
 export const ResultReveal: React.FC<ResultRevealProps> = ({
@@ -33,6 +35,7 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
   onNextIncident,
   isRealMatch = false,
   nextButtonLabel,
+  remainingReviews,
 }) => {
   if (!result) return null;
 
@@ -51,28 +54,35 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
     onNextIncident();
   };
 
-  const isOverturn = scenario.onFieldSignal !== "REFERRED" && scenario.onFieldSignal !== result.finalVerdict;
+  // Canonical on-field decision outcome (physical truth vs on-field signal)
+  const isOfficialOverturn =
+    scenario.onFieldSignal !== "REFERRED" &&
+    scenario.onFieldSignal !== scenario.correctFinalVerdict;
 
   const getHeadline = () => {
     if (isProtocolBreach) {
       return "Verdict Breach: Protocol Error Recorded";
     }
     if (isVerdictCorrect) {
-      return isOverturn
+      return isOfficialOverturn
         ? "Verdict Verified: Decision Overturned"
         : "Verdict Verified: Official Decision Upheld";
     }
-    return "Verdict Overruled: Protocol Gate Error";
+    return isOfficialOverturn
+      ? "Verdict Overruled: Decision Overturned"
+      : "Verdict Overruled: Official Decision Upheld";
   };
 
   const getSubtext = () => {
     if (isProtocolBreach || !isVerdictCorrect) {
-      return "Third umpire ruling diverges from conclusive physical evidence or protocol gate requirements.";
+      return isOfficialOverturn
+        ? "Third umpire verdict was incorrect. Official review conclusively overturns the on-field decision."
+        : "Third umpire verdict was incorrect. Official review conclusively upholds the on-field decision.";
     }
-    if (isOverturn) {
+    if (isOfficialOverturn) {
       return "Third umpire adjudication correctly overturns the on-field decision in accordance with ICC playing conditions.";
     }
-    return "Third umpire adjudication adheres to ICC playing conditions. Match record updated.";
+    return "Third umpire adjudication adheres to ICC playing conditions. Official on-field decision upheld.";
   };
 
   const getOfficialLawUrl = (type: string): { url: string; lawName: string } => {
@@ -190,6 +200,59 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Decisive Physical Facts & Status Badges Strip */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2 rounded-lg bg-[#111722] border border-[#1f2633] text-xs font-mono">
+        <div className="flex items-center gap-3">
+          {/* Player Verdict Status */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-neutral-400 uppercase">PLAYER VERDICT:</span>
+            <span className={`font-bold px-2 py-0.5 rounded text-[11px] border ${
+              isVerdictCorrect
+                ? "bg-emerald-950/60 border-emerald-500 text-emerald-300"
+                : "bg-rose-950/60 border-rose-500 text-rose-300"
+            }`}>
+              {isVerdictCorrect ? "CORRECT" : "INCORRECT"}
+            </span>
+          </div>
+
+          <span className="text-neutral-600">•</span>
+
+          {/* Official On-Field Decision Status */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-neutral-400 uppercase">OFFICIAL DECISION:</span>
+            <span className={`font-bold px-2 py-0.5 rounded text-[11px] border ${
+              isOfficialOverturn
+                ? "bg-purple-950/60 border-purple-500 text-purple-300"
+                : "bg-sky-950/60 border-sky-500 text-sky-300"
+            }`}>
+              {isOfficialOverturn ? "OVERTURNED" : "UPHELD"}
+            </span>
+          </div>
+        </div>
+
+        {/* Decisive Physical Fact for LBW */}
+        {scenario.incidentType === "LBW" && scenario.lbw && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-amber-400 font-bold uppercase">DECISIVE FACT:</span>
+            <span className="text-amber-200 font-bold bg-amber-950/50 border border-amber-500/40 px-2 py-0.5 rounded text-[11px]">
+              {scenario.lbw.isNoBall
+                ? "FRONT FOOT NO-BALL"
+                : (scenario.lbw.batContactBeforePad || scenario.lbw.firstContactType === "BAT_FIRST")
+                ? "BAT FIRST (INSIDE EDGE BEFORE PAD)"
+                : scenario.lbw.pitchingZone === "OUTSIDE_LEG"
+                ? "PITCHED OUTSIDE LEG"
+                : scenario.lbw.impactZone !== "IN_LINE" && scenario.lbw.shotOffered
+                ? "IMPACT OUTSIDE OFF"
+                : scenario.lbw.projectedStumpHit === "MISSING"
+                ? "WICKET MISSING"
+                : scenario.lbw.projectedStumpHit === "UMPIRES_CALL"
+                ? "UMPIRE'S CALL"
+                : "WICKET HITTING"}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 2. Main Workstation Body: 2-Column Balanced Editorial Layout */}
@@ -756,10 +819,10 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
                     {retentionInfo.reviewingSide
                       ? retentionInfo.reviewRetained
                         ? scenario.drsEvaluation.isUmpiresCall
-                          ? "Umpire's Call • Quota Preserved"
-                          : "Decision Overturned • Quota Preserved"
-                        : "On-Field Call Upheld • 1 Review Deducted"
-                      : "Direct Umpire Referral • Quotas Preserved"}
+                          ? `Umpire's Call • Quota Preserved${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl)` : ""}`
+                          : `Decision Overturned • Quota Preserved${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl)` : ""}`
+                        : `On-Field Call Upheld • 1 Review Deducted${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl left)` : ""}`
+                      : `Direct Umpire Referral • Quotas Preserved${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl)` : ""}`}
                   </span>
                   {retentionInfo.reviewRetained ? (
                     <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />

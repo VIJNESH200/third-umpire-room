@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "tsx src/tests/drsRules.test.ts && tsx src/tests/randomIncidentEngine.test.ts && tsx src/tests/matchContextFoundation.test.ts && tsx src/tests/leagueTypes.test.ts && tsx src/tests/fictionalLeagueData.test.ts && tsx src/tests/realMatchPlayback.test.ts && tsx src/tests/realMatchIngestion.test.ts && tsx src/tests/realMatchIncidentSelector.test.ts && tsx src/tests/realMatchGameSession.test.ts && tsx src/tests/evidenceAndCricketValidity.test.ts && tsx src/tests/adversarialReviewFixes.test.ts",
+    "test": "tsx src/tests/drsRules.test.ts && tsx src/tests/randomIncidentEngine.test.ts && tsx src/tests/matchContextFoundation.test.ts && tsx src/tests/leagueTypes.test.ts && tsx src/tests/fictionalLeagueData.test.ts && tsx src/tests/realMatchPlayback.test.ts && tsx src/tests/realMatchIngestion.test.ts && tsx src/tests/realMatchIncidentSelector.test.ts && tsx src/tests/realMatchGameSession.test.ts && tsx src/tests/evidenceAndCricketValidity.test.ts && tsx src/tests/adversarialReviewFixes.test.ts && tsx src/tests/thirdUmpireGameplayLoop.test.ts",
     "lint": "oxlint",
     "preview": "vite preview"
   },

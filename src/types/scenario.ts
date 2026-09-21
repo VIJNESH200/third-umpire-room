@@ -1,5 +1,6 @@
 export type IncidentType = "LBW" | "RUN_OUT" | "STUMPING" | "CAUGHT_BEHIND" | "BOUNDARY";
 export type DecisionVerdict = "OUT" | "NOT_OUT";
+export type PlayerVerdictChoice = "OUT" | "NOT_OUT" | "SEND_UPSTAIRS";
 export type OnFieldSignal = "OUT" | "NOT_OUT" | "REFERRED";
 export type DifficultyTier = "CLEAR" | "MARGINAL" | "HOWLER";
 

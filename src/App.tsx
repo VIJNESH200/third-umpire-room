@@ -4,12 +4,16 @@ import type {
   IncidentResult,
   SessionStats,
   DecisionVerdict,
+  PlayerVerdictChoice,
   IncidentType,
 } from "./types/scenario";
+import type { RemainingReviews } from "./types/matchContext";
 import { generateScenario } from "./engine/scenarioGenerator";
 import { generateSessionIncidents } from "./engine/randomIncidentEngine";
 import { checkDRSCompliance } from "./engine/drsRules";
+import { calculateReviewRetention } from "./engine/realMatchPlayback";
 import { computeSessionStats } from "./engine/scoring";
+import { ThirdUmpireGameSession } from "./engine/thirdUmpireGameSession";
 import { ConsoleLayout, ConsolePhase } from "./components/console/ConsoleLayout";
 import { ResultCard } from "./components/card/ResultCard";
 import { sounds } from "./engine/audioSynth";
@@ -38,6 +42,8 @@ export const App: React.FC = () => {
   const [sessionScenarios, setSessionScenarios] = useState<Scenario[]>([]);
   const [currentIncidentIndex, setCurrentIncidentIndex] = useState<number>(0);
   const [consolePhase, setConsolePhase] = useState<ConsolePhase>("SOFT_SIGNAL");
+  const [remainingReviews, setRemainingReviews] = useState<RemainingReviews>({ batting: 2, bowling: 2 });
+  const thirdUmpireSessionRef = useRef<ThirdUmpireGameSession | null>(null);
 
   // Per-incident tracking
   const [softSignalChoice, setSoftSignalChoice] = useState<"OUT" | "NOT_OUT" | "SEND_UPSTAIRS" | null>(null);
@@ -63,6 +69,7 @@ export const App: React.FC = () => {
     realMatchSessionRef.current = session;
     setActiveRealMatchIncident(null);
     setActiveReviewIndex(0);
+    setRemainingReviews(session.getRemainingReviews());
     setAppState("REAL_MATCH");
   };
 
@@ -72,10 +79,12 @@ export const App: React.FC = () => {
     setActiveReviewIndex(realMatchSessionRef.current?.getDecisionsHistory().length ?? 0);
     setSoftSignalChoice(null);
     setCurrentIncidentResult(null);
+    if (realMatchSessionRef.current) {
+      setRemainingReviews(realMatchSessionRef.current.getRemainingReviews());
+    }
     setConsolePhase("SOFT_SIGNAL");
     setAppState("REAL_MATCH_REVIEW");
   };
-
 
   // Start new shift
   const startNewShift = (count: number = 8, forcedType?: IncidentType) => {
@@ -93,11 +102,14 @@ export const App: React.FC = () => {
         })
       : generateSessionIncidents(sessionSeed, count);
 
+    const session = new ThirdUmpireGameSession(scenarios, sessionSeed);
+    thirdUmpireSessionRef.current = session;
     setSessionScenarios(scenarios);
     setCurrentIncidentIndex(0);
     setIncidentHistory([]);
     setSoftSignalChoice(null);
     setCurrentIncidentResult(null);
+    setRemainingReviews(session.getRemainingReviews());
     setConsolePhase("SOFT_SIGNAL");
     setAppState("INCIDENT");
   };
@@ -122,18 +134,50 @@ export const App: React.FC = () => {
 
   // Phase 2: Final verdict submitted
   const handleFinalVerdictSubmit = (
-    verdict: DecisionVerdict,
+    verdict: DecisionVerdict | PlayerVerdictChoice,
     _dismissalReason: string,
     playerTimings?: { playerBatGroundedMs: number | null; playerBailsDislodgedMs: number | null },
     softSignalOverride?: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS",
     elapsedMsOverride?: number
   ) => {
+    // If in RESULT phase, prevent duplicate verdict submissions (immutability)
+    if (consolePhase === "RESULT") {
+      return;
+    }
+
     const isRealMatchReview = appState === "REAL_MATCH_REVIEW" && activeRealMatchIncident !== null;
     const currentScenario = isRealMatchReview
       ? activeRealMatchIncident.scenario
       : sessionScenarios[currentIncidentIndex];
 
     if (!currentScenario) return;
+
+    if (!isRealMatchReview && thirdUmpireSessionRef.current) {
+      if (thirdUmpireSessionRef.current.isDecided()) {
+        return;
+      }
+      const effectiveSoft = softSignalOverride ?? softSignalChoice;
+      const effectiveElapsed = elapsedMsOverride ?? softSignalElapsedMs;
+      const res = thirdUmpireSessionRef.current.submitVerdict(verdict, {
+        dismissalReason: _dismissalReason,
+        playerBatGroundedMs: playerTimings?.playerBatGroundedMs,
+        playerBailsDislodgedMs: playerTimings?.playerBailsDislodgedMs,
+        softSignalChoice: effectiveSoft,
+        softSignalElapsedMs: effectiveElapsed,
+      });
+      if (res) {
+        setCurrentIncidentResult(res);
+        setIncidentHistory((prev) => [...prev, res]);
+        setRemainingReviews(thirdUmpireSessionRef.current.getRemainingReviews());
+        setConsolePhase("RESULT");
+        return;
+      }
+    }
+
+    const effectiveVerdict: DecisionVerdict =
+      verdict === "SEND_UPSTAIRS"
+        ? (currentScenario.onFieldSignal === "OUT" ? "OUT" : "NOT_OUT")
+        : (verdict as DecisionVerdict);
 
     if (isRealMatchReview && realMatchSessionRef.current) {
       const customReason =
@@ -142,12 +186,13 @@ export const App: React.FC = () => {
         _dismissalReason.trim().toUpperCase() !== "STANDARD"
           ? _dismissalReason.trim()
           : undefined;
-      realMatchSessionRef.current.submitDecision(verdict, {
+      realMatchSessionRef.current.submitDecision(effectiveVerdict, {
         reason: customReason,
       });
+      setRemainingReviews(realMatchSessionRef.current.getRemainingReviews());
     }
 
-    const isVerdictCorrect = verdict === currentScenario.correctFinalVerdict;
+    const isVerdictCorrect = effectiveVerdict === currentScenario.correctFinalVerdict;
 
     const effectiveSoftSignal = softSignalOverride ?? softSignalChoice;
     const effectiveSoftElapsed = elapsedMsOverride ?? softSignalElapsedMs;
@@ -159,10 +204,27 @@ export const App: React.FC = () => {
 
     const compliance = checkDRSCompliance(
       currentScenario.incidentType,
-      verdict,
+      effectiveVerdict,
       currentScenario.onFieldSignal,
       currentScenario.drsEvaluation
     );
+
+    // Calculate review retention
+    const retentionInfo = calculateReviewRetention({
+      verdict: effectiveVerdict,
+      onFieldSignal: currentScenario.onFieldSignal,
+      isUmpiresCall: currentScenario.drsEvaluation.isUmpiresCall,
+    });
+
+    if (retentionInfo.reviewingSide && !retentionInfo.reviewRetained) {
+      setRemainingReviews((prev) => ({
+        ...prev,
+        [retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"]: Math.max(
+          0,
+          prev[retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"] - 1
+        ),
+      }));
+    }
 
     const result: IncidentResult = {
       scenarioId: currentScenario.id,
@@ -171,7 +233,7 @@ export const App: React.FC = () => {
       softSignal: effectiveSoftSignal,
       softSignalTimeMs: effectiveSoftElapsed,
       softSignalCorrect: isSoftCorrect,
-      finalVerdict: verdict,
+      finalVerdict: effectiveVerdict,
       finalVerdictCorrect: isVerdictCorrect,
       isUmpiresCallScenario: currentScenario.drsEvaluation.isUmpiresCall,
       umpiresCallComplied: compliance.complied,
@@ -195,6 +257,21 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (thirdUmpireSessionRef.current) {
+      const hasNext = thirdUmpireSessionRef.current.nextIncident();
+      if (hasNext) {
+        setCurrentIncidentIndex(thirdUmpireSessionRef.current.getCurrentIndex());
+        setSoftSignalChoice(null);
+        setCurrentIncidentResult(null);
+        setConsolePhase("SOFT_SIGNAL");
+      } else {
+        const stats = thirdUmpireSessionRef.current.computeStats();
+        setSessionStats(stats);
+        setAppState("CARD_REVEAL");
+      }
+      return;
+    }
+
     const nextIndex = currentIncidentIndex + 1;
     if (nextIndex < sessionScenarios.length) {
       setCurrentIncidentIndex(nextIndex);
@@ -215,6 +292,8 @@ export const App: React.FC = () => {
   setSoftSignalChoiceRef.current = setSoftSignalChoice;
   const setSoftSignalElapsedMsRef = useRef(setSoftSignalElapsedMs);
   setSoftSignalElapsedMsRef.current = setSoftSignalElapsedMs;
+  const remainingReviewsRef = useRef(remainingReviews);
+  remainingReviewsRef.current = remainingReviews;
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -224,28 +303,34 @@ export const App: React.FC = () => {
         totalCount > 1
           ? [scenario, ...Array.from({ length: totalCount - 1 }, (_, i) => generateScenario(seed + i + 1, type))]
           : [scenario];
+      const session = new ThirdUmpireGameSession(scenarios, seed);
+      thirdUmpireSessionRef.current = session;
       setSessionScenarios(scenarios);
       setCurrentIncidentIndex(0);
       setIncidentHistory([]);
       setSoftSignalChoice(null);
       setCurrentIncidentResult(null);
+      setRemainingReviews(session.getRemainingReviews());
       setConsolePhase("SOFT_SIGNAL");
       setAppState("INCIDENT");
     };
     (window as any).__startSession = (seed: number = Date.now(), count: number = 8) => {
       const scenarios = generateSessionIncidents(seed, count);
+      const session = new ThirdUmpireGameSession(scenarios, seed);
+      thirdUmpireSessionRef.current = session;
       setSessionScenarios(scenarios);
       setCurrentIncidentIndex(0);
       setIncidentHistory([]);
       setSoftSignalChoice(null);
       setCurrentIncidentResult(null);
+      setRemainingReviews(session.getRemainingReviews());
       setConsolePhase("SOFT_SIGNAL");
       setAppState("INCIDENT");
     };
     (window as any).__setPhase = (phase: ConsolePhase) => {
       setConsolePhase(phase);
     };
-    (window as any).__submitVerdict = (verdict: DecisionVerdict, softSignal: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" = "NOT_OUT", elapsedMs: number = 4000) => {
+    (window as any).__submitVerdict = (verdict: DecisionVerdict | PlayerVerdictChoice, softSignal: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" = "NOT_OUT", elapsedMs: number = 4000) => {
       setSoftSignalChoiceRef.current(softSignal);
       setSoftSignalElapsedMsRef.current(elapsedMs);
       submitFinalVerdictRef.current(verdict, "Test evaluation", undefined, softSignal, elapsedMs);
@@ -254,6 +339,8 @@ export const App: React.FC = () => {
       startRealMatch(incidentCount, seed);
     };
     (window as any).__getRealMatchSession = () => realMatchSessionRef.current;
+    (window as any).__getGameSession = () => thirdUmpireSessionRef.current;
+    (window as any).__getRemainingReviews = () => remainingReviewsRef.current;
   }, []);
 
   // 1. BRIEFING SCREEN
@@ -389,6 +476,7 @@ export const App: React.FC = () => {
         onFinalVerdictSubmit={handleFinalVerdictSubmit}
         onNextIncident={handleNextIncident}
         trainingMode={trainingMode}
+        remainingReviews={remainingReviews}
       />
     );
   }
@@ -422,6 +510,7 @@ export const App: React.FC = () => {
         onNextIncident={handleNextIncident}
         trainingMode={trainingMode}
         isRealMatch={true}
+        remainingReviews={remainingReviews}
       />
     );
   }
