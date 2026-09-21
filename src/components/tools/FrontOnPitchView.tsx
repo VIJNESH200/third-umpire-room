@@ -613,6 +613,17 @@ export const FrontOnPitchView: React.FC<FrontOnPitchViewProps> = ({
       prevX: pPrev.x,
       prevY: pPrev.y,
     });
+
+    // Expose rendered ball coordinates on canvas for verifiable inspection
+    if (canvasRef.current) {
+      canvasRef.current.dataset.renderedBallX = pBall.x.toFixed(2);
+      canvasRef.current.dataset.renderedBallY = pBall.y.toFixed(2);
+      canvasRef.current.dataset.renderedBallRadius = pRadius.toFixed(2);
+      canvasRef.current.dataset.renderedBallWorldX = ballPos.x.toFixed(3);
+      canvasRef.current.dataset.renderedBallWorldY = ballPos.y.toFixed(3);
+      canvasRef.current.dataset.renderedBallWorldZ = ballPos.z.toFixed(3);
+      canvasRef.current.dataset.renderedTimeMs = timeMs.toString();
+    }
   }, [lbw, currentTimeMs]);
 
   const statusTime = Math.max(600, Math.min(2200, currentTimeMs));
