@@ -206,7 +206,8 @@ export const PreMatchScreen: React.FC<PreMatchScreenProps> = ({
           <button
             type="button"
             onClick={onOpenPhone}
-            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#1A2234] hover:bg-[#24314A] text-slate-200 hover:text-white border border-slate-700 text-xs font-bold font-mono transition-colors cursor-pointer"
+            aria-label="Open personal mobile device"
+            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#1A2234] hover:bg-[#24314A] text-slate-200 hover:text-white border border-slate-700 text-xs font-bold font-mono transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             OPEN PHONE
           </button>
@@ -217,7 +218,8 @@ export const PreMatchScreen: React.FC<PreMatchScreenProps> = ({
           <button
             type="button"
             onClick={onStartMatch}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-sm font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-xl active:scale-95 cursor-pointer"
+            aria-label="Start Match and enter third umpire broadcast workstation"
+            className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-sm font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-xl active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           >
             <Play size={16} fill="currentColor" />
             <span>START MATCH (ENTER THIRD UMPIRE ROOM)</span>

@@ -17,6 +17,11 @@ export interface SimulatedMatchState {
   readonly awayScore: { runs: number; wickets: number; overs: string };
   readonly firstInningsTeam: Team;
   readonly secondInningsTeam: Team;
+  readonly firstInningsRuns: number;
+  readonly firstInningsWickets: number;
+  readonly secondInningsRuns: number;
+  readonly secondInningsWickets: number;
+  readonly homeBatsFirst: boolean;
   readonly target: number;
   readonly winnerTeam: Team;
   readonly winMargin: string;
@@ -78,6 +83,11 @@ export function simulateMatchBackground(
     awayScore,
     firstInningsTeam,
     secondInningsTeam,
+    firstInningsRuns: inn1Runs,
+    firstInningsWickets: inn1Wickets,
+    secondInningsRuns: inn2Runs,
+    secondInningsWickets: inn2Wickets,
+    homeBatsFirst,
     target,
     winnerTeam,
     winMargin,

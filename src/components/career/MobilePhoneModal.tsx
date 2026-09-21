@@ -156,7 +156,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab("BALANCE")}
-            className={`py-2 flex items-center justify-center space-x-1 font-bold transition-colors cursor-pointer border-b-2 ${
+            aria-label="View Cash Balance Tab"
+            className={`py-2 flex items-center justify-center space-x-1 font-bold transition-colors cursor-pointer border-b-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
               activeTab === "BALANCE"
                 ? "border-emerald-500 text-emerald-400 bg-emerald-950/20"
                 : "border-transparent text-slate-400 hover:text-slate-200"
@@ -169,7 +170,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab("BETTING")}
-            className={`py-2 flex items-center justify-center space-x-1 font-bold transition-colors cursor-pointer border-b-2 ${
+            aria-label="View Sports Wagering Tab"
+            className={`py-2 flex items-center justify-center space-x-1 font-bold transition-colors cursor-pointer border-b-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
               activeTab === "BETTING"
                 ? "border-amber-500 text-amber-400 bg-amber-950/20"
                 : "border-transparent text-slate-400 hover:text-slate-200"
@@ -185,7 +187,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab("MESSAGES")}
-            className={`py-2 flex items-center justify-center space-x-1 font-bold transition-colors cursor-pointer border-b-2 relative ${
+            aria-label="View Messages and Syndicate Proposals Tab"
+            className={`py-2 flex items-center justify-center space-x-1 font-bold transition-colors cursor-pointer border-b-2 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400 ${
               activeTab === "MESSAGES"
                 ? "border-purple-500 text-purple-400 bg-purple-950/20"
                 : "border-transparent text-slate-400 hover:text-slate-200"
@@ -319,7 +322,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setSelectedTeamId(bettingMarket.homeOdds.teamId)}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      aria-label={`Select ${bettingMarket.homeOdds.teamName} at ${bettingMarket.homeOdds.oddsMultiplier.toFixed(2)}x odds`}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                         selectedTeamId === bettingMarket.homeOdds.teamId
                           ? "bg-amber-950/50 border-amber-500 text-white shadow-md ring-1 ring-amber-400"
                           : "bg-[#121826] border-slate-800 text-slate-300 hover:border-slate-700"
@@ -336,7 +340,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setSelectedTeamId(bettingMarket.awayOdds.teamId)}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      aria-label={`Select ${bettingMarket.awayOdds.teamName} at ${bettingMarket.awayOdds.oddsMultiplier.toFixed(2)}x odds`}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                         selectedTeamId === bettingMarket.awayOdds.teamId
                           ? "bg-amber-950/50 border-amber-500 text-white shadow-md ring-1 ring-amber-400"
                           : "bg-[#121826] border-slate-800 text-slate-300 hover:border-slate-700"
@@ -354,17 +359,19 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                   {/* Stake Input */}
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-xs text-slate-400">
-                      <span>Stake (₹)</span>
+                      <label htmlFor="wager-stake-input">Stake (₹)</label>
                       <span>Balance: ₹{profile.money.toLocaleString()}</span>
                     </div>
                     <input
+                      id="wager-stake-input"
                       type="number"
                       min={CAREER_CONSTANTS.MIN_BET_AMOUNT}
                       max={profile.money}
                       step={500}
                       value={stakeInput}
                       onChange={(e) => setStakeInput(e.target.value)}
-                      className="w-full bg-[#070A10] border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-sm focus:outline-none focus:border-amber-400"
+                      aria-label="Wager stake amount in rupees"
+                      className="w-full bg-[#070A10] border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus:border-amber-400"
                     />
 
                     {/* Quick Stake buttons */}
@@ -375,7 +382,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                           type="button"
                           disabled={amt > profile.money}
                           onClick={() => setStakeInput(amt.toString())}
-                          className="flex-1 py-1 text-[10px] rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 cursor-pointer font-mono"
+                          aria-label={`Add ₹${amt.toLocaleString()} to stake`}
+                          className="flex-1 py-1 text-[10px] rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 cursor-pointer font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                         >
                           +₹{amt}
                         </button>
@@ -383,7 +391,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setStakeInput(profile.money.toString())}
-                        className="py-1 px-2 text-[10px] rounded-lg bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/40 cursor-pointer font-mono font-bold"
+                        aria-label="Bet entire available balance"
+                        className="py-1 px-2 text-[10px] rounded-lg bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/40 cursor-pointer font-mono font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                       >
                         ALL IN
                       </button>
@@ -391,7 +400,7 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                   </div>
 
                   {betError && (
-                    <div className="text-xs text-red-400 font-medium">
+                    <div className="text-xs text-red-400 font-medium" role="alert">
                       {betError}
                     </div>
                   )}
@@ -419,7 +428,8 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
 
                   <button
                     type="submit"
-                    className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs font-display tracking-wider uppercase transition-all shadow-md active:scale-95 cursor-pointer"
+                    aria-label="Confirm and lock pre-match wager"
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs font-display tracking-wider uppercase transition-all shadow-md active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
                   >
                     LOCK PRE-MATCH BET
                   </button>
@@ -501,14 +511,16 @@ export const MobilePhoneModal: React.FC<MobilePhoneModalProps> = ({
                     <button
                       type="button"
                       onClick={() => onAcceptBribe(acceptBribeOffer(bribeOffer))}
-                      className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer font-display"
+                      aria-label="Accept bribe offer and enter corruption contract"
+                      className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer font-display focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
                     >
                       ACCEPT (TAKE RISK)
                     </button>
                     <button
                       type="button"
                       onClick={onDeclineBribe}
-                      className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer font-display"
+                      aria-label="Decline illicit syndicate proposal"
+                      className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer font-display focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                     >
                       DECLINE
                     </button>

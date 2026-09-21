@@ -97,10 +97,10 @@ export const CAREER_TEAMS: readonly Team[] = Object.freeze([
   },
   {
     id: "FRAN_PUN",
-    name: "Punjab Warriors",
-    shortCode: "PWR",
-    city: "Mohali",
-    homeVenue: "Northern Plains Arena",
+    name: "Pune Pioneers",
+    shortCode: "PNP",
+    city: "Pune",
+    homeVenue: "Sahyadri Arena",
     primaryColor: "#BE185D",
     secondaryColor: "#334155",
     squadPlayerIds: Object.freeze(["PL_PUN_1", "PL_PUN_2", "PL_PUN_3"]),
@@ -180,7 +180,7 @@ export function generateMatchAssignment(
     currentOver: 19,
     currentBall: 4,
     targetRuns: sim.target,
-    runsRequired: Math.max(1, sim.target - sim.awayScore.runs),
+    runsRequired: Math.max(1, sim.target - sim.secondInningsRuns),
     ballsRemaining: 8,
     projectedWinnerId: sim.winnerTeam.id,
   };
@@ -218,6 +218,14 @@ export function generateMatchAssignment(
     const battingTeam = isFirstInnings ? sim.firstInningsTeam : sim.secondInningsTeam;
     const bowlingTeam = isFirstInnings ? sim.secondInningsTeam : sim.firstInningsTeam;
 
+    const currentInningsRuns = isFirstInnings ? sim.firstInningsRuns : sim.secondInningsRuns;
+    const currentInningsWickets = isFirstInnings ? sim.firstInningsWickets : sim.secondInningsWickets;
+    const scoreRuns = Math.round((currentInningsRuns / 20) * overNumber);
+    const scoreWickets = Math.min(currentInningsWickets, Math.floor(overNumber / 3));
+
+    // A match is effectively decided if chasing team has already surpassed target or equation is settled
+    const isMatchDecided = !isFirstInnings && (overNumber >= 19 && (scoreRuns >= sim.target || sim.target - scoreRuns > 40));
+
     // Generate authoritative LBW scenario
     const baseScenario = generateScenario(incSeed, "LBW", difficulty);
 
@@ -231,9 +239,7 @@ export function generateMatchAssignment(
         bowlingTeam: bowlingTeam.name,
         over: overNumber,
         ballInOver,
-        battingTeamScore: isFirstInnings
-          ? `${Math.round((sim.homeScore.runs / 20) * overNumber)}/${Math.min(8, Math.floor(overNumber / 3))}`
-          : `${Math.round((sim.awayScore.runs / 20) * overNumber)}/${Math.min(8, Math.floor(overNumber / 3))}`,
+        battingTeamScore: `${scoreRuns}/${scoreWickets}`,
         matchSituation: `${momentDesc} (${leagueName} — Match #${matchNumber})`,
       },
     };
@@ -258,6 +264,7 @@ export function generateMatchAssignment(
       overNumber,
       ballInOver,
       matchPressure: pressure,
+      isMatchDecided,
     });
   }
 

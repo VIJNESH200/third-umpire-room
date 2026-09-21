@@ -124,7 +124,7 @@ export const MatchReportView: React.FC<MatchReportViewProps> = ({
 
           {report.bettingNet !== 0 && (
             <div className="flex justify-between text-slate-300">
-              <span>Pre-Match Betting Payout:</span>
+              <span>{report.bettingNet > 0 ? "Betting Payout:" : "Betting Loss:"}</span>
               <span
                 className={`font-bold ${
                   report.bettingNet > 0 ? "text-emerald-400" : "text-red-400"
@@ -137,7 +137,7 @@ export const MatchReportView: React.FC<MatchReportViewProps> = ({
 
           {report.bribeNet > 0 && (
             <div className="flex justify-between text-purple-300">
-              <span>Illicit Syndicate Payout:</span>
+              <span>Syndicate Bribe:</span>
               <span className="font-bold text-purple-400">
                 +₹{report.bribeNet.toLocaleString()}
               </span>
@@ -146,7 +146,7 @@ export const MatchReportView: React.FC<MatchReportViewProps> = ({
 
           {report.penaltyAmount > 0 && (
             <div className="flex justify-between text-red-300">
-              <span>Disciplinary ACU Fine:</span>
+              <span>Disciplinary Fine:</span>
               <span className="font-bold text-red-400">
                 -₹{report.penaltyAmount.toLocaleString()}
               </span>
@@ -201,7 +201,7 @@ export const MatchReportView: React.FC<MatchReportViewProps> = ({
         <button
           type="button"
           onClick={onContinue}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black text-sm font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-xl active:scale-95 cursor-pointer"
+          className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black text-sm font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-xl active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
         >
           <span>CONTINUE TO DASHBOARD</span>
           <ChevronRight size={18} />

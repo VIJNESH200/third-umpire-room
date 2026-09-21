@@ -130,6 +130,26 @@ describe("League Umpire Career Mode Test Suite", () => {
       assert.equal(tier3Match.incidentCount, 8);
       assert.equal(tier5Match.incidentCount, 8);
     });
+
+    it("C2.4: verifies all 10 IP-compliant franchise cities including Pune", () => {
+      assert.equal(CAREER_TEAMS.length, 10);
+      const cities = CAREER_TEAMS.map((t) => t.city);
+      assert.ok(cities.includes("Pune"), "Pune must be present in the city franchise roster");
+      assert.ok(cities.includes("Mumbai"));
+      assert.ok(cities.includes("Delhi"));
+      assert.ok(cities.includes("Chennai"));
+      assert.ok(cities.includes("Kolkata"));
+      assert.ok(cities.includes("Bengaluru"));
+      assert.ok(cities.includes("Hyderabad"));
+      assert.ok(cities.includes("Ahmedabad"));
+      assert.ok(cities.includes("Jaipur"));
+      assert.ok(cities.includes("Lucknow"));
+
+      const puneTeam = CAREER_TEAMS.find((t) => t.city === "Pune");
+      assert.ok(puneTeam);
+      assert.equal(puneTeam.name, "Pune Pioneers");
+      assert.equal(puneTeam.shortCode, "PNP");
+    });
   });
 
   // ==========================================================================
@@ -169,6 +189,14 @@ describe("League Umpire Career Mode Test Suite", () => {
       assert.ok(ratingFlawless >= 9.0);
       assert.ok(ratingMediocre >= 4.0 && ratingMediocre <= 6.5);
       assert.ok(ratingPoor < 3.5);
+    });
+
+    it("C3.4: wrong decision in a match already decided incurs muted fan penalty", () => {
+      const wrongDecided = calculateFanImpact(false, "NORMAL", "NORMAL", true);
+      const wrongNormal = calculateFanImpact(false, "NORMAL", "NORMAL", false);
+
+      assert.equal(wrongDecided, CAREER_CONSTANTS.FAN_DELTAS.WRONG_DECIDED);
+      assert.ok(wrongDecided > wrongNormal, "Decided wrong penalty (-2) should be less punishing than active normal blunder (-4)");
     });
   });
 
@@ -308,6 +336,44 @@ describe("League Umpire Career Mode Test Suite", () => {
       // Very high risk (80%) and low integrity
       const result = performInvestigationCheck(20, 85, 2, 1);
       assert.equal(result.outcome, "CAUGHT");
+    });
+
+    it("C5.6: SEND_UPSTAIRS abstention is immune from corrupt favor evaluation", () => {
+      const contract = {
+        offerId: "O-4",
+        targetTeamId: "FRAN_MUM",
+        targetTeamName: "Mumbai",
+        bribeAmount: 35_000,
+        fulfilled: false,
+      };
+
+      const incident = {
+        id: "INC-2",
+        incidentIndex: 1,
+        criticalMoment: "FINAL_OVER" as const,
+        momentDescription: "test",
+        battingTeamId: "FRAN_MUM",
+        bowlingTeamId: "FRAN_DEL",
+        batterName: "Batter",
+        bowlerName: "Bowler",
+        overNumber: 19,
+        ballInOver: 4,
+        matchPressure: "INTENSE" as const,
+        scenario: { correctFinalVerdict: "OUT" as const } as any,
+      };
+
+      // Even if physical truth was OUT and target is batting, selecting SEND_UPSTAIRS is not a corrupt favor
+      const isCorrupt = evaluateCorruptDecision(contract, incident, "SEND_UPSTAIRS");
+      assert.equal(isCorrupt, false, "Abstaining with SEND_UPSTAIRS must never constitute an active corrupt favor");
+    });
+
+    it("C5.7: match 1 of career reliably generates introductory bribe offer for player choice", () => {
+      const homeTeam = CAREER_TEAMS[0];
+      const awayTeam = CAREER_TEAMS[1];
+      const offer = generateBribeOffer("MATCH-01", 1, homeTeam, awayTeam, 42, false, 1);
+      assert.ok(offer, "Match 1 must provide an introductory bribe offer");
+      assert.equal(offer.status, "OFFERED");
+      assert.ok(offer.bribeAmount > 0);
     });
   });
 

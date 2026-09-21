@@ -350,7 +350,8 @@ export const CareerDashboard: React.FC<CareerDashboardProps> = ({
             <button
               type="button"
               onClick={onProceedToPreMatch}
-              className="flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black text-xs font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-lg active:scale-95 cursor-pointer"
+              aria-label="Proceed to Pre-Match Briefing"
+              className="flex-1 py-3.5 px-6 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black text-xs font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-lg active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
             >
               <span>PROCEED TO PRE-MATCH BRIEFING</span>
               <ChevronRight size={16} />

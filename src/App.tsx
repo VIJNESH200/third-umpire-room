@@ -122,9 +122,18 @@ export const App: React.FC = () => {
 
   const prepareCareerMatchAssignment = (profile: CareerProfile) => {
     const matchNum = profile.matchesCompleted + 1;
+    const matchSeed = 42 + matchNum * 99991;
     const assignment = generateMatchAssignment(profile.careerTier, matchNum, 42);
-    const market = generateBettingMarket(assignment.matchId, assignment.homeTeam, assignment.awayTeam, 42 + matchNum);
-    const bribe = generateBribeOffer(assignment.matchId, profile.careerTier, assignment.homeTeam, assignment.awayTeam, 42 + matchNum);
+    const market = generateBettingMarket(assignment.matchId, assignment.homeTeam, assignment.awayTeam, matchSeed);
+    const bribe = generateBribeOffer(
+      assignment.matchId,
+      profile.careerTier,
+      assignment.homeTeam,
+      assignment.awayTeam,
+      matchSeed,
+      false,
+      matchNum
+    );
 
     setCareerAssignment(assignment);
     setCareerBettingMarket(market);
@@ -320,7 +329,8 @@ export const App: React.FC = () => {
             const fanDelta = calculateFanImpact(
               res.finalVerdictCorrect,
               currentInc.criticalMoment,
-              careerAssignment.matchImportance
+              careerAssignment.matchImportance,
+              currentInc.isMatchDecided ?? false
             );
             const criticDelta = calculateCriticImpact(
               res.finalVerdictCorrect,
@@ -438,17 +448,12 @@ export const App: React.FC = () => {
               careerBet,
               careerActiveContract,
               careerProfile,
-              42 + careerAssignment.matchNumber
+              42 + careerAssignment.matchNumber * 99991
             );
             const updated = applyCareerMatchReport(careerProfile, report);
             setCareerProfile(updated);
             setCareerMatchReport(report);
             setAppState("CAREER_REPORT");
-            if (report.careerTerminated) {
-              setCareerEndingStatus("TERMINATED");
-            } else if (report.careerWinAchieved) {
-              setCareerEndingStatus("VICTORY");
-            }
           }
         }
       }
@@ -497,7 +502,8 @@ export const App: React.FC = () => {
       setCareerEndingStatus("VICTORY");
       return;
     }
-    prepareCareerMatchAssignment(careerProfile);
+    const current = loadCareerProfile();
+    prepareCareerMatchAssignment(current);
     setAppState("CAREER_DASHBOARD");
   };
 

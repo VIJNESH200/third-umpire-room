@@ -102,6 +102,7 @@ export interface CareerIncident {
   readonly overNumber: number;
   readonly ballInOver: number;
   readonly matchPressure: "LOW" | "MODERATE" | "INTENSE";
+  readonly isMatchDecided?: boolean;
 }
 
 /**

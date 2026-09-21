@@ -28,12 +28,17 @@ export function generateBribeOffer(
   homeTeam: Team,
   awayTeam: Team,
   matchSeed: number,
-  forceOffer: boolean = false
+  forceOffer: boolean = false,
+  matchNumber?: number
 ): BribeOffer | null {
-  const rng = new SeededRandom(matchSeed ^ 0xbadc0de);
+  const diffusedSeed = (Math.imul(matchSeed ^ 0xbadc0de, 0x45d9f3b) ^ (matchSeed >>> 16)) >>> 0;
+  const rng = new SeededRandom(diffusedSeed);
   const chance = CAREER_CONSTANTS.BRIBE_CONFIG.OFFER_CHANCE_BY_TIER[tierLevel] ?? 0.4;
 
-  if (!forceOffer && rng.next() > chance) {
+  // Introductory match #1 guarantees an offer so the player experiences the core moral dilemma
+  const isIntroductoryOffer = matchNumber === 1;
+
+  if (!forceOffer && !isIntroductoryOffer && rng.next() > chance) {
     return null;
   }
 
@@ -87,8 +92,13 @@ export function acceptBribeOffer(offer: BribeOffer): CorruptionContract {
 export function evaluateCorruptDecision(
   contract: CorruptionContract,
   incident: CareerIncident,
-  playerVerdict: DecisionVerdict
+  playerVerdict: DecisionVerdict | "SEND_UPSTAIRS"
 ): boolean {
+  // An abstention / referral to on-field call is not a corrupt favor
+  if (playerVerdict === "SEND_UPSTAIRS") {
+    return false;
+  }
+
   const physicalTruth = incident.scenario.correctFinalVerdict;
   const isCorrect = playerVerdict === physicalTruth;
 

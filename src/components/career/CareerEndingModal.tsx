@@ -107,10 +107,11 @@ export const CareerEndingModal: React.FC<CareerEndingModalProps> = ({
           <button
             type="button"
             onClick={onRestartCareer}
-            className={`w-full py-3.5 rounded-2xl font-black text-xs font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-lg active:scale-95 cursor-pointer ${
+            aria-label="Restart and begin a new umpire career"
+            className={`w-full py-3.5 rounded-2xl font-black text-xs font-display tracking-wider uppercase flex items-center justify-center space-x-2 transition-all shadow-lg active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 ${
               isVictory
-                ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                : "bg-red-600 hover:bg-red-500 text-white"
+                ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 focus-visible:ring-emerald-300"
+                : "bg-red-600 hover:bg-red-500 text-white focus-visible:ring-red-400"
             }`}
           >
             <RotateCcw size={15} />
@@ -121,7 +122,8 @@ export const CareerEndingModal: React.FC<CareerEndingModalProps> = ({
             <button
               type="button"
               onClick={onDismiss}
-              className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-mono transition-colors cursor-pointer"
+              aria-label="Dismiss ending modal and inspect match report"
+              className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-mono transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             >
               View Final Statistics
             </button>
