@@ -221,11 +221,14 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     return 1400;
   }, [scenario]);
 
+  const playbackBaseRef = useRef<{ wallTime: number; logicalTime: number } | null>(null);
+
   // High-Precision Real-time Transport Animation Loop
   useEffect(() => {
     const isRunOutTransport = scenario.incidentType === "RUN_OUT";
     if (!isPlaying && !isRockAndRoll) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      playbackBaseRef.current = null;
       return;
     }
 
@@ -249,51 +252,54 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     const loop = (now: number) => {
       if (isRunOutTransport && !playbackIntentRef.current && !rockAndRollIntentRef.current) {
         animFrameRef.current = null;
+        playbackBaseRef.current = null;
         return;
       }
-      const deltaRealMs = now - lastTimestampRef.current;
-      lastTimestampRef.current = now;
 
       if (isRunOutTransport ? playbackIntentRef.current : isPlaying) {
-        // Linear forward replay at chosen playback speed
-        const deltaReplayMs = deltaRealMs * playbackSpeed;
-        
+        // Initialize authoritative playback base if starting
+        if (!playbackBaseRef.current) {
+          playbackBaseRef.current = { wallTime: now, logicalTime: currentTimeMsRef.current };
+        }
+
+        const elapsedWall = now - playbackBaseRef.current.wallTime;
+        const next = playbackBaseRef.current.logicalTime + elapsedWall * playbackSpeed;
+
         if (!isRunOutTransport) {
-          // Direct update using ref for authoritative clock (avoids functional updater batching issues)
-          const next = currentTimeMsRef.current + deltaReplayMs;
           if (next >= maxTimeMs) {
             setCurrentTimeMs(maxTimeMs);
             setIsPlaying(false);
+            playbackBaseRef.current = null;
           } else {
             setCurrentTimeMs(next);
           }
         } else {
-          // Run-out transport (kept intact as per physics)
+          // Run-out transport
           queueReplayClockUpdate((prev) => {
-            const next = prev + deltaReplayMs;
             if (next >= maxTimeMs) {
+              playbackBaseRef.current = null;
               return minTimeMs;
             }
             return next;
           });
         }
       } else if (isRunOutTransport ? rockAndRollIntentRef.current : isRockAndRoll) {
+        playbackBaseRef.current = null; // Clear base since we are oscillating
+        const deltaRealMs = now - lastTimestampRef.current;
+        lastTimestampRef.current = now;
+
         // Shuttle oscillation around the focal incident frame (+/- 160ms)
         const focalTime = getFocalEventTimeMs();
         const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         if (prefersReducedMotion) {
-          if (!isRunOutTransport) {
-            setCurrentTimeMs(focalTime);
-          } else {
-            queueReplayClockUpdate(() => focalTime);
-          }
+          queueReplayClockUpdate(() => focalTime);
         } else {
           const rnrMin = Math.max(minTimeMs, focalTime - 160);
           const rnrMax = Math.min(maxTimeMs, focalTime + 160);
           const deltaReplayMs = deltaRealMs * playbackSpeed * 0.45 * rnrDirectionRef.current;
 
-          if (!isRunOutTransport) {
-            let next = currentTimeMsRef.current + deltaReplayMs;
+          queueReplayClockUpdate((prev) => {
+            let next = prev + deltaReplayMs;
             if (next >= rnrMax) {
               rnrDirectionRef.current = -1;
               next = rnrMax;
@@ -301,29 +307,19 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
               rnrDirectionRef.current = 1;
               next = rnrMin;
             }
-            setCurrentTimeMs(next);
-          } else {
-            queueReplayClockUpdate((prev) => {
-              let next = prev + deltaReplayMs;
-              if (next >= rnrMax) {
-                rnrDirectionRef.current = -1;
-                next = rnrMax;
-              } else if (next <= rnrMin) {
-                rnrDirectionRef.current = 1;
-                next = rnrMin;
-              }
-              return next;
-            });
-          }
+            return next;
+          });
         }
       }
 
+      lastTimestampRef.current = now;
       animFrameRef.current = requestAnimationFrame(loop);
     };
 
     animFrameRef.current = requestAnimationFrame(loop);
 
     return () => {
+      playbackBaseRef.current = null;
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, [isPlaying, isRockAndRoll, playbackSpeed, maxTimeMs, minTimeMs, scenario, getFocalEventTimeMs]);
@@ -429,6 +425,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const handleTimeChange = (newTimeMs: number) => {
     if (scenario.incidentType === "RUN_OUT") pauseTransport();
     markTransportReview();
+    playbackBaseRef.current = null;
     setCurrentTimeMs(Math.max(minTimeMs, Math.min(maxTimeMs, newTimeMs)));
   };
 
