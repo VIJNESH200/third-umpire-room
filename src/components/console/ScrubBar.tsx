@@ -1,4 +1,3 @@
-import React from "react";
 import {
   Play,
   Pause,
@@ -7,6 +6,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  RotateCcw,
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 
@@ -26,6 +26,7 @@ interface ScrubBarProps {
   onTimeChange: (timeMs: number) => void;
   onTogglePlay: () => void;
   onToggleRockAndRoll: () => void;
+  onRestart?: () => void;
   onSpeedChange: (speed: number) => void;
   onStep: (frames: number) => void;
   keyFrameMarkers?: KeyframeMarker[];
@@ -43,6 +44,7 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
   onTimeChange,
   onTogglePlay,
   onToggleRockAndRoll,
+  onRestart,
   onSpeedChange,
   onStep,
   keyFrameMarkers = [],
@@ -123,6 +125,18 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#27272a]">
         {/* Left: Frame Steppers & Shuttle Controls */}
         <div className="flex items-center space-x-1">
+          {/* RESET / Restart to beginning */}
+          <button
+            type="button"
+            onClick={onRestart || (() => onTimeChange(minTimeMs))}
+            title="Restart replay from beginning (0%)"
+            aria-label="Restart replay"
+            className="px-2 py-0.5 rounded-sm text-xs font-mono cursor-pointer transition-colors bg-[#1a1a1b] hover:bg-[#27272a] border border-[#27272a] text-neutral-400 hover:text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+          >
+            <RotateCcw size={11} />
+            <span>RESET</span>
+          </button>
+
           {/* -5 Frames */}
           <button
             type="button"

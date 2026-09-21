@@ -270,12 +270,13 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
             setCurrentTimeMs(maxTimeMs);
             setIsPlaying(false);
             playbackBaseRef.current = null;
+            return;
           } else {
             setCurrentTimeMs(next);
           }
         } else {
           // Run-out transport
-          queueReplayClockUpdate((prev) => {
+          queueReplayClockUpdate((_prev) => {
             if (next >= maxTimeMs) {
               playbackBaseRef.current = null;
               return minTimeMs;
@@ -339,6 +340,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   // re-subscribing on every render.
   const togglePlayRef = useRef<() => void>(() => {});
   const handleStepRef = useRef<(frames: number) => void>(() => {});
+  const restartReplayRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!replayShortcutsActive) return;
 
@@ -352,6 +354,8 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
       event.preventDefault();
       if (command.type === "TOGGLE_PLAY") {
         togglePlayRef.current();
+      } else if (command.type === "RESTART") {
+        restartReplayRef.current();
       } else {
         handleStepRef.current(command.frames);
       }
@@ -392,6 +396,15 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
     sounds.playClick(850 + frames * 30);
   };
 
+  const restartReplay = () => {
+    pauseTransport();
+    playbackBaseRef.current = null;
+    setCurrentTimeMs(minTimeMs);
+    currentTimeMsRef.current = minTimeMs;
+    markTransportReview();
+    sounds.playClick(800);
+  };
+
   const togglePlay = () => {
     if (scenario.incidentType === "RUN_OUT") {
       const nextPlaying = !playbackIntentRef.current;
@@ -401,7 +414,13 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
       setIsPlaying(nextPlaying);
     } else {
       setIsRockAndRoll(false);
-      setIsPlaying((playing) => !playing);
+      setIsPlaying((playing) => {
+        if (!playing && currentTimeMsRef.current >= maxTimeMs) {
+          setCurrentTimeMs(minTimeMs);
+          currentTimeMsRef.current = minTimeMs;
+        }
+        return !playing;
+      });
     }
     markTransportReview();
     sounds.playClick(750);
@@ -432,6 +451,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   // Keep the keyboard listener pointed at the live transport closures.
   togglePlayRef.current = togglePlay;
   handleStepRef.current = handleStep;
+  restartReplayRef.current = restartReplay;
 
   const handleToolSelect = (tool: string) => {
     // Every camera feed is an alternate projection of the same canonical
@@ -786,6 +806,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                   onTimeChange={handleTimeChange}
                   onTogglePlay={togglePlay}
                   onToggleRockAndRoll={toggleRockAndRoll}
+                  onRestart={restartReplay}
                   onSpeedChange={setPlaybackSpeed}
                   onStep={handleStep}
                   keyFrameMarkers={getKeyframeMarkers()}

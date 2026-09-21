@@ -26,7 +26,14 @@ export interface ReplayTogglePlayCommand {
   type: "TOGGLE_PLAY";
 }
 
-export type ReplayKeyCommand = ReplayStepCommand | ReplayTogglePlayCommand;
+export interface ReplayRestartCommand {
+  type: "RESTART";
+}
+
+export type ReplayKeyCommand =
+  | ReplayStepCommand
+  | ReplayTogglePlayCommand
+  | ReplayRestartCommand;
 
 /** Frame counts for arrow steps; Shift multiplies the stride to 5 frames. */
 const BASE_ARROW_FRAMES = 1;
@@ -63,6 +70,7 @@ export function resolveReplayShortcut(
   shiftKey: boolean
 ): ReplayKeyCommand | null {
   if (key === " ") return { type: "TOGGLE_PLAY" };
+  if (key === "Home" || key === "0") return { type: "RESTART" };
 
   const frames = shiftKey ? SHIFT_ARROW_FRAMES : BASE_ARROW_FRAMES;
   if (key === "ArrowLeft") return { type: "STEP", frames: -frames };
