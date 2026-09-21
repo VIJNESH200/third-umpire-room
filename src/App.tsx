@@ -9,12 +9,38 @@ import type {
   GameplayStage,
 } from "./types/scenario";
 import type { RemainingReviews } from "./types/matchContext";
+import type {
+  CareerProfile,
+  CareerMatchAssignment,
+  BettingMarket,
+  PreMatchBet,
+  BribeOffer,
+  CorruptionContract,
+  CareerIncidentRecord,
+  CareerMatchReport,
+} from "./types/career";
 import { generateScenario } from "./engine/scenarioGenerator";
 import { generateSessionIncidents } from "./engine/randomIncidentEngine";
 import { checkDRSCompliance } from "./engine/drsRules";
-import { calculateReviewRetention } from "./engine/realMatchPlayback";
 import { computeSessionStats } from "./engine/scoring";
 import { ThirdUmpireGameSession } from "./engine/thirdUmpireGameSession";
+import {
+  loadCareerProfile,
+  saveCareerProfile,
+  resetCareerProfile,
+  computeCareerMatchReport,
+  applyCareerMatchReport,
+} from "./engine/career/careerState";
+import { generateMatchAssignment } from "./engine/career/matchGenerator";
+import { generateBettingMarket } from "./engine/career/betting";
+import {
+  generateBribeOffer,
+  evaluateCorruptDecision,
+} from "./engine/career/corruption";
+import {
+  calculateFanImpact,
+  calculateCriticImpact,
+} from "./engine/career/careerScoring";
 import { ConsoleLayout, ConsolePhase } from "./components/console/ConsoleLayout";
 import { ResultCard } from "./components/card/ResultCard";
 import { sounds } from "./engine/audioSynth";
@@ -30,13 +56,28 @@ import {
   Zap,
   GraduationCap,
   Tv,
+  Trophy,
 } from "lucide-react";
 import { T20_WC_2024_FINAL } from "./data/realMatches/t20Wc2024Final";
 import { RealMatchGameSession } from "./engine/realMatchGameSession";
 import { RealMatchPlaybackView } from "./components/realMatch/RealMatchPlaybackView";
 import type { RealMatchDrsIncident } from "./types/realMatch";
+import { CareerDashboard } from "./components/career/CareerDashboard";
+import { PreMatchScreen } from "./components/career/PreMatchScreen";
+import { MobilePhoneModal } from "./components/career/MobilePhoneModal";
+import { MatchReportView } from "./components/career/MatchReportView";
+import { CareerEndingModal } from "./components/career/CareerEndingModal";
 
-type AppState = "BRIEFING" | "INCIDENT" | "CARD_REVEAL" | "REAL_MATCH" | "REAL_MATCH_REVIEW";
+type AppState =
+  | "BRIEFING"
+  | "INCIDENT"
+  | "CARD_REVEAL"
+  | "REAL_MATCH"
+  | "REAL_MATCH_REVIEW"
+  | "CAREER_DASHBOARD"
+  | "CAREER_PRE_MATCH"
+  | "CAREER_MATCH"
+  | "CAREER_REPORT";
 
 export const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>("BRIEFING");
@@ -64,6 +105,44 @@ export const App: React.FC = () => {
   const realMatchSessionRef = useRef<RealMatchGameSession | null>(null);
   const [activeRealMatchIncident, setActiveRealMatchIncident] = useState<RealMatchDrsIncident | null>(null);
   const [activeReviewIndex, setActiveReviewIndex] = useState<number>(0);
+
+  // Career Mode state
+  const [careerProfile, setCareerProfile] = useState<CareerProfile>(loadCareerProfile);
+  const [careerAssignment, setCareerAssignment] = useState<CareerMatchAssignment | null>(null);
+  const [careerBettingMarket, setCareerBettingMarket] = useState<BettingMarket | null>(null);
+  const [careerBet, setCareerBet] = useState<PreMatchBet | null>(null);
+  const [careerBribeOffer, setCareerBribeOffer] = useState<BribeOffer | null>(null);
+  const [careerActiveContract, setCareerActiveContract] = useState<CorruptionContract | null>(null);
+  const [careerIncidentRecords, setCareerIncidentRecords] = useState<CareerIncidentRecord[]>([]);
+  const careerIncidentRecordsRef = useRef<CareerIncidentRecord[]>([]);
+  careerIncidentRecordsRef.current = careerIncidentRecords;
+  const [careerMatchReport, setCareerMatchReport] = useState<CareerMatchReport | null>(null);
+  const [isPhoneOpen, setIsPhoneOpen] = useState<boolean>(false);
+  const [careerEndingStatus, setCareerEndingStatus] = useState<"VICTORY" | "TERMINATED" | null>(null);
+
+  const prepareCareerMatchAssignment = (profile: CareerProfile) => {
+    const matchNum = profile.matchesCompleted + 1;
+    const assignment = generateMatchAssignment(profile.careerTier, matchNum, 42);
+    const market = generateBettingMarket(assignment.matchId, assignment.homeTeam, assignment.awayTeam, 42 + matchNum);
+    const bribe = generateBribeOffer(assignment.matchId, profile.careerTier, assignment.homeTeam, assignment.awayTeam, 42 + matchNum);
+
+    setCareerAssignment(assignment);
+    setCareerBettingMarket(market);
+    setCareerBet(null);
+    setCareerBribeOffer(bribe);
+    setCareerActiveContract(null);
+    setCareerIncidentRecords([]);
+    careerIncidentRecordsRef.current = [];
+    setCareerMatchReport(null);
+  };
+
+  const startCareerMode = () => {
+    sounds.playRadioChirp();
+    const profile = loadCareerProfile();
+    setCareerProfile(profile);
+    prepareCareerMatchAssignment(profile);
+    setAppState("CAREER_DASHBOARD");
+  };
 
   const startRealMatch = (incidentCount: number = 8, startingSeed: number = Date.now()) => {
     sounds.playRadioChirp();
@@ -119,6 +198,26 @@ export const App: React.FC = () => {
     setAppState("INCIDENT");
   };
 
+  // Start Career Match
+  const handleStartCareerMatch = () => {
+    if (!careerAssignment) return;
+    sounds.playRadioChirp();
+    const scenarios = careerAssignment.incidents.map((inc) => inc.scenario);
+    const session = new ThirdUmpireGameSession(scenarios, 42 + careerAssignment.matchNumber);
+    thirdUmpireSessionRef.current = session;
+    setSessionScenarios(scenarios);
+    setCurrentIncidentIndex(0);
+    setIncidentHistory([]);
+    setCareerIncidentRecords([]);
+    careerIncidentRecordsRef.current = [];
+    setSoftSignalChoice(null);
+    setCurrentIncidentResult(null);
+    setRemainingReviews(session.getRemainingReviews());
+    setGameplayStage(session.getStage());
+    setConsolePhase("SOFT_SIGNAL");
+    setAppState("CAREER_MATCH");
+  };
+
   const handleToggleMute = () => {
     const next = !isMuted;
     setIsMuted(next);
@@ -166,17 +265,12 @@ export const App: React.FC = () => {
     softSignalOverride?: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS",
     elapsedMsOverride?: number
   ) => {
-    // If in RESULT phase, prevent duplicate verdict submissions (immutability)
     if (consolePhase === "RESULT") {
       return;
     }
 
     const isRealMatchReview = appState === "REAL_MATCH_REVIEW" && activeRealMatchIncident !== null;
-    const currentScenario = isRealMatchReview
-      ? activeRealMatchIncident.scenario
-      : sessionScenarios[currentIncidentIndex];
-
-    if (!currentScenario) return;
+    const isCareerReview = appState === "CAREER_MATCH" && careerAssignment !== null;
 
     if (!isRealMatchReview && thirdUmpireSessionRef.current) {
       if (thirdUmpireSessionRef.current.isDecided()) {
@@ -197,9 +291,65 @@ export const App: React.FC = () => {
         setRemainingReviews(thirdUmpireSessionRef.current.getRemainingReviews());
         setGameplayStage(thirdUmpireSessionRef.current.getStage());
         setConsolePhase("RESULT");
+
+        // Handle Career Incident Recording
+        if (isCareerReview && careerAssignment) {
+          const currentInc = careerAssignment.incidents[currentIncidentIndex];
+          if (currentInc) {
+            let corruptFavor = false;
+            if (careerActiveContract && !careerActiveContract.fulfilled) {
+              const isCorrupt = evaluateCorruptDecision(
+                careerActiveContract,
+                currentInc,
+                res.finalVerdict
+              );
+              if (isCorrupt) {
+                corruptFavor = true;
+                setCareerActiveContract((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        fulfilled: true,
+                        benefitedDecisionScenarioId: currentInc.scenario.id,
+                      }
+                    : null
+                );
+              }
+            }
+
+            const fanDelta = calculateFanImpact(
+              res.finalVerdictCorrect,
+              currentInc.criticalMoment,
+              careerAssignment.matchImportance
+            );
+            const criticDelta = calculateCriticImpact(
+              res.finalVerdictCorrect,
+              currentInc.scenario.difficultyTier,
+              currentInc.scenario.drsEvaluation.isUmpiresCall,
+              res.umpiresCallComplied
+            );
+
+            const rec: CareerIncidentRecord = {
+              incident: currentInc,
+              result: res,
+              isCorrect: res.finalVerdictCorrect,
+              fanDelta,
+              criticDelta,
+              corruptFavorAwarded: corruptFavor,
+            };
+            careerIncidentRecordsRef.current = [...careerIncidentRecordsRef.current, rec];
+            setCareerIncidentRecords((prev) => [...prev, rec]);
+          }
+        }
         return;
       }
     }
+
+    const currentScenario = isRealMatchReview
+      ? activeRealMatchIncident.scenario
+      : sessionScenarios[currentIncidentIndex];
+
+    if (!currentScenario) return;
 
     const effectiveVerdict: DecisionVerdict =
       verdict === "SEND_UPSTAIRS"
@@ -216,29 +366,10 @@ export const App: React.FC = () => {
       realMatchSessionRef.current.submitDecision(effectiveVerdict, {
         reason: customReason,
       });
-      // Synchronize directly from authoritative RealMatchGameSession — NO duplicate manual decrement!
       setRemainingReviews(realMatchSessionRef.current.getRemainingReviews());
-    } else if (!isRealMatchReview && !thirdUmpireSessionRef.current) {
-      // Fallback only if no session engine exists
-      const retentionInfo = calculateReviewRetention({
-        verdict: effectiveVerdict,
-        onFieldSignal: currentScenario.onFieldSignal,
-        isUmpiresCall: currentScenario.drsEvaluation.isUmpiresCall,
-      });
-
-      if (retentionInfo.reviewingSide && !retentionInfo.reviewRetained) {
-        setRemainingReviews((prev) => ({
-          ...prev,
-          [retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"]: Math.max(
-            0,
-            prev[retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"] - 1
-          ),
-        }));
-      }
     }
 
     const isVerdictCorrect = effectiveVerdict === currentScenario.correctFinalVerdict;
-
     const effectiveSoftSignal = softSignalOverride ?? softSignalChoice;
     const effectiveSoftElapsed = elapsedMsOverride ?? softSignalElapsedMs;
 
@@ -288,6 +419,42 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (appState === "CAREER_MATCH") {
+      if (thirdUmpireSessionRef.current) {
+        const hasNext = thirdUmpireSessionRef.current.nextIncident();
+        if (hasNext) {
+          setCurrentIncidentIndex(thirdUmpireSessionRef.current.getCurrentIndex());
+          setSoftSignalChoice(null);
+          setCurrentIncidentResult(null);
+          setGameplayStage(thirdUmpireSessionRef.current.getStage());
+          setConsolePhase("SOFT_SIGNAL");
+        } else {
+          // Career Match Completed! Consolidate report
+          if (careerAssignment) {
+            const records = careerIncidentRecordsRef.current;
+            const report = computeCareerMatchReport(
+              careerAssignment,
+              records,
+              careerBet,
+              careerActiveContract,
+              careerProfile,
+              42 + careerAssignment.matchNumber
+            );
+            const updated = applyCareerMatchReport(careerProfile, report);
+            setCareerProfile(updated);
+            setCareerMatchReport(report);
+            setAppState("CAREER_REPORT");
+            if (report.careerTerminated) {
+              setCareerEndingStatus("TERMINATED");
+            } else if (report.careerWinAchieved) {
+              setCareerEndingStatus("VICTORY");
+            }
+          }
+        }
+      }
+      return;
+    }
+
     if (thirdUmpireSessionRef.current) {
       const hasNext = thirdUmpireSessionRef.current.nextIncident();
       if (hasNext) {
@@ -318,6 +485,28 @@ export const App: React.FC = () => {
       setGameplayStage("SESSION_COMPLETE");
       setAppState("CARD_REVEAL");
     }
+  };
+
+  const handleContinueFromReport = () => {
+    if (!careerMatchReport) return;
+    if (careerMatchReport.careerTerminated) {
+      setCareerEndingStatus("TERMINATED");
+      return;
+    }
+    if (careerMatchReport.careerWinAchieved) {
+      setCareerEndingStatus("VICTORY");
+      return;
+    }
+    prepareCareerMatchAssignment(careerProfile);
+    setAppState("CAREER_DASHBOARD");
+  };
+
+  const handleResetCareer = () => {
+    const fresh = resetCareerProfile();
+    setCareerProfile(fresh);
+    prepareCareerMatchAssignment(fresh);
+    setCareerEndingStatus(null);
+    setAppState("CAREER_DASHBOARD");
   };
 
   const submitFinalVerdictRef = useRef(handleFinalVerdictSubmit);
@@ -377,7 +566,11 @@ export const App: React.FC = () => {
       thirdUmpireSessionRef.current?.setStage(stage);
       setGameplayStage(stage);
     };
-    (window as any).__submitVerdict = (verdict: DecisionVerdict | PlayerVerdictChoice, softSignal: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" = "NOT_OUT", elapsedMs: number = 4000) => {
+    (window as any).__submitVerdict = (
+      verdict: DecisionVerdict | PlayerVerdictChoice,
+      softSignal: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" = "NOT_OUT",
+      elapsedMs: number = 4000
+    ) => {
       setSoftSignalChoiceRef.current(softSignal);
       setSoftSignalElapsedMsRef.current(elapsedMs);
       submitFinalVerdictRef.current(verdict, "Test evaluation", undefined, softSignal, elapsedMs);
@@ -385,12 +578,61 @@ export const App: React.FC = () => {
     (window as any).__startRealMatch = (seed: number = Date.now(), incidentCount: number = 8) => {
       startRealMatch(incidentCount, seed);
     };
+    (window as any).__startCareerMode = () => startCareerMode();
+    (window as any).__getCareerProfile = () => careerProfile;
+    (window as any).__setCareerProfile = (override: Partial<CareerProfile>) => {
+      setCareerProfile((prev) => {
+        const updated = { ...prev, ...override };
+        saveCareerProfile(updated);
+        return updated;
+      });
+    };
+    (window as any).__getCareerAssignment = () => careerAssignment;
+    (window as any).__openPhone = (open: boolean = true) => setIsPhoneOpen(open);
+    (window as any).__setCareerEnding = (status: "VICTORY" | "TERMINATED" | null) =>
+      setCareerEndingStatus(status);
     (window as any).__getRealMatchSession = () => realMatchSessionRef.current;
     (window as any).__getGameSession = () => thirdUmpireSessionRef.current;
     (window as any).__getRemainingReviews = () => remainingReviewsRef.current;
-    (window as any).__getGameplayStage = () => thirdUmpireSessionRef.current?.getStage() ?? gameplayStageRef.current;
+    (window as any).__getGameplayStage = () =>
+      thirdUmpireSessionRef.current?.getStage() ?? gameplayStageRef.current;
     (window as any).__setTrainingMode = (on: boolean) => setTrainingMode(on);
-  }, []);
+  }, [careerProfile, careerAssignment]);
+
+  // Modal: Phone
+  const renderPhoneModal = () => (
+    <MobilePhoneModal
+      profile={careerProfile}
+      isOpen={isPhoneOpen}
+      onClose={() => setIsPhoneOpen(false)}
+      bettingMarket={careerBettingMarket}
+      currentBet={careerBet}
+      onPlaceBet={(bet) => setCareerBet(bet)}
+      bribeOffer={careerBribeOffer}
+      activeContract={careerActiveContract}
+      onAcceptBribe={(contract) => {
+        setCareerActiveContract(contract);
+        setCareerBribeOffer((prev) => (prev ? { ...prev, status: "ACCEPTED" } : null));
+      }}
+      onDeclineBribe={() => {
+        setCareerBribeOffer((prev) => (prev ? { ...prev, status: "DECLINED" } : null));
+      }}
+      isMatchLive={appState === "CAREER_MATCH"}
+    />
+  );
+
+  // Modal: Career Ending
+  const renderEndingModal = () => {
+    if (!careerEndingStatus) return null;
+    return (
+      <CareerEndingModal
+        profile={careerProfile}
+        isVictory={careerEndingStatus === "VICTORY"}
+        onRestartCareer={handleResetCareer}
+        onDismiss={() => setCareerEndingStatus(null)}
+      />
+    );
+  };
 
   // 1. BRIEFING SCREEN
   if (appState === "BRIEFING") {
@@ -421,7 +663,7 @@ export const App: React.FC = () => {
               THIRD UMPIRE ROOM
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto leading-relaxed">
-              Step into the television broadcast control room. Receive live on-field appeals, render 10-second instinct signals, analyze high-speed telemetry, and uphold the official ICC DRS protocols.
+              Step into the television broadcast control room. Officiate multi-tier league fixtures, manage fan & critic reputation, earn match fees, navigate illicit temptations, and amass ₹1,000,000.
             </p>
           </div>
 
@@ -461,55 +703,151 @@ export const App: React.FC = () => {
           </div>
 
           {/* Mode Selection Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          <div className="space-y-3 pt-2">
+            {/* Primary Hero: LEAGUE UMPIRE CAREER MODE */}
             <button
               type="button"
-              onClick={() => startRealMatch(8)}
-              className="py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs flex items-center justify-center space-x-1.5 shadow-lg border border-amber-400/40 transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer"
-              title="Play through the verified 2024 ICC T20 World Cup Final with live DRS incident injection"
+              onClick={startCareerMode}
+              className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-sm flex items-center justify-center space-x-2.5 shadow-xl border border-emerald-300/40 transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer"
+              title="Embark on an authentic multi-tier league umpire career with reputation, wagers, and corruption"
             >
-              <Tv size={14} />
-              <span>REAL MATCH (2024 FINAL)</span>
+              <Trophy size={18} />
+              <span>PLAY LEAGUE UMPIRE CAREER MODE</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => startNewShift(8)}
-              className="flex-1 py-3.5 px-4 rounded-xl bg-slate-100 hover:bg-white text-slate-950 font-black text-xs flex items-center justify-center space-x-2 shadow-md border border-white/20 transition-all active:scale-95 font-display uppercase tracking-wider cursor-pointer"
-            >
-              <Play size={14} fill="currentColor" />
-              <span>REVIEW SHIFT (8)</span>
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={() => startRealMatch(8)}
+                className="py-3 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs flex items-center justify-center space-x-1.5 shadow-md border border-amber-400/40 transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer"
+                title="Play through the verified 2024 ICC T20 World Cup Final with live DRS incident injection"
+              >
+                <Tv size={14} />
+                <span>REAL MATCH</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => startNewShift(5)}
-              className="py-3.5 px-4 rounded-xl bg-[#141B28] hover:bg-[#1E283C] text-slate-200 border border-[#243147] font-black text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer"
-            >
-              <Zap size={14} className="text-amber-400" />
-              <span>RAPID (5)</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => startNewShift(8)}
+                className="flex-1 py-3 px-3 rounded-xl bg-slate-100 hover:bg-white text-slate-950 font-black text-xs flex items-center justify-center space-x-1.5 shadow-md border border-white/20 transition-all active:scale-95 font-display uppercase tracking-wider cursor-pointer"
+              >
+                <Play size={14} fill="currentColor" />
+                <span>SHIFT (8)</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setTrainingMode((t) => !t)}
-              className={`py-3.5 px-4 rounded-xl font-black text-xs flex items-center justify-center space-x-1.5 border transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer ${
-                trainingMode
-                  ? "bg-emerald-950/80 border-emerald-500 text-emerald-300"
-                  : "bg-[#141B28] hover:bg-[#1E283C] text-slate-400 border-[#243147]"
-              }`}
-              title="Training assists: AUTO ALL ball-tracking and auto-satisfied evidence review"
-            >
-              <GraduationCap size={14} className={trainingMode ? "text-emerald-400" : "text-slate-500"} />
-              <span>TRAINING {trainingMode ? "ON" : "OFF"}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => startNewShift(5)}
+                className="py-3 px-3 rounded-xl bg-[#141B28] hover:bg-[#1E283C] text-slate-200 border border-[#243147] font-black text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer"
+              >
+                <Zap size={14} className="text-amber-400" />
+                <span>RAPID (5)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTrainingMode((t) => !t)}
+                className={`py-3 px-3 rounded-xl font-black text-xs flex items-center justify-center space-x-1.5 border transition-all active:scale-95 uppercase font-display tracking-wider cursor-pointer ${
+                  trainingMode
+                    ? "bg-emerald-950/80 border-emerald-500 text-emerald-300"
+                    : "bg-[#141B28] hover:bg-[#1E283C] text-slate-400 border-[#243147]"
+                }`}
+                title="Training assists: AUTO ALL ball-tracking and auto-satisfied evidence review"
+              >
+                <GraduationCap size={14} className={trainingMode ? "text-emerald-400" : "text-slate-500"} />
+                <span>TRAINING {trainingMode ? "ON" : "OFF"}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  // 2. ACTIVE INCIDENT CONSOLE (RAPID / REVIEW SHIFT)
+  // 2. CAREER DASHBOARD
+  if (appState === "CAREER_DASHBOARD" && careerAssignment) {
+    return (
+      <>
+        <CareerDashboard
+          profile={careerProfile}
+          nextAssignment={careerAssignment}
+          onProceedToPreMatch={() => setAppState("CAREER_PRE_MATCH")}
+          onOpenPhone={() => setIsPhoneOpen(true)}
+          onResetCareer={handleResetCareer}
+          onExitToMainMenu={() => setAppState("BRIEFING")}
+          currentBet={careerBet}
+          bribeOffer={careerBribeOffer}
+          activeContract={careerActiveContract}
+        />
+        {renderPhoneModal()}
+        {renderEndingModal()}
+      </>
+    );
+  }
+
+  // 3. CAREER PRE-MATCH BRIEFING
+  if (appState === "CAREER_PRE_MATCH" && careerAssignment) {
+    return (
+      <>
+        <PreMatchScreen
+          profile={careerProfile}
+          assignment={careerAssignment}
+          onStartMatch={handleStartCareerMatch}
+          onBackToDashboard={() => setAppState("CAREER_DASHBOARD")}
+          onOpenPhone={() => setIsPhoneOpen(true)}
+          currentBet={careerBet}
+          bribeOffer={careerBribeOffer}
+          activeContract={careerActiveContract}
+        />
+        {renderPhoneModal()}
+        {renderEndingModal()}
+      </>
+    );
+  }
+
+  // 4. CAREER DRS MATCH CONSOLE (LBW Vertical Slice)
+  if (appState === "CAREER_MATCH" && careerAssignment) {
+    const currentInc = careerAssignment.incidents[currentIncidentIndex];
+    return (
+      <>
+        <ConsoleLayout
+          scenario={currentInc?.scenario ?? sessionScenarios[currentIncidentIndex]}
+          phase={consolePhase}
+          gameplayStage={gameplayStage}
+          incidentIndex={currentIncidentIndex}
+          totalIncidents={careerAssignment.incidentCount}
+          isMuted={isMuted}
+          currentResult={currentIncidentResult}
+          onToggleMute={handleToggleMute}
+          onAdvanceToOnField={handleAdvanceToOnField}
+          onInitiateReview={handleInitiateReview}
+          onEnterWorkstation={handleEnterWorkstation}
+          onSoftSignalSubmit={handleSoftSignalSubmit}
+          onFinalVerdictSubmit={handleFinalVerdictSubmit}
+          onNextIncident={handleNextIncident}
+          trainingMode={trainingMode}
+          remainingReviews={remainingReviews}
+        />
+        {renderPhoneModal()}
+        {renderEndingModal()}
+      </>
+    );
+  }
+
+  // 5. CAREER MATCH REPORT
+  if (appState === "CAREER_REPORT" && careerMatchReport) {
+    return (
+      <>
+        <MatchReportView
+          report={careerMatchReport}
+          onContinue={handleContinueFromReport}
+        />
+        {renderEndingModal()}
+      </>
+    );
+  }
+
+  // 6. ACTIVE INCIDENT CONSOLE (RAPID / REVIEW SHIFT)
   if (appState === "INCIDENT") {
     const currentScenario = sessionScenarios[currentIncidentIndex];
     return (
@@ -534,7 +872,7 @@ export const App: React.FC = () => {
     );
   }
 
-  // 3. REAL MATCH DRS PLAYBACK VIEW
+  // 7. REAL MATCH DRS PLAYBACK VIEW
   if (appState === "REAL_MATCH" && realMatchSessionRef.current) {
     return (
       <RealMatchPlaybackView
@@ -547,7 +885,7 @@ export const App: React.FC = () => {
     );
   }
 
-  // 4. REAL MATCH DRS REVIEW (reuses ConsoleLayout!)
+  // 8. REAL MATCH DRS REVIEW (reuses ConsoleLayout!)
   if (appState === "REAL_MATCH_REVIEW" && activeRealMatchIncident) {
     return (
       <ConsoleLayout
@@ -572,7 +910,7 @@ export const App: React.FC = () => {
     );
   }
 
-  // 5. SESSION COMPLETE & CARD EXPORT
+  // 9. SESSION COMPLETE & CARD EXPORT
   if (appState === "CARD_REVEAL" && sessionStats) {
     return (
       <ResultCard
