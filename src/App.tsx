@@ -6,6 +6,7 @@ import type {
   DecisionVerdict,
   PlayerVerdictChoice,
   IncidentType,
+  GameplayStage,
 } from "./types/scenario";
 import type { RemainingReviews } from "./types/matchContext";
 import { generateScenario } from "./engine/scenarioGenerator";
@@ -42,6 +43,7 @@ export const App: React.FC = () => {
   const [sessionScenarios, setSessionScenarios] = useState<Scenario[]>([]);
   const [currentIncidentIndex, setCurrentIncidentIndex] = useState<number>(0);
   const [consolePhase, setConsolePhase] = useState<ConsolePhase>("SOFT_SIGNAL");
+  const [gameplayStage, setGameplayStage] = useState<GameplayStage>("INCIDENT_INTRO");
   const [remainingReviews, setRemainingReviews] = useState<RemainingReviews>({ batting: 2, bowling: 2 });
   const thirdUmpireSessionRef = useRef<ThirdUmpireGameSession | null>(null);
 
@@ -70,6 +72,7 @@ export const App: React.FC = () => {
     setActiveRealMatchIncident(null);
     setActiveReviewIndex(0);
     setRemainingReviews(session.getRemainingReviews());
+    setGameplayStage("INCIDENT_INTRO");
     setAppState("REAL_MATCH");
   };
 
@@ -82,6 +85,7 @@ export const App: React.FC = () => {
     if (realMatchSessionRef.current) {
       setRemainingReviews(realMatchSessionRef.current.getRemainingReviews());
     }
+    setGameplayStage("INCIDENT_INTRO");
     setConsolePhase("SOFT_SIGNAL");
     setAppState("REAL_MATCH_REVIEW");
   };
@@ -110,6 +114,7 @@ export const App: React.FC = () => {
     setSoftSignalChoice(null);
     setCurrentIncidentResult(null);
     setRemainingReviews(session.getRemainingReviews());
+    setGameplayStage(session.getStage());
     setConsolePhase("SOFT_SIGNAL");
     setAppState("INCIDENT");
   };
@@ -120,6 +125,25 @@ export const App: React.FC = () => {
     sounds.setMuted(next);
   };
 
+  // Stage Transitions
+  const handleAdvanceToOnField = () => {
+    thirdUmpireSessionRef.current?.advanceToOnFieldDecision();
+    setGameplayStage(thirdUmpireSessionRef.current?.getStage() ?? "ON_FIELD_DECISION");
+  };
+
+  const handleInitiateReview = () => {
+    const ok = thirdUmpireSessionRef.current?.initiateReview();
+    if (ok) {
+      setGameplayStage(thirdUmpireSessionRef.current?.getStage() ?? "REVIEW_ENTRY");
+    }
+  };
+
+  const handleEnterWorkstation = () => {
+    thirdUmpireSessionRef.current?.enterWorkstation();
+    setGameplayStage(thirdUmpireSessionRef.current?.getStage() ?? "REVIEW_ACTIVE");
+    setConsolePhase("REVIEW");
+  };
+
   // Phase 1: Soft signal instinct submitted
   const handleSoftSignalSubmit = (
     choice: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS",
@@ -128,6 +152,8 @@ export const App: React.FC = () => {
     setSoftSignalChoice(choice);
     setSoftSignalElapsedMs(elapsedMs);
     setReviewStartTime(Date.now());
+    thirdUmpireSessionRef.current?.enterWorkstation();
+    setGameplayStage(thirdUmpireSessionRef.current?.getStage() ?? "REVIEW_ACTIVE");
     setConsolePhase("REVIEW");
     sounds.playClick(850);
   };
@@ -169,6 +195,7 @@ export const App: React.FC = () => {
         setCurrentIncidentResult(res);
         setIncidentHistory((prev) => [...prev, res]);
         setRemainingReviews(thirdUmpireSessionRef.current.getRemainingReviews());
+        setGameplayStage(thirdUmpireSessionRef.current.getStage());
         setConsolePhase("RESULT");
         return;
       }
@@ -189,7 +216,25 @@ export const App: React.FC = () => {
       realMatchSessionRef.current.submitDecision(effectiveVerdict, {
         reason: customReason,
       });
+      // Synchronize directly from authoritative RealMatchGameSession — NO duplicate manual decrement!
       setRemainingReviews(realMatchSessionRef.current.getRemainingReviews());
+    } else if (!isRealMatchReview && !thirdUmpireSessionRef.current) {
+      // Fallback only if no session engine exists
+      const retentionInfo = calculateReviewRetention({
+        verdict: effectiveVerdict,
+        onFieldSignal: currentScenario.onFieldSignal,
+        isUmpiresCall: currentScenario.drsEvaluation.isUmpiresCall,
+      });
+
+      if (retentionInfo.reviewingSide && !retentionInfo.reviewRetained) {
+        setRemainingReviews((prev) => ({
+          ...prev,
+          [retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"]: Math.max(
+            0,
+            prev[retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"] - 1
+          ),
+        }));
+      }
     }
 
     const isVerdictCorrect = effectiveVerdict === currentScenario.correctFinalVerdict;
@@ -209,27 +254,11 @@ export const App: React.FC = () => {
       currentScenario.drsEvaluation
     );
 
-    // Calculate review retention
-    const retentionInfo = calculateReviewRetention({
-      verdict: effectiveVerdict,
-      onFieldSignal: currentScenario.onFieldSignal,
-      isUmpiresCall: currentScenario.drsEvaluation.isUmpiresCall,
-    });
-
-    if (retentionInfo.reviewingSide && !retentionInfo.reviewRetained) {
-      setRemainingReviews((prev) => ({
-        ...prev,
-        [retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"]: Math.max(
-          0,
-          prev[retentionInfo.reviewingSide === "BATTING" ? "batting" : "bowling"] - 1
-        ),
-      }));
-    }
-
     const result: IncidentResult = {
       scenarioId: currentScenario.id,
       incidentType: currentScenario.incidentType,
       difficultyTier: currentScenario.difficultyTier,
+      playerVerdictChoice: verdict,
       softSignal: effectiveSoftSignal,
       softSignalTimeMs: effectiveSoftElapsed,
       softSignalCorrect: isSoftCorrect,
@@ -245,6 +274,7 @@ export const App: React.FC = () => {
 
     setCurrentIncidentResult(result);
     setIncidentHistory((prev) => [...prev, result]);
+    setGameplayStage("RESULT_REVEAL");
     setConsolePhase("RESULT");
   };
 
@@ -253,6 +283,7 @@ export const App: React.FC = () => {
       setActiveRealMatchIncident(null);
       setCurrentIncidentResult(null);
       setSoftSignalChoice(null);
+      setGameplayStage("INCIDENT_INTRO");
       setAppState("REAL_MATCH");
       return;
     }
@@ -263,10 +294,12 @@ export const App: React.FC = () => {
         setCurrentIncidentIndex(thirdUmpireSessionRef.current.getCurrentIndex());
         setSoftSignalChoice(null);
         setCurrentIncidentResult(null);
+        setGameplayStage(thirdUmpireSessionRef.current.getStage());
         setConsolePhase("SOFT_SIGNAL");
       } else {
         const stats = thirdUmpireSessionRef.current.computeStats();
         setSessionStats(stats);
+        setGameplayStage("SESSION_COMPLETE");
         setAppState("CARD_REVEAL");
       }
       return;
@@ -277,11 +310,12 @@ export const App: React.FC = () => {
       setCurrentIncidentIndex(nextIndex);
       setSoftSignalChoice(null);
       setCurrentIncidentResult(null);
+      setGameplayStage("INCIDENT_INTRO");
       setConsolePhase("SOFT_SIGNAL");
     } else {
-      const allResults = [...incidentHistory];
-      const stats = computeSessionStats(allResults);
+      const stats = computeSessionStats(incidentHistory);
       setSessionStats(stats);
+      setGameplayStage("SESSION_COMPLETE");
       setAppState("CARD_REVEAL");
     }
   };
@@ -294,16 +328,23 @@ export const App: React.FC = () => {
   setSoftSignalElapsedMsRef.current = setSoftSignalElapsedMs;
   const remainingReviewsRef = useRef(remainingReviews);
   remainingReviewsRef.current = remainingReviews;
+  const gameplayStageRef = useRef(gameplayStage);
+  gameplayStageRef.current = gameplayStage;
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    (window as any).__startIncident = (type: IncidentType, seed: number = Date.now(), totalCount: number = 1) => {
+    (window as any).__startIncident = (
+      type: IncidentType,
+      seed: number = Date.now(),
+      totalCount: number = 1,
+      options?: { startingReviews?: { batting: number; bowling: number } }
+    ) => {
       const scenario = generateScenario(seed, type);
       const scenarios =
         totalCount > 1
           ? [scenario, ...Array.from({ length: totalCount - 1 }, (_, i) => generateScenario(seed + i + 1, type))]
           : [scenario];
-      const session = new ThirdUmpireGameSession(scenarios, seed);
+      const session = new ThirdUmpireGameSession(scenarios, seed, options);
       thirdUmpireSessionRef.current = session;
       setSessionScenarios(scenarios);
       setCurrentIncidentIndex(0);
@@ -311,6 +352,7 @@ export const App: React.FC = () => {
       setSoftSignalChoice(null);
       setCurrentIncidentResult(null);
       setRemainingReviews(session.getRemainingReviews());
+      setGameplayStage(session.getStage());
       setConsolePhase("SOFT_SIGNAL");
       setAppState("INCIDENT");
     };
@@ -324,11 +366,16 @@ export const App: React.FC = () => {
       setSoftSignalChoice(null);
       setCurrentIncidentResult(null);
       setRemainingReviews(session.getRemainingReviews());
+      setGameplayStage(session.getStage());
       setConsolePhase("SOFT_SIGNAL");
       setAppState("INCIDENT");
     };
     (window as any).__setPhase = (phase: ConsolePhase) => {
       setConsolePhase(phase);
+    };
+    (window as any).__setStage = (stage: GameplayStage) => {
+      thirdUmpireSessionRef.current?.setStage(stage);
+      setGameplayStage(stage);
     };
     (window as any).__submitVerdict = (verdict: DecisionVerdict | PlayerVerdictChoice, softSignal: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" = "NOT_OUT", elapsedMs: number = 4000) => {
       setSoftSignalChoiceRef.current(softSignal);
@@ -341,6 +388,8 @@ export const App: React.FC = () => {
     (window as any).__getRealMatchSession = () => realMatchSessionRef.current;
     (window as any).__getGameSession = () => thirdUmpireSessionRef.current;
     (window as any).__getRemainingReviews = () => remainingReviewsRef.current;
+    (window as any).__getGameplayStage = () => thirdUmpireSessionRef.current?.getStage() ?? gameplayStageRef.current;
+    (window as any).__setTrainingMode = (on: boolean) => setTrainingMode(on);
   }, []);
 
   // 1. BRIEFING SCREEN
@@ -467,11 +516,15 @@ export const App: React.FC = () => {
       <ConsoleLayout
         scenario={currentScenario}
         phase={consolePhase}
+        gameplayStage={gameplayStage}
         incidentIndex={currentIncidentIndex}
         totalIncidents={sessionScenarios.length}
         isMuted={isMuted}
         currentResult={currentIncidentResult}
         onToggleMute={handleToggleMute}
+        onAdvanceToOnField={handleAdvanceToOnField}
+        onInitiateReview={handleInitiateReview}
+        onEnterWorkstation={handleEnterWorkstation}
         onSoftSignalSubmit={handleSoftSignalSubmit}
         onFinalVerdictSubmit={handleFinalVerdictSubmit}
         onNextIncident={handleNextIncident}
@@ -500,11 +553,15 @@ export const App: React.FC = () => {
       <ConsoleLayout
         scenario={activeRealMatchIncident.scenario}
         phase={consolePhase}
+        gameplayStage={gameplayStage}
         incidentIndex={activeReviewIndex}
         totalIncidents={realMatchSessionRef.current?.incidentCount ?? 8}
         isMuted={isMuted}
         currentResult={currentIncidentResult}
         onToggleMute={handleToggleMute}
+        onAdvanceToOnField={handleAdvanceToOnField}
+        onInitiateReview={handleInitiateReview}
+        onEnterWorkstation={handleEnterWorkstation}
         onSoftSignalSubmit={handleSoftSignalSubmit}
         onFinalVerdictSubmit={handleFinalVerdictSubmit}
         onNextIncident={handleNextIncident}

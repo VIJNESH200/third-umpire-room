@@ -19,13 +19,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ThirdUmpireGameSession } from "../engine/thirdUmpireGameSession";
+import { ThirdUmpireGameSession, calculateIncidentScore } from "../engine/thirdUmpireGameSession";
 import { generateScenario } from "../engine/scenarioGenerator";
-import { generateSessionIncidents } from "../engine/randomIncidentEngine";
-import { calculateReviewRetention } from "../engine/realMatchPlayback";
 import { RealMatchGameSession } from "../engine/realMatchGameSession";
 import { T20_WC_2024_FINAL } from "../data/realMatches/t20Wc2024Final";
-import type { Scenario } from "../types/scenario";
+import type { Scenario, IncidentResult } from "../types/scenario";
 
 describe("Third Umpire Gameplay Loop & LBW Vertical Slice", () => {
   // --------------------------------------------------------------------------
@@ -139,6 +137,21 @@ describe("Third Umpire Gameplay Loop & LBW Vertical Slice", () => {
       assert.equal(elig.canReview, true, "Umpire referrals are always eligible regardless of team quotas");
       assert.equal(session.initiateReview(), true);
     });
+
+    it("T2.5: blocked review when side has 0 quota upholds on-field call without negative quota deduction", () => {
+      const scenario = generateScenario(18, "LBW"); // onField NOT_OUT, bowling team reviews
+      const session = new ThirdUmpireGameSession([scenario], 18, {
+        startingReviews: { batting: 2, bowling: 0 },
+      });
+
+      assert.equal(session.getReviewEligibility().canReview, false);
+      const result = session.submitVerdict("OUT", { isReviewBlocked: true });
+      assert.ok(result);
+      assert.equal(result.isReviewBlocked, true);
+      assert.equal(result.finalVerdict, "NOT_OUT", "On-field call stands when review is blocked");
+      assert.equal(result.scoreEarned, 0);
+      assert.equal(session.getRemainingReviews().bowling, 0, "Quota must remain 0 and never go negative");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -166,6 +179,19 @@ describe("Third Umpire Gameplay Loop & LBW Vertical Slice", () => {
       // Cannot advance to ON_FIELD if already in ON_FIELD
       session.advanceToOnFieldDecision();
       assert.equal(session.advanceToOnFieldDecision(), false);
+    });
+
+    it("T3.3: correctly advances from RESULT_REVEAL to CONSEQUENCE via advanceToConsequence()", () => {
+      const session = new ThirdUmpireGameSession(1, 100, { forcedType: "LBW" });
+      session.enterWorkstation();
+      session.submitVerdict("OUT");
+      assert.equal(session.getStage(), "RESULT_REVEAL");
+
+      assert.equal(session.advanceToConsequence(), true);
+      assert.equal(session.getStage(), "CONSEQUENCE");
+
+      // Cannot advance to CONSEQUENCE again
+      assert.equal(session.advanceToConsequence(), false);
     });
   });
 
@@ -282,6 +308,68 @@ describe("Third Umpire Gameplay Loop & LBW Vertical Slice", () => {
       assert.equal(history[0].playerVerdict, "SEND_UPSTAIRS");
       assert.equal(history[0].effectiveVerdict, "OUT");
     });
+
+    it("T4.6: calculateIncidentScore enforces anti-abstention (0 pts for SEND_UPSTAIRS) and awards bonuses", () => {
+      const dummyScenario = generateScenario(1, "LBW");
+      const dummyResult: IncidentResult = {
+        scenarioId: dummyScenario.id,
+        incidentType: dummyScenario.incidentType,
+        difficultyTier: dummyScenario.difficultyTier,
+        playerVerdictChoice: "OUT",
+        finalVerdict: "OUT",
+        finalVerdictCorrect: true,
+        softSignal: null,
+        softSignalTimeMs: 0,
+        softSignalCorrect: false,
+        isUmpiresCallScenario: false,
+        umpiresCallComplied: false,
+        timeSpentReviewingMs: 15000,
+        toolsUsed: [],
+      };
+
+      // 1. Anti-abstention: SEND_UPSTAIRS always awards 0 points
+      const scoreSendUpstairs = calculateIncidentScore(
+        { ...dummyResult, playerVerdictChoice: "SEND_UPSTAIRS" },
+        dummyScenario
+      );
+      assert.equal(scoreSendUpstairs.points, 0, "SEND_UPSTAIRS must award 0 points to prevent abstention exploits");
+
+      // 2. Incorrect verdict awards 0 points
+      const scoreIncorrect = calculateIncidentScore(
+        { ...dummyResult, finalVerdictCorrect: false },
+        dummyScenario
+      );
+      assert.equal(scoreIncorrect.points, 0, "Incorrect verdict must award 0 points");
+
+      // 3. Standard correct verdict awards base 100 points
+      const standardScenario: Scenario = {
+        ...dummyScenario,
+        difficultyTier: "CLEAR",
+        drsEvaluation: { ...dummyScenario.drsEvaluation, isUmpiresCall: false },
+      };
+      const scoreBase = calculateIncidentScore(dummyResult, standardScenario);
+      assert.equal(scoreBase.points, 100, "Standard correct verdict awards 100 base points");
+
+      // 4. Correctly overturning a Howler awards 125 points (+25 bonus)
+      const howlerScenario: Scenario = {
+        ...dummyScenario,
+        difficultyTier: "HOWLER",
+      };
+      const scoreHowler = calculateIncidentScore(dummyResult, howlerScenario);
+      assert.equal(scoreHowler.points, 125, "Correctly overturned Howler awards 125 points (100 base + 25 bonus)");
+
+      // 5. Correctly upholding / adhering to Umpire's Call awards 120 points (+20 bonus)
+      const ucScenario: Scenario = {
+        ...dummyScenario,
+        difficultyTier: "CLEAR",
+        drsEvaluation: { ...dummyScenario.drsEvaluation, isUmpiresCall: true },
+      };
+      const scoreUmpiresCall = calculateIncidentScore(
+        { ...dummyResult, umpiresCallComplied: true },
+        ucScenario
+      );
+      assert.equal(scoreUmpiresCall.points, 120, "Correct Umpire's Call adjudication awards 120 points (100 base + 20 bonus)");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -390,5 +478,34 @@ describe("Third Umpire Gameplay Loop & LBW Vertical Slice", () => {
       assert.ok(postReviews.batting >= 0 && postReviews.batting <= 2);
       assert.ok(postReviews.bowling >= 0 && postReviews.bowling <= 2);
     });
+
+    it("T7.2: Real Match DRS review submission does not double-decrement quota on unsuccessful review", () => {
+      const session = new RealMatchGameSession(T20_WC_2024_FINAL, 42, { incidentCount: 4 });
+      const initialReviews = session.getRemainingReviews();
+      assert.equal(initialReviews.batting, 2);
+      assert.equal(initialReviews.bowling, 2);
+
+      // Step to first incident
+      while (!session.isPausedForReview() && session.stepForward()) {
+        // stepping
+      }
+      assert.equal(session.isPausedForReview(), true);
+
+      const incident = session.getCurrentIncident();
+      assert.ok(incident);
+      const onFieldSignal = incident.scenario.onFieldSignal;
+      const reviewingSide = onFieldSignal === "OUT" ? "batting" : "bowling";
+
+      const startingQuota = initialReviews[reviewingSide];
+      const outcome = session.submitDecision(onFieldSignal === "OUT" ? "OUT" : "NOT_OUT");
+
+      const afterReviews = session.getRemainingReviews();
+      if (!outcome.reviewRetained) {
+        assert.equal(afterReviews[reviewingSide], startingQuota - 1, "Exactly 1 review must be deducted on unsuccessful review");
+      } else {
+        assert.equal(afterReviews[reviewingSide], startingQuota, "Quota preserved on retained review");
+      }
+    });
   });
 });
+

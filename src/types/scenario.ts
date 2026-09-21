@@ -250,10 +250,23 @@ export interface Scenario {
   };
 }
 
+export type GameplayStage =
+  | "INCIDENT_INTRO"
+  | "ON_FIELD_DECISION"
+  | "REVIEW_ENTRY"
+  | "REVIEW_ACTIVE"
+  | "VERDICT_SUBMITTED"
+  | "RESULT_REVEAL"
+  | "CONSEQUENCE"
+  | "SESSION_COMPLETE";
+
 export interface IncidentResult {
   scenarioId: string;
   incidentType: IncidentType;
   difficultyTier: DifficultyTier;
+  playerVerdictChoice?: PlayerVerdictChoice;
+  scoreEarned?: number;
+  isReviewBlocked?: boolean;
   softSignal: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" | null;
   softSignalTimeMs: number;
   softSignalCorrect: boolean;

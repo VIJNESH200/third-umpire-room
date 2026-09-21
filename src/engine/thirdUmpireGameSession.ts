@@ -38,6 +38,7 @@ import type {
   IncidentResult,
   SessionStats,
   IncidentType,
+  GameplayStage,
 } from "../types/scenario";
 import type { RemainingReviews, ReviewingSide } from "../types/matchContext";
 import { generateSessionIncidents } from "./randomIncidentEngine";
@@ -45,15 +46,7 @@ import { checkDRSCompliance } from "./drsRules";
 import { calculateReviewRetention } from "./realMatchPlayback";
 import { computeSessionStats } from "./scoring";
 
-export type GameplayStage =
-  | "INCIDENT_INTRO"
-  | "ON_FIELD_DECISION"
-  | "REVIEW_ENTRY"
-  | "REVIEW_ACTIVE"
-  | "VERDICT_SUBMITTED"
-  | "RESULT_REVEAL"
-  | "CONSEQUENCE"
-  | "SESSION_COMPLETE";
+export type { GameplayStage };
 
 export interface ThirdUmpireDecisionRecord {
   readonly scenarioId: string;
@@ -66,12 +59,63 @@ export interface ThirdUmpireDecisionRecord {
   readonly reviewingSide?: ReviewingSide;
   readonly timestampMs: number;
   readonly result: IncidentResult;
+  readonly scoreEarned?: number;
+  readonly isReviewBlocked?: boolean;
 }
 
 export interface ThirdUmpireSessionOptions {
   readonly startingReviews?: RemainingReviews;
   readonly forcedType?: IncidentType;
   readonly initialStage?: GameplayStage;
+}
+
+/**
+ * Calculates the score earned for an individual DRS incident adjudication under ICC rules.
+ * Honors anti-abstention: referrals (SEND_UPSTAIRS) award 0 correctness points.
+ */
+export function calculateIncidentScore(
+  result: IncidentResult,
+  scenario: Scenario
+): { points: number; explanation: string } {
+  if (result.playerVerdictChoice === "SEND_UPSTAIRS") {
+    return {
+      points: 0,
+      explanation: "Referral to on-field call (Anti-abstention rule: 0 pts)",
+    };
+  }
+
+  if (result.isReviewBlocked) {
+    return {
+      points: 0,
+      explanation: "Review blocked: team review quota exhausted (0 pts)",
+    };
+  }
+
+  if (!result.finalVerdictCorrect) {
+    return {
+      points: 0,
+      explanation: "Incorrect third umpire verdict (0 pts)",
+    };
+  }
+
+  if (scenario.difficultyTier === "HOWLER") {
+    return {
+      points: 125,
+      explanation: "+125 PTS: Howler Correctly Overturned (+25 bonus)",
+    };
+  }
+
+  if (scenario.drsEvaluation.isUmpiresCall && result.umpiresCallComplied) {
+    return {
+      points: 120,
+      explanation: "+120 PTS: Umpire's Call Adherence Bonus (+20 bonus)",
+    };
+  }
+
+  return {
+    points: 100,
+    explanation: "+100 PTS: Correct Third Umpire Verdict",
+  };
 }
 
 export class ThirdUmpireGameSession {
@@ -262,6 +306,7 @@ export class ThirdUmpireGameSession {
       readonly playerBailsDislodgedMs?: number | null;
       readonly softSignalChoice?: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS" | null;
       readonly softSignalElapsedMs?: number;
+      readonly isReviewBlocked?: boolean;
     }
   ): IncidentResult | null {
     const scenario = this.getCurrentScenario();
@@ -276,14 +321,23 @@ export class ThirdUmpireGameSession {
     const onFieldSignal = scenario.onFieldSignal;
     const physicalTruth = scenario.correctFinalVerdict;
 
+    // Check if review was blocked (e.g. 0 quota)
+    const eligibility = this.getReviewEligibility();
+    const isBlocked =
+      options?.isReviewBlocked === true ||
+      (!eligibility.canReview && eligibility.isTeamReview);
+
     // Resolve effective decision verdict
-    // If player chose SEND_UPSTAIRS (inconclusive / uphold on-field), the on-field call stands
+    // If review was blocked or player chose SEND_UPSTAIRS (inconclusive / uphold on-field), the on-field call stands
     const effectiveVerdict: DecisionVerdict =
-      verdictChoice === "SEND_UPSTAIRS"
+      isBlocked || verdictChoice === "SEND_UPSTAIRS"
         ? (onFieldSignal === "OUT" ? "OUT" : "NOT_OUT")
         : verdictChoice;
 
-    const isVerdictCorrect = verdictChoice !== "SEND_UPSTAIRS" && effectiveVerdict === physicalTruth;
+    const isVerdictCorrect =
+      !isBlocked &&
+      verdictChoice !== "SEND_UPSTAIRS" &&
+      effectiveVerdict === physicalTruth;
     const isOverturn = onFieldSignal !== "REFERRED" && onFieldSignal !== physicalTruth;
 
     // Evaluate compliance with ICC DRS rules (including Umpire's Call adherence)
@@ -295,14 +349,16 @@ export class ThirdUmpireGameSession {
     );
 
     // Calculate review retention under ICC rules
-    const retentionInfo = calculateReviewRetention({
-      verdict: effectiveVerdict,
-      onFieldSignal,
-      isUmpiresCall: scenario.drsEvaluation.isUmpiresCall,
-    });
+    const retentionInfo = isBlocked
+      ? { reviewingSide: eligibility.reviewingSide, reviewRetained: false }
+      : calculateReviewRetention({
+          verdict: effectiveVerdict,
+          onFieldSignal,
+          isUmpiresCall: scenario.drsEvaluation.isUmpiresCall,
+        });
 
-    // Quota deduction: if review was lost, decrement from reviewing team
-    if (retentionInfo.reviewingSide && !retentionInfo.reviewRetained) {
+    // Quota deduction: if review was lost and review was NOT blocked, decrement from reviewing team
+    if (!isBlocked && retentionInfo.reviewingSide && !retentionInfo.reviewRetained) {
       if (retentionInfo.reviewingSide === "BATTING") {
         this._remainingReviews.batting = Math.max(0, this._remainingReviews.batting - 1);
       } else if (retentionInfo.reviewingSide === "BOWLING") {
@@ -322,6 +378,8 @@ export class ThirdUmpireGameSession {
       scenarioId: scenario.id,
       incidentType: scenario.incidentType,
       difficultyTier: scenario.difficultyTier,
+      playerVerdictChoice: verdictChoice,
+      isReviewBlocked: isBlocked,
       softSignal,
       softSignalTimeMs: options?.softSignalElapsedMs ?? 0,
       softSignalCorrect: isSoftCorrect,
@@ -335,6 +393,9 @@ export class ThirdUmpireGameSession {
       playerBailsDislodgedMs: options?.playerBailsDislodgedMs ?? null,
     };
 
+    const scoreInfo = calculateIncidentScore(result, scenario);
+    result.scoreEarned = scoreInfo.points;
+
     const record: ThirdUmpireDecisionRecord = {
       scenarioId: scenario.id,
       scenario,
@@ -346,6 +407,8 @@ export class ThirdUmpireGameSession {
       reviewingSide: retentionInfo.reviewingSide,
       timestampMs: Date.now(),
       result,
+      scoreEarned: scoreInfo.points,
+      isReviewBlocked: isBlocked,
     };
 
     this._decisions.set(scenario.id, record);
@@ -355,6 +418,15 @@ export class ThirdUmpireGameSession {
     this._stage = "RESULT_REVEAL";
 
     return result;
+  }
+
+  /**
+   * Transition 5b: Transitions from RESULT_REVEAL to CONSEQUENCE.
+   */
+  public advanceToConsequence(): boolean {
+    if (this._stage !== "RESULT_REVEAL") return false;
+    this._stage = "CONSEQUENCE";
+    return true;
   }
 
   /**

@@ -4,6 +4,7 @@ import type {
   DecisionVerdict,
   PlayerVerdictChoice,
   IncidentResult,
+  GameplayStage,
 } from "../../types/scenario";
 import type { RemainingReviews } from "../../types/matchContext";
 import { MatchLogBar } from "./MatchLogBar";
@@ -32,11 +33,15 @@ export type ConsolePhase =
 interface ConsoleLayoutProps {
   scenario: Scenario;
   phase: ConsolePhase;
+  gameplayStage?: GameplayStage;
   incidentIndex: number;
   totalIncidents: number;
   isMuted: boolean;
   currentResult: IncidentResult | null;
   onToggleMute: () => void;
+  onAdvanceToOnField?: () => void;
+  onInitiateReview?: () => void;
+  onEnterWorkstation?: () => void;
   onSoftSignalSubmit: (choice: "OUT" | "NOT_OUT" | "SEND_UPSTAIRS", elapsedMs: number) => void;
   onFinalVerdictSubmit: (
     verdict: DecisionVerdict | PlayerVerdictChoice,
@@ -53,11 +58,15 @@ interface ConsoleLayoutProps {
 export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   scenario,
   phase,
+  gameplayStage,
   incidentIndex,
   totalIncidents,
   isMuted,
   currentResult,
   onToggleMute,
+  onAdvanceToOnField,
+  onInitiateReview,
+  onEnterWorkstation,
   onSoftSignalSubmit,
   onFinalVerdictSubmit,
   onNextIncident,
@@ -84,6 +93,26 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const [playerBatGroundedMs, setPlayerBatGroundedMs] = useState<number | null>(null);
   const [playerBailsDislodgedMs, setPlayerBailsDislodgedMs] = useState<number | null>(null);
 
+  const [introStage, setIntroStage] = useState<"INTRO" | "ON_FIELD" | "ENTRY">("INTRO");
+
+  const effectiveStage: GameplayStage =
+    gameplayStage ??
+    (phase === "REVIEW" || phase === "REVIEW_ACTIVE"
+      ? "REVIEW_ACTIVE"
+      : phase === "RESULT" || phase === "RESULT_REVEAL" || phase === "VERDICT_SUBMITTED" || phase === "CONSEQUENCE"
+      ? "RESULT_REVEAL"
+      : phase === "INCIDENT_INTRO"
+      ? "INCIDENT_INTRO"
+      : phase === "ON_FIELD_DECISION"
+      ? "ON_FIELD_DECISION"
+      : phase === "REVIEW_ENTRY"
+      ? "REVIEW_ENTRY"
+      : introStage === "INTRO"
+      ? "INCIDENT_INTRO"
+      : introStage === "ON_FIELD"
+      ? "ON_FIELD_DECISION"
+      : "REVIEW_ENTRY");
+
   // Task 7 — LBW evidence review states. Transmission is gated (normal mode)
   // until the player has genuinely inspected each forensic feed: transport
   // interaction on CAM 01 (replay), and the full sequential Hawk-Eye reveal on
@@ -92,8 +121,9 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   // satisfies it.
   const [replayReviewed, setReplayReviewed] = useState<boolean>(false);
   const [trackStageReached, setTrackStageReached] = useState<number>(0);
-  const [introStage, setIntroStage] = useState<"INTRO" | "ON_FIELD" | "ENTRY">("INTRO");
-  const isLbwReview = scenario.incidentType === "LBW" && phase === "REVIEW";
+  const isLbwReview =
+    scenario.incidentType === "LBW" &&
+    (effectiveStage === "REVIEW_ACTIVE" || phase === "REVIEW");
 
   // Reset active tool & markers whenever scenario changes
   useEffect(() => {
@@ -436,24 +466,20 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   };
 
   const isPreReview =
-    phase === "SOFT_SIGNAL" ||
-    phase === "INCIDENT_INTRO" ||
-    phase === "ON_FIELD_DECISION" ||
-    phase === "REVIEW_ENTRY";
+    effectiveStage === "INCIDENT_INTRO" ||
+    effectiveStage === "ON_FIELD_DECISION" ||
+    effectiveStage === "REVIEW_ENTRY";
   const isResult =
-    phase === "RESULT" ||
-    phase === "VERDICT_SUBMITTED" ||
-    phase === "RESULT_REVEAL" ||
-    phase === "CONSEQUENCE";
+    effectiveStage === "RESULT_REVEAL" ||
+    effectiveStage === "VERDICT_SUBMITTED" ||
+    effectiveStage === "CONSEQUENCE";
 
   const currentPreStage =
-    phase === "INCIDENT_INTRO"
+    effectiveStage === "INCIDENT_INTRO"
       ? "INTRO"
-      : phase === "ON_FIELD_DECISION"
+      : effectiveStage === "ON_FIELD_DECISION"
       ? "ON_FIELD"
-      : phase === "REVIEW_ENTRY"
-      ? "ENTRY"
-      : introStage;
+      : "ENTRY";
 
   const isTeamReview = scenario.incidentType === "LBW" || scenario.incidentType === "CAUGHT_BEHIND";
   const reviewingSide =
@@ -561,6 +587,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                   aria-label="Receive on-field decision"
                   onClick={() => {
                     sounds.playClick(850);
+                    onAdvanceToOnField?.();
                     setIntroStage("ON_FIELD");
                   }}
                   className="py-2.5 px-5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
@@ -621,6 +648,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                       aria-label="Commence DRS review"
                       onClick={() => {
                         sounds.playClick(900);
+                        onInitiateReview?.();
                         setIntroStage("ENTRY");
                       }}
                       className="py-2.5 px-5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
@@ -691,6 +719,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
                   aria-label="Open DRS Workstation"
                   onClick={() => {
                     sounds.playClick(950);
+                    onEnterWorkstation?.();
                     onSoftSignalSubmit("SEND_UPSTAIRS", 4000);
                   }}
                   className="py-2.5 px-6 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"

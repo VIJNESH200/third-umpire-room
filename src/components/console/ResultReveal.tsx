@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { sounds } from "../../engine/audioSynth";
 import { calculateReviewRetention } from "../../engine/realMatchPlayback";
+import { calculateIncidentScore } from "../../engine/thirdUmpireGameSession";
 import type { RemainingReviews } from "../../types/matchContext";
 
 interface ResultRevealProps {
@@ -42,6 +43,11 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
   const isVerdictCorrect = result.finalVerdictCorrect;
   const isLastIncident = incidentIndex >= totalIncidents - 1;
   const isProtocolBreach = !isVerdictCorrect && scenario.drsEvaluation.failedGate !== undefined && scenario.drsEvaluation.failedGate !== "NONE";
+  const isSendUpstairs = result.playerVerdictChoice === "SEND_UPSTAIRS";
+
+  const scoreInfo = calculateIncidentScore(result, scenario);
+  const scoreEarned = result.scoreEarned ?? scoreInfo.points;
+  const scoreExplanation = scoreInfo.explanation;
 
   const retentionInfo = calculateReviewRetention({
     verdict: result.finalVerdict,
@@ -60,6 +66,14 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
     scenario.onFieldSignal !== scenario.correctFinalVerdict;
 
   const getHeadline = () => {
+    if (result.isReviewBlocked) {
+      return "Review Blocked: Official Decision Stands";
+    }
+    if (isSendUpstairs) {
+      return isOfficialOverturn
+        ? "Verdict Referred: Decision Overturned"
+        : "Verdict Referred: Official Decision Upheld";
+    }
     if (isProtocolBreach) {
       return "Verdict Breach: Protocol Error Recorded";
     }
@@ -74,6 +88,14 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
   };
 
   const getSubtext = () => {
+    if (result.isReviewBlocked) {
+      return "Review quota exhausted under ICC Playing Conditions. On-field decision stands without DRS review.";
+    }
+    if (isSendUpstairs) {
+      return isOfficialOverturn
+        ? "Third umpire referred call upstairs. Telemetry overturns the on-field decision (0 pts anti-abstention)."
+        : "Third umpire referred call upstairs. Inconclusive evidence leaves on-field decision upheld (0 pts anti-abstention).";
+    }
     if (isProtocolBreach || !isVerdictCorrect) {
       return isOfficialOverturn
         ? "Third umpire verdict was incorrect. Official review conclusively overturns the on-field decision."
@@ -209,11 +231,13 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-neutral-400 uppercase">PLAYER VERDICT:</span>
             <span className={`font-bold px-2 py-0.5 rounded text-[11px] border ${
-              isVerdictCorrect
+              isSendUpstairs
+                ? "bg-amber-950/60 border-amber-500 text-amber-300"
+                : isVerdictCorrect
                 ? "bg-emerald-950/60 border-emerald-500 text-emerald-300"
                 : "bg-rose-950/60 border-rose-500 text-rose-300"
             }`}>
-              {isVerdictCorrect ? "CORRECT" : "INCORRECT"}
+              {isSendUpstairs ? "SEND UPSTAIRS" : isVerdictCorrect ? "CORRECT" : "INCORRECT"}
             </span>
           </div>
 
@@ -748,23 +772,37 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
                   </div>
                   <div
                     className={`text-sm font-bold uppercase tracking-wide mt-0.5 ${
-                      result.finalVerdictCorrect ? "text-neutral-100" : "text-rose-400"
+                      isSendUpstairs
+                        ? "text-amber-300"
+                        : result.finalVerdictCorrect
+                        ? "text-neutral-100"
+                        : "text-rose-400"
                     }`}
                   >
-                    {result.finalVerdict.replace(/_/g, " ")}
+                    {isSendUpstairs
+                      ? "SEND UPSTAIRS (REFERRAL)"
+                      : result.finalVerdict.replace(/_/g, " ")}
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span
                     className={`border text-xs font-bold tracking-wider px-2.5 py-0.5 rounded ${
-                      result.finalVerdictCorrect
+                      isSendUpstairs
+                        ? "border-amber-500/40 bg-amber-950/40 text-amber-300"
+                        : result.finalVerdictCorrect
                         ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-400"
                         : "border-rose-500/40 bg-rose-950/40 text-rose-400"
                     }`}
                   >
-                    {result.finalVerdictCorrect ? "CORRECT" : "INCORRECT"}
+                    {isSendUpstairs
+                      ? "REFERRED"
+                      : result.finalVerdictCorrect
+                      ? "CORRECT"
+                      : "INCORRECT"}
                   </span>
-                  {result.finalVerdictCorrect ? (
+                  {isSendUpstairs ? (
+                    <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                  ) : result.finalVerdictCorrect ? (
                     <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
                   ) : (
                     <XCircle size={16} className="text-rose-400 shrink-0" />
@@ -774,11 +812,35 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
 
               <div className="border-t border-[#1e2738]" />
 
-              {/* Row 3: DRS Protocol IQ */}
+              {/* Row 3: Consequence & Score Earned */}
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[9.5px] font-bold text-neutral-400 tracking-wider uppercase font-sans">
-                    3. DRS PROTOCOL IQ
+                    3. SCORE & CONSEQUENCE
+                  </div>
+                  <div className="text-sm font-bold uppercase tracking-wide mt-0.5">
+                    <span className={scoreEarned > 0 ? "text-emerald-400" : "text-neutral-400"}>
+                      {scoreEarned > 0 ? `+${scoreEarned} PTS` : "0 PTS"}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-sans">
+                  <span>{scoreExplanation}</span>
+                  {scoreEarned > 0 ? (
+                    <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle size={14} className="text-amber-400 shrink-0" />
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t border-[#1e2738]" />
+
+              {/* Row 4: DRS Protocol IQ */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[9.5px] font-bold text-neutral-400 tracking-wider uppercase font-sans">
+                    4. DRS PROTOCOL IQ
                   </div>
                   <div className="text-sm font-bold uppercase tracking-wide mt-0.5">
                     {result.umpiresCallComplied ? (
@@ -796,14 +858,16 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
 
               <div className="border-t border-[#1e2738]" />
 
-              {/* Row 4: DRS Review Quota Retention */}
+              {/* Row 5: DRS Review Quota Retention */}
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[9.5px] font-bold text-neutral-400 tracking-wider uppercase font-sans">
-                    4. {retentionInfo.reviewingSide ? `${retentionInfo.reviewingSide} REVIEW QUOTA` : "REFERRAL QUOTA IMPACT"}
+                    5. {retentionInfo.reviewingSide ? `${retentionInfo.reviewingSide} REVIEW QUOTA` : "REFERRAL QUOTA IMPACT"}
                   </div>
                   <div className="text-sm font-bold uppercase tracking-wide mt-0.5">
-                    {retentionInfo.reviewingSide ? (
+                    {result.isReviewBlocked ? (
+                      <span className="text-amber-400">REVIEW BLOCKED</span>
+                    ) : retentionInfo.reviewingSide ? (
                       retentionInfo.reviewRetained ? (
                         <span className="text-emerald-400">REVIEW RETAINED</span>
                       ) : (
@@ -816,7 +880,9 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-sans">
                   <span>
-                    {retentionInfo.reviewingSide
+                    {result.isReviewBlocked
+                      ? `Review quota exhausted (0 remaining) • Decision stands without DRS`
+                      : retentionInfo.reviewingSide
                       ? retentionInfo.reviewRetained
                         ? scenario.drsEvaluation.isUmpiresCall
                           ? `Umpire's Call • Quota Preserved${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl)` : ""}`
@@ -824,7 +890,9 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
                         : `On-Field Call Upheld • 1 Review Deducted${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl left)` : ""}`
                       : `Direct Umpire Referral • Quotas Preserved${remainingReviews ? ` (${remainingReviews.batting} Bat / ${remainingReviews.bowling} Bowl)` : ""}`}
                   </span>
-                  {retentionInfo.reviewRetained ? (
+                  {result.isReviewBlocked ? (
+                    <AlertCircle size={14} className="text-amber-400 shrink-0" />
+                  ) : retentionInfo.reviewRetained ? (
                     <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
                   ) : (
                     <XCircle size={14} className="text-rose-400 shrink-0" />
@@ -854,6 +922,7 @@ export const ResultReveal: React.FC<ResultRevealProps> = ({
             {/* Primary Action Button (Warm Gold / Champagne Broadcast Finish) */}
             <button
               type="button"
+              aria-label="Proceed to next incident"
               onClick={handleNext}
               className="w-full py-3.5 px-6 rounded-lg font-bold text-xs sm:text-sm tracking-[0.15em] uppercase flex items-center justify-center gap-2.5 cursor-pointer transition-all shadow-[0_4px_20px_rgba(216,183,108,0.25)] active:scale-[0.99] bg-gradient-to-r from-[#d8b76c] via-[#ecd599] to-[#c9a456] text-[#121214] hover:brightness-105 border border-[#ecd599]/60"
             >
