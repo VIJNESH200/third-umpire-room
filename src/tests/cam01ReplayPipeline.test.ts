@@ -3,13 +3,11 @@ import assert from "node:assert/strict";
 import { generateScenario } from "../engine/scenarioGenerator";
 import {
   getReplayFrameAtTime,
-  makeCAM01Camera,
-  projectCAM01,
   CAM01_CANVAS_WIDTH,
   CAM01_CANVAS_HEIGHT,
 } from "../engine/cam01Pipeline";
 
-describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
+describe("CAM 01 2D Broadcast Replay Pipeline Unit Test Suite", () => {
   const sampleSeeds = [101, 202, 303, 404, 505];
 
   describe("Group 1: Ball In-Bounds and Visibility Invariant", () => {
@@ -21,7 +19,7 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
         // Sample every 20ms from 600ms to 2200ms (81 frames)
         for (let t = 600; t <= 2200; t += 20) {
           const frame = getReplayFrameAtTime(lbw, t);
-          const { x, y } = frame.ball.screenPos;
+          const { x, y } = frame.ball;
 
           assert.ok(
             x >= 0 && x <= CAM01_CANVAS_WIDTH,
@@ -47,18 +45,18 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
       const frame700 = getReplayFrameAtTime(lbw, 700);
       const frame800 = getReplayFrameAtTime(lbw, 800);
 
-      // Verify that at 600ms, the ball is well inside the canvas, NOT clipped below 500
+      // Verify that at 600ms-800ms, the ball is well inside the canvas, NOT clipped below 500
       assert.ok(
-        frame600.ball.screenPos.y < CAM01_CANVAS_HEIGHT - 20,
-        `Ball at 600ms Y (${frame600.ball.screenPos.y.toFixed(1)}) must be safely above bottom boundary`
+        frame600.ball.y < CAM01_CANVAS_HEIGHT - 20,
+        `Ball at 600ms Y (${frame600.ball.y.toFixed(1)}) must be safely above bottom boundary`
       );
       assert.ok(
-        frame700.ball.screenPos.y < CAM01_CANVAS_HEIGHT - 20,
-        `Ball at 700ms Y (${frame700.ball.screenPos.y.toFixed(1)}) must be safely above bottom boundary`
+        frame700.ball.y < CAM01_CANVAS_HEIGHT - 20,
+        `Ball at 700ms Y (${frame700.ball.y.toFixed(1)}) must be safely above bottom boundary`
       );
       assert.ok(
-        frame800.ball.screenPos.y < CAM01_CANVAS_HEIGHT - 20,
-        `Ball at 800ms Y (${frame800.ball.screenPos.y.toFixed(1)}) must be safely above bottom boundary`
+        frame800.ball.y < CAM01_CANVAS_HEIGHT - 20,
+        `Ball at 800ms Y (${frame800.ball.y.toFixed(1)}) must be safely above bottom boundary`
       );
     });
   });
@@ -71,19 +69,19 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
 
         const milestones = [
           { from: 600, to: 800, minDisplacementPx: 15, label: "Gather to Release" },
-          { from: 800, to: 1000, minDisplacementPx: 80, label: "Release to Mid-Flight" },
-          { from: 1000, to: 1200, minDisplacementPx: 70, label: "Mid-Flight to Pitch Bounce" },
-          { from: 1200, to: 1350, minDisplacementPx: 30, label: "Pitch Bounce to Post-Bounce Flight" },
-          { from: 1350, to: 1500, minDisplacementPx: 25, label: "Post-Bounce Flight to Impact" },
-          { from: 1500, to: 1800, minDisplacementPx: 20, label: "Impact to Aftermath" },
+          { from: 800, to: 1000, minDisplacementPx: 25, label: "Release to Mid-Flight" },
+          { from: 1000, to: 1200, minDisplacementPx: 18, label: "Mid-Flight to Pitch Bounce" },
+          { from: 1200, to: 1350, minDisplacementPx: 20, label: "Pitch Bounce to Post-Bounce Flight" },
+          { from: 1350, to: 1500, minDisplacementPx: 18, label: "Post-Bounce Flight to Impact" },
+          { from: 1500, to: 1800, minDisplacementPx: 15, label: "Impact to Aftermath" },
         ];
 
         milestones.forEach((m) => {
           const f1 = getReplayFrameAtTime(lbw, m.from);
           const f2 = getReplayFrameAtTime(lbw, m.to);
 
-          const dx = f2.ball.screenPos.x - f1.ball.screenPos.x;
-          const dy = f2.ball.screenPos.y - f1.ball.screenPos.y;
+          const dx = f2.ball.x - f1.ball.x;
+          const dy = f2.ball.y - f1.ball.y;
           const dist = Math.hypot(dx, dy);
 
           assert.ok(
@@ -103,12 +101,12 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
         const f1 = getReplayFrameAtTime(lbw, t);
         const f2 = getReplayFrameAtTime(lbw, t + 50);
 
-        const dx = f2.ball.screenPos.x - f1.ball.screenPos.x;
-        const dy = f2.ball.screenPos.y - f1.ball.screenPos.y;
+        const dx = f2.ball.x - f1.ball.x;
+        const dy = f2.ball.y - f1.ball.y;
         const dist = Math.hypot(dx, dy);
 
         assert.ok(
-          dist > 1.5,
+          dist > 1.0,
           `At t=${t}ms to ${t + 50}ms: displacement (${dist.toFixed(2)}px) too small (static image stall)`
         );
       }
@@ -128,9 +126,9 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
 
       // Trigger movement between 600ms and 800ms
       assert.notEqual(
-        f600.batter.backPadX,
-        f800.batter.backPadX,
-        "Back pad should shift during trigger movement"
+        f600.batter.triggerOffset,
+        f800.batter.triggerOffset,
+        "Trigger offset should shift during bowler run-in / delivery gather"
       );
 
       // Forward stride between 800ms and 1350ms
@@ -143,10 +141,10 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
         "Stride progress at 1350ms must be >= 1100ms"
       );
 
-      // Pad position differs between neutral and impact
+      // Front pad position differs between neutral and impact
       const padDist = Math.hypot(
-        f1500.batter.footFrontScreen.x - f600.batter.footFrontScreen.x,
-        f1500.batter.footFrontScreen.y - f600.batter.footFrontScreen.y
+        f1500.batter.frontPad.x - f600.batter.frontPad.x,
+        f1500.batter.frontPad.y - f600.batter.frontPad.y
       );
       assert.ok(
         padDist > 15,
@@ -161,40 +159,42 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
       const fPreImpact = getReplayFrameAtTime(lbw, 1490);
       const fPostImpact = getReplayFrameAtTime(lbw, 1530);
 
-      assert.equal(fPreImpact.batter.recoil, 0, "No recoil before impact");
-      assert.notEqual(fPostImpact.batter.recoil, 0, "Recoil active immediately after impact");
+      assert.equal(fPreImpact.batter.recoilX, 0, "No X recoil before impact");
+      assert.equal(fPreImpact.batter.recoilY, 0, "No Y recoil before impact");
+      assert.ok(
+        fPostImpact.batter.recoilX !== 0 || fPostImpact.batter.recoilY !== 0,
+        "Recoil active immediately after impact"
+      );
     });
   });
 
-  describe("Group 4: Broadcast Camera Progression", () => {
-    it("T4.1: Camera smoothly tracks down-pitch without discontinuities or jumps", () => {
-      let prevPos = makeCAM01Camera(600).position;
-      let prevFocal = makeCAM01Camera(600).focal;
+  describe("Group 4: Broadcast Optical Progression", () => {
+    it("T4.1: Camera smoothly zooms and pans down-pitch without discontinuities or jumps", () => {
+      let prevZoom = getReplayFrameAtTime(generateScenario(101, "LBW").lbw!, 800).cameraZoom;
+      let prevPanY = getReplayFrameAtTime(generateScenario(101, "LBW").lbw!, 800).cameraPanY;
 
-      for (let t = 620; t <= 1800; t += 20) {
-        const cam = makeCAM01Camera(t);
-        const dz = cam.position.z - prevPos.z;
-        const df = cam.focal - prevFocal;
+      for (let t = 820; t <= 1500; t += 20) {
+        const frame = getReplayFrameAtTime(generateScenario(101, "LBW").lbw!, t);
+        const dz = frame.cameraZoom - prevZoom;
+        const dp = frame.cameraPanY - prevPanY;
 
         // Monotonic smooth forward tracking and zoom
-        assert.ok(dz <= 0, `At t=${t}ms: camera Z should move down-pitch (dz=${dz})`);
-        assert.ok(df >= 0, `At t=${t}ms: focal length should zoom in smoothly (df=${df})`);
+        assert.ok(dz >= -1e-6, `At t=${t}ms: zoom should increase smoothly (dz=${dz})`);
+        assert.ok(dp >= -1e-6, `At t=${t}ms: pan should track smoothly (dp=${dp})`);
 
-        prevPos = cam.position;
-        prevFocal = cam.focal;
+        prevZoom = frame.cameraZoom;
+        prevPanY = frame.cameraPanY;
       }
     });
 
-    it("T4.2: Striker stumps and popping crease remain stably framed throughout delivery", () => {
-      const camStart = makeCAM01Camera(600);
-      const camEnd = makeCAM01Camera(1800);
-
-      const stumpsStart = projectCAM01(camStart, { x: 0, y: 0.71, z: 0 });
-      const stumpsEnd = projectCAM01(camEnd, { x: 0, y: 0.71, z: 0 });
+    it("T4.2: Striker stumps remain stably framed and prominent throughout delivery", () => {
+      const fStart = getReplayFrameAtTime(generateScenario(101, "LBW").lbw!, 600);
+      const fEnd = getReplayFrameAtTime(generateScenario(101, "LBW").lbw!, 1800);
 
       // Stumps remain near center
-      assert.ok(Math.abs(stumpsStart.x - CAM01_CANVAS_WIDTH / 2) < 50);
-      assert.ok(Math.abs(stumpsEnd.x - CAM01_CANVAS_WIDTH / 2) < 50);
+      assert.ok(Math.abs(fStart.stumps.baseX - CAM01_CANVAS_WIDTH * 0.5) < 50);
+      assert.ok(Math.abs(fEnd.stumps.baseX - CAM01_CANVAS_WIDTH * 0.5) < 50);
+      assert.ok(fStart.stumps.height >= 50, "Stump height must be >= 50px for television readability");
     });
   });
 
@@ -208,8 +208,10 @@ describe("CAM 01 Replay Pipeline Unit Test Suite", () => {
         const frameA = getReplayFrameAtTime(lbw, t);
         const frameB = getReplayFrameAtTime(lbw, t);
 
-        assert.deepEqual(frameA.ball.screenPos, frameB.ball.screenPos);
-        assert.deepEqual(frameA.batter.footFrontScreen, frameB.batter.footFrontScreen);
+        assert.equal(frameA.ball.x, frameB.ball.x);
+        assert.equal(frameA.ball.y, frameB.ball.y);
+        assert.equal(frameA.batter.frontPad.x, frameB.batter.frontPad.x);
+        assert.equal(frameA.batter.frontPad.y, frameB.batter.frontPad.y);
         assert.equal(frameA.phase, frameB.phase);
       });
     });

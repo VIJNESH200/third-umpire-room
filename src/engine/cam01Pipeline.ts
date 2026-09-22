@@ -1,114 +1,95 @@
 /**
  * cam01Pipeline.ts
- * Dedicated CAM 01 Replay Render Pipeline for LBW Broadcast Replay.
+ * 2D Broadcast Television Slow-Motion Replay Pipeline for CAM 01.
  *
- * Architecture:
- *   canonical replay time (currentTimeMs)
- *   -> canonical physical state + continuous visual kinematics
- *   -> CAM01ReplayFrame
- *   -> renderReplayFrame(ctx, frame)
- *
- * Complete decoupling of physical/animation state derivation from canvas rendering.
+ * Visually controlled 2D broadcast animation that presents an authentic, readable,
+ * slow-motion television replay of an LBW appeal:
+ * - Prominent hero batter (~140px) with articulated stance, trigger, stride, bat downswing, and impact recoil.
+ * - Foreground bowler delivery stride and windmill arm release cue (600ms - 850ms).
+ * - Stable 2D cricket pitch with painted popping and bowling creases, wear corridor, and scuff mark.
+ * - Prominent wooden stumps and bails with turf contact shadow.
+ * - High-visibility red cricket ball with sphere shading, rotating seam, motion blur, and turf shadow.
+ * - Unambiguous bat/pad visual evidence: clear daylight when bat misses, direct contact when bat hits.
+ * - Driven strictly by the canonical timeline clock (currentTimeMs) with zero physics tampering.
  */
 
 import type { LBWData } from "../types/scenario";
-import {
-  solveLBWReplayState,
-  getLBWWaypoints,
-  LBW_TIMESTAMPS,
-  type Vec3,
-} from "./lbwPhysics";
-import { drawCricketBall } from "../components/instinct/actorRigs";
+import { LBW_TIMESTAMPS } from "./lbwPhysics";
 
 export const CAM01_CANVAS_WIDTH = 1200;
 export const CAM01_CANVAS_HEIGHT = 500;
 
 const W = CAM01_CANVAS_WIDTH;
 const H = CAM01_CANVAS_HEIGHT;
+export const BAT_BLADE_LENGTH = 62;
 
-// Math Helpers
+// Math & Easing Helpers
 export const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export const smoothstep = (t: number) => t * t * (3 - 2 * t);
-export const add = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
-export const sub = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
-export const mul = (a: Vec3, s: number): Vec3 => ({ x: a.x * s, y: a.y * s, z: a.z * s });
-export const dot = (a: Vec3, b: Vec3) => a.x * b.x + a.y * b.y + a.z * b.z;
-export const cross = (a: Vec3, b: Vec3): Vec3 => ({
-  x: a.y * b.z - a.z * b.y,
-  y: a.z * b.x - a.x * b.z,
-  z: a.x * b.y - a.y * b.x,
-});
-export const unit = (a: Vec3): Vec3 => mul(a, 1 / (Math.hypot(a.x, a.y, a.z) || 1));
+export const easeOutQuad = (t: number) => 1 - (1 - t) * (1 - t);
+export const easeInOutCubic = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-export interface CameraPose {
-  position: Vec3;
-  target: Vec3;
-  forward: Vec3;
-  right: Vec3;
-  up: Vec3;
-  focal: number;
-}
-
-export interface ScreenPoint {
+export interface ScreenPoint2D {
   x: number;
   y: number;
-  depth: number;
 }
 
-export interface StumpsVisualData {
-  shadowA: ScreenPoint;
-  shadowB: ScreenPoint;
-  stumps: { base: ScreenPoint; top: ScreenPoint; width: number; isMiddle: boolean }[];
-  bails: { a: ScreenPoint; b: ScreenPoint }[];
+export interface StumpsVisual2D {
+  baseX: number;
+  baseY: number;
+  width: number;
+  height: number;
+  stumpSpacing: number;
+  bailsY: number;
 }
 
-export interface CreaseLineVisualData {
-  a: ScreenPoint;
-  b: ScreenPoint;
-  lineWidth: number;
-  alpha: number;
-}
-
-export interface PitchVisualData {
-  corners: ScreenPoint[];
-  creases: CreaseLineVisualData[];
-  bounceScuff?: { x: number; y: number; opacity: number };
-}
-
-export interface BatterVisualData {
-  anchorWorld: Vec3;
-  originScreen: ScreenPoint;
-  ex: { x: number; y: number };
-  ey: { x: number; y: number };
-  hand: number;
-  backPadX: number;
-  frontPadX: number;
-  stride: number;
-  swing: number;
-  recoil: number;
+export interface BatterVisual2D {
+  x: number;
+  y: number;
+  scale: number;
+  hand: 1 | -1; // 1 = right-hand, -1 = left-hand
+  stride: number; // 0 (stance) -> 1 (full forward press)
+  triggerOffset: number; // back-and-across shuffle
+  batAngleRad: number; // bat blade rotation angle
+  batPivot: ScreenPoint2D;
+  batTip: ScreenPoint2D;
+  frontPad: ScreenPoint2D;
+  backPad: ScreenPoint2D;
+  recoilX: number;
+  recoilY: number;
   torsoTilt: number;
   headTilt: number;
-  gloveX: number;
-  gloveY: number;
-  batAngleRad: number;
-  footBackScreen: ScreenPoint;
-  footFrontScreen: ScreenPoint;
+  shotOffered: boolean;
+  batFirst: boolean;
 }
 
-export interface BallVisualData {
-  worldPos: Vec3;
-  screenPos: ScreenPoint;
-  prevScreenPos: ScreenPoint;
+export interface BowlerVisual2D {
+  visible: boolean;
+  opacity: number;
+  x: number;
+  y: number;
+  scale: number;
+  armAngleRad: number;
+  releasePoint: ScreenPoint2D;
+}
+
+export interface BallVisual2D {
+  x: number;
+  y: number;
   radius: number;
   seamAngleRad: number;
+  shadowY: number;
+  prevX: number;
+  prevY: number;
   motionTrail: boolean;
-  isDead: boolean;
-  shadowY?: number;
+  trailAlpha: number;
 }
 
-export interface ImpactRippleVisualData {
-  center: ScreenPoint;
+export interface ImpactRipple2D {
+  x: number;
+  y: number;
   radius: number;
   alpha: number;
   color: string;
@@ -126,79 +107,43 @@ export interface CAM01ReplayFrame {
   timeMs: number;
   frameIndex: number;
   phase: EventPhaseName;
-  camera: CameraPose;
-  pitch: PitchVisualData;
-  stumps: StumpsVisualData;
-  batter: BatterVisualData;
-  ball: BallVisualData;
-  impactRipple?: ImpactRippleVisualData;
-}
-
-/**
- * Constructs the broadcast camera pose for CAM 01.
- * High-behind bowler broadcast camera that provides:
- * - Wide view of bowler delivery stride & release at 600-800ms
- * - Gentle tracking and subtle optical zoom towards the striker
- * - Clear visibility of pitch, ball, batter, and stumps at all times
- */
-export function makeCAM01Camera(timeMs: number): CameraPose {
-  // Smooth tracking progression across the replay timeline
-  const trackT = smoothstep(clamp01((timeMs - 600) / 950));
-
-  // Camera Position: elevated behind the bowler, tracking slightly down-pitch
-  const position: Vec3 = {
-    x: lerp(-1.35, -0.80, trackT),
-    y: lerp(4.50, 3.40, trackT),
-    z: lerp(26.50, 21.80, trackT),
+  cameraZoom: number;
+  cameraPanY: number;
+  pitch: {
+    topLeft: ScreenPoint2D;
+    topRight: ScreenPoint2D;
+    bottomLeft: ScreenPoint2D;
+    bottomRight: ScreenPoint2D;
+    strikerBowlingCreaseY: number;
+    strikerPoppingCreaseY: number;
+    strikerCreaseWidth: number;
+    bowlerPoppingCreaseY: number;
+    bounceScuff?: { x: number; y: number; opacity: number };
   };
-
-  // Camera Target: smoothly shifts from pitch center towards popping crease & front pad
-  const target: Vec3 = {
-    x: lerp(0.00, 0.04, trackT),
-    y: lerp(1.10, 0.82, trackT),
-    z: lerp(4.50, 1.15, trackT),
-  };
-
-  const forward = unit(sub(target, position));
-  const right = unit(cross(forward, { x: 0, y: 1, z: 0 }));
-  const up = unit(cross(right, forward));
-  const focal = lerp(1150, 1850, trackT);
-
-  return { position, target, forward, right, up, focal };
-}
-
-/**
- * Projects a 3D world point to 2D canvas screen pixels.
- */
-export function projectCAM01(camera: CameraPose, point: Vec3): ScreenPoint {
-  const rel = sub(point, camera.position);
-  const depth = dot(rel, camera.forward);
-  const safeDepth = Math.max(0.15, depth);
-  return {
-    x: W / 2 + (dot(rel, camera.right) * camera.focal) / safeDepth,
-    y: H / 2 - (dot(rel, camera.up) * camera.focal) / safeDepth,
-    depth: safeDepth,
-  };
+  stumps: StumpsVisual2D;
+  bowler: BowlerVisual2D;
+  batter: BatterVisual2D;
+  ball: BallVisual2D;
+  impactRipple?: ImpactRipple2D;
 }
 
 /**
  * Computes the authoritative visual frame state for CAM 01 at any given timeMs.
- * Pure function: zero side-effects, zero canvas calls.
+ * Pure mathematical model producing stable 2D broadcast animation data.
  */
 export function getReplayFrameAtTime(lbw: LBWData, currentTimeMs: number): CAM01ReplayFrame {
   const timeMs = Math.max(600, Math.min(2200, currentTimeMs));
-  const camera = makeCAM01Camera(timeMs);
-  const waypoints = getLBWWaypoints(lbw);
-  const hand = lbw.batterHand === "RIGHT" ? 1 : -1;
-  const canonicalState = solveLBWReplayState(lbw, timeMs);
+  const hand: 1 | -1 = lbw.batterHand === "RIGHT" ? 1 : -1;
+  const isShot = lbw.shotOffered;
+  const isBatFirst = lbw.batContactBeforePad;
 
-  // 1. Event Phase Identification
+  // 1. Event Phase
   let phase: EventPhaseName = "BOWLER GATHER & RELEASE";
   if (timeMs >= LBW_TIMESTAMPS.T_IMPACT + 100) {
     phase = "AFTERMATH";
   } else if (timeMs >= LBW_TIMESTAMPS.T_IMPACT - 20) {
     phase = "POINT OF IMPACT";
-  } else if (timeMs >= LBW_TIMESTAMPS.T_BOUNCE + 50) {
+  } else if (timeMs >= LBW_TIMESTAMPS.T_BOUNCE + 60) {
     phase = "APPROACHING STRIKER";
   } else if (timeMs >= LBW_TIMESTAMPS.T_BOUNCE - 20) {
     phase = "PITCH BOUNCE";
@@ -206,265 +151,318 @@ export function getReplayFrameAtTime(lbw: LBWData, currentTimeMs: number): CAM01
     phase = "DELIVERY IN FLIGHT";
   }
 
-  // 2. Continuous Ball Kinematics
-  let worldBallPos: Vec3;
-  let prevWorldBallPos: Vec3;
-  let isDead = false;
-  let motionTrail = false;
+  // 2. Subtle Broadcast Optical Zoom & Framing
+  // Frame gently tightens from 1.0x at release to 1.22x at impact, centering on striker
+  const zoomProgress = smoothstep(clamp01((timeMs - 800) / 700));
+  const cameraZoom = lerp(1.0, 1.22, zoomProgress);
+  const cameraPanY = lerp(0, 35, zoomProgress);
 
-  if (timeMs < LBW_TIMESTAMPS.T_RELEASE) {
-    // 600ms - 800ms: Bowler gather & delivery arm swing leading into release point
-    const gatherT = (timeMs - 600) / (LBW_TIMESTAMPS.T_RELEASE - 600); // 0 to 1
-    const dt = 15;
-    const prevGatherT = Math.max(0, (timeMs - dt - 600) / (LBW_TIMESTAMPS.T_RELEASE - 600));
+  // 3. Stable 2D Pitch Layout
+  const centerX = W * 0.50;
+  // Striker end geometry (top of pitch)
+  const strikerWicketY = 195;
+  const strikerPoppingCreaseY = 245;
+  const strikerCreaseHalfWidth = 210;
 
-    worldBallPos = {
-      x: lerp(waypoints.release.x - 0.28, waypoints.release.x, gatherT),
-      y: lerp(2.65, waypoints.release.y, gatherT * gatherT),
-      z: lerp(20.80, waypoints.release.z, gatherT),
-    };
-    prevWorldBallPos = {
-      x: lerp(waypoints.release.x - 0.28, waypoints.release.x, prevGatherT),
-      y: lerp(2.65, waypoints.release.y, prevGatherT * prevGatherT),
-      z: lerp(20.80, waypoints.release.z, prevGatherT),
-    };
-    motionTrail = timeMs > 660;
-  } else if (timeMs <= LBW_TIMESTAMPS.T_IMPACT) {
-    // 800ms - 1500ms: Canonical delivery trajectory (in flight & off pitch)
-    worldBallPos = canonicalState.ball;
-    const dtSec = 0.02;
-    prevWorldBallPos = {
-      x: worldBallPos.x - canonicalState.ball.vx * dtSec,
-      y: worldBallPos.y - canonicalState.ball.vy * dtSec,
-      z: worldBallPos.z - canonicalState.ball.vz * dtSec,
-    };
-    motionTrail = true;
-  } else {
-    // 1500ms - 2200ms: Aftermath
-    if (lbw.batContactBeforePad) {
-      // Deflected trajectory
-      worldBallPos = canonicalState.ball;
-      const dtSec = 0.02;
-      prevWorldBallPos = {
-        x: worldBallPos.x - canonicalState.ball.vx * dtSec,
-        y: worldBallPos.y - canonicalState.ball.vy * dtSec,
-        z: worldBallPos.z - canonicalState.ball.vz * dtSec,
-      };
-      motionTrail = true;
-    } else {
-      // Pad impact: ball rolls/drops off pad to turf rest
-      isDead = true;
-      const afterT = clamp01((timeMs - LBW_TIMESTAMPS.T_IMPACT) / 320);
-      const afterEase = smoothstep(afterT);
-      worldBallPos = {
-        x: waypoints.impact.x + hand * 0.04 * afterEase,
-        y: lerp(waypoints.impact.y, 0.036, afterEase),
-        z: waypoints.impact.z - 0.12 * afterEase,
-      };
-      const prevAfterT = clamp01((timeMs - 20 - LBW_TIMESTAMPS.T_IMPACT) / 320);
-      const prevAfterEase = smoothstep(prevAfterT);
-      prevWorldBallPos = {
-        x: waypoints.impact.x + hand * 0.04 * prevAfterEase,
-        y: lerp(waypoints.impact.y, 0.036, prevAfterEase),
-        z: waypoints.impact.z - 0.12 * prevAfterEase,
-      };
-      motionTrail = afterT < 0.85;
-    }
-  }
+  // Bowler end geometry (foreground bottom of pitch)
+  const bowlerPoppingCreaseY = 460;
+  const pitchTopHalfWidth = 230;
+  const pitchBottomHalfWidth = 440;
 
-  const pBall = projectCAM01(camera, worldBallPos);
-  const pPrevBall = projectCAM01(camera, prevWorldBallPos);
-
-  // Ball radius scaling with distance
-  const pBallOffset = projectCAM01(camera, add(worldBallPos, { x: 0.076, y: 0, z: 0 }));
-  const ballRadius = Math.max(5.5, Math.min(18.0, Math.abs(pBallOffset.x - pBall.x)));
-
-  // Ground shadow projection under ball
-  const pShadow = projectCAM01(camera, { x: worldBallPos.x, y: 0.005, z: worldBallPos.z });
-
-  const ball: BallVisualData = {
-    worldPos: worldBallPos,
-    screenPos: pBall,
-    prevScreenPos: pPrevBall,
-    radius: ballRadius,
-    seamAngleRad: (timeMs / 1000) * 8 * Math.PI,
-    motionTrail,
-    isDead,
-    shadowY: pShadow.y,
-  };
-
-  // 3. Continuous Batter Kinematics
-  // Setup & trigger movement (600ms - 850ms)
-  const triggerT = smoothstep(clamp01((timeMs - 620) / 240));
-  const triggerWeightShift = triggerT * -0.04 * hand;
-
-  // Stride forward (840ms - 1380ms)
-  const strideT = smoothstep(clamp01((timeMs - 840) / 480));
-
-  // Bat swing
-  let swing = 0;
-  if (lbw.shotOffered) {
-    const swingStart = lbw.batContactBeforePad ? 1060 : 1120;
-    const swingDuration = lbw.batContactBeforePad ? 340 : 360;
-    swing = smoothstep(clamp01((timeMs - swingStart) / swingDuration));
-  }
-
-  // Impact recoil shudder (1500ms - 1850ms)
-  const isPostImpact = timeMs >= LBW_TIMESTAMPS.T_IMPACT && timeMs < 1850;
-  const postImpactSec = (timeMs - LBW_TIMESTAMPS.T_IMPACT) / 1000;
-  const recoil = isPostImpact
-    ? Math.sin(postImpactSec * Math.PI * 14) * Math.exp(-postImpactSec * 10)
-    : 0;
-
-  const anchor = canonicalState.batter.anchor;
-  const originScreen = projectCAM01(camera, anchor);
-  const px = projectCAM01(camera, add(anchor, { x: 1, y: 0, z: 0 }));
-  const py = projectCAM01(camera, add(anchor, { x: 0, y: 1, z: 0 }));
-  const ex = { x: px.x - originScreen.x, y: px.y - originScreen.y };
-  const ey = { x: py.x - originScreen.x, y: py.y - originScreen.y };
-
-  const backPadX = canonicalState.batter.backPadWorld.x - anchor.x + triggerWeightShift;
-  const frontPadX = canonicalState.batter.frontPadWorld.x - anchor.x;
-
-  const footBackScreen = projectCAM01(camera, {
-    ...canonicalState.batter.backPadWorld,
-    x: canonicalState.batter.backPadWorld.x + triggerWeightShift,
-  });
-  const footFrontScreen = projectCAM01(camera, {
-    x: canonicalState.batter.frontPadWorld.x,
-    y: 0,
-    z: canonicalState.batter.frontPadWorld.z,
-  });
-
-  const batter: BatterVisualData = {
-    anchorWorld: anchor,
-    originScreen,
-    ex,
-    ey,
-    hand,
-    backPadX,
-    frontPadX,
-    stride: strideT,
-    swing,
-    recoil,
-    torsoTilt: hand * (-0.05 - strideT * 0.04),
-    headTilt: hand * -0.06,
-    gloveX: canonicalState.batter.batGloveWorld.x - anchor.x,
-    gloveY: canonicalState.batter.batGloveWorld.y,
-    batAngleRad: canonicalState.batter.batAngleRad,
-    footBackScreen,
-    footFrontScreen,
-  };
+  const pitchTopLeft: ScreenPoint2D = { x: centerX - pitchTopHalfWidth, y: 165 };
+  const pitchTopRight: ScreenPoint2D = { x: centerX + pitchTopHalfWidth, y: 165 };
+  const pitchBottomLeft: ScreenPoint2D = { x: centerX - pitchBottomHalfWidth, y: 495 };
+  const pitchBottomRight: ScreenPoint2D = { x: centerX + pitchBottomHalfWidth, y: 495 };
 
   // 4. Stumps & Bails Geometry
-  const wicketZ = 0.0;
-  const stumpHeight = 0.711;
-  const shadowA = projectCAM01(camera, { x: -0.32, y: 0, z: wicketZ - 0.06 });
-  const shadowB = projectCAM01(camera, { x: 0.32, y: 0, z: wicketZ - 0.06 });
-
-  const stumpPositions = [-0.114, 0.0, 0.114];
-  const stumpVisuals = stumpPositions.map((x, index) => {
-    const base = projectCAM01(camera, { x, y: 0.0, z: wicketZ });
-    const top = projectCAM01(camera, { x, y: stumpHeight, z: wicketZ });
-    const side = projectCAM01(camera, { x: x + 0.024, y: 0.0, z: wicketZ });
-    const stumpWidth = Math.max(4.2, Math.abs(side.x - base.x) * 1.8);
-    return { base, top, width: stumpWidth, isMiddle: index === 1 };
-  });
-
-  const bails = [
-    [-0.114, 0.0],
-    [0.0, 0.114],
-  ].map(([x1, x2]) => ({
-    a: projectCAM01(camera, { x: x1, y: stumpHeight + 0.025, z: wicketZ }),
-    b: projectCAM01(camera, { x: x2, y: stumpHeight + 0.025, z: wicketZ }),
-  }));
-
-  const stumps: StumpsVisualData = {
-    shadowA,
-    shadowB,
-    stumps: stumpVisuals,
-    bails,
+  const stumps: StumpsVisual2D = {
+    baseX: centerX,
+    baseY: strikerWicketY,
+    width: 38,
+    height: 58,
+    stumpSpacing: 13,
+    bailsY: strikerWicketY - 58,
   };
 
-  // 5. Pitch & Crease Lines
-  const pitchCorners: Vec3[] = [
-    { x: -1.524, y: 0, z: -1.8 },
-    { x: 1.524, y: 0, z: -1.8 },
-    { x: 1.524, y: 0, z: 20.2 },
-    { x: -1.524, y: 0, z: 20.2 },
-  ];
-  const pitchCornerScreen = pitchCorners.map((pt) => projectCAM01(camera, pt));
+  // 5. Batter Kinematics & Animation State Machine
+  // Stance -> Trigger -> Stride -> Bat Swing -> Impact Recoil -> Reaction
+  const batterBaseX = centerX + hand * 8;
+  const batterBaseY = strikerPoppingCreaseY;
+  const batterScale = 1.0;
 
-  const creases: CreaseLineVisualData[] = [
-    // Bowling Crease at Striker Stumps (Z = 0.0m)
-    {
-      a: projectCAM01(camera, { x: -1.524, y: 0.005, z: 0.0 }),
-      b: projectCAM01(camera, { x: 1.524, y: 0.005, z: 0.0 }),
-      lineWidth: 1.8,
-      alpha: 0.65,
-    },
-    // Striker Popping Crease (Z = 1.22m)
-    {
-      a: projectCAM01(camera, { x: -1.524, y: 0.008, z: 1.22 }),
-      b: projectCAM01(camera, { x: 1.524, y: 0.008, z: 1.22 }),
-      lineWidth: 3.2,
-      alpha: 0.95,
-    },
-    // Return Creases
-    {
-      a: projectCAM01(camera, { x: -1.32, y: 0.006, z: 0.0 }),
-      b: projectCAM01(camera, { x: -1.32, y: 0.006, z: 2.44 }),
-      lineWidth: 1.5,
-      alpha: 0.7,
-    },
-    {
-      a: projectCAM01(camera, { x: 1.32, y: 0.006, z: 0.0 }),
-      b: projectCAM01(camera, { x: 1.32, y: 0.006, z: 2.44 }),
-      lineWidth: 1.5,
-      alpha: 0.7,
-    },
-  ];
+  // A. Trigger movement (600ms - 850ms): rear foot shuffles back-and-across
+  const triggerT = smoothstep(clamp01((timeMs - 620) / 230));
+  const triggerOffset = triggerT * -10 * hand;
 
-  let bounceScuff: { x: number; y: number; opacity: number } | undefined;
-  if (timeMs >= LBW_TIMESTAMPS.T_BOUNCE) {
-    const scuffScreen = projectCAM01(camera, waypoints.bounce);
-    const scuffFadeIn = clamp01((timeMs - LBW_TIMESTAMPS.T_BOUNCE) / 100);
-    bounceScuff = { x: scuffScreen.x, y: scuffScreen.y, opacity: 0.72 * scuffFadeIn };
+  // B. Forward Stride (840ms - 1380ms): front foot strides forward towards popping crease
+  const strideT = smoothstep(clamp01((timeMs - 850) / 480));
+  const frontPadX = batterBaseX + hand * lerp(18, 38, strideT);
+  const frontPadY = batterBaseY - lerp(4, 12, strideT);
+  const backPadX = batterBaseX - hand * 22 + triggerOffset;
+  const backPadY = batterBaseY;
+
+  // C. Bat Swing & Articulation (1050ms - 1500ms)
+  // Backlift tap (600-850), downswing (1050-1450), impact hold (1500+)
+  let batDownswing = 0;
+  if (isShot) {
+    const swingStart = isBatFirst ? 1040 : 1100;
+    const swingDuration = isBatFirst ? 360 : 380;
+    batDownswing = smoothstep(clamp01((timeMs - swingStart) / swingDuration));
   }
 
-  const pitch: PitchVisualData = {
-    corners: pitchCornerScreen,
-    creases,
-    bounceScuff,
+  // Bat angle and position:
+  // - If SHOT OFFERED & BAT FIRST: bat connects directly with ball at T_INTERCEPT (1410ms)
+  // - If SHOT OFFERED & CLEAN MISS: bat comes down vertically alongside front pad with 28-36px visible daylight
+  // - If NO SHOT OFFERED: bat withdrawn / tucked behind pad with clear daylight
+  let targetBatAngleRad: number;
+  let batGripOffsetX: number;
+  let batGripOffsetY: number;
+
+  if (!isShot) {
+    // Tucked leave / shouldered arms
+    targetBatAngleRad = -0.32 * hand;
+    batGripOffsetX = -hand * 18;
+    batGripOffsetY = -80;
+  } else if (isBatFirst) {
+    // Bat first: bat connects cleanly in line of delivery
+    targetBatAngleRad = lerp(-0.45 * hand, 0.08 * hand, batDownswing);
+    batGripOffsetX = hand * lerp(-8, 34, batDownswing);
+    batGripOffsetY = lerp(-88, -48, batDownswing);
+  } else {
+    // Clean miss: bat comes down vertically alongside front pad
+    // Guaranteed 32px of unambiguous visible daylight outside the front pad
+    targetBatAngleRad = lerp(-0.45 * hand, -0.04 * hand, batDownswing);
+    batGripOffsetX = hand * lerp(-8, 64, batDownswing);
+    batGripOffsetY = lerp(-88, -46, batDownswing);
+  }
+
+  // Backlift raised stance angle (600ms - 850ms)
+  const initialBatAngleRad = -0.52 * hand;
+  const currentBatAngleRad = isShot
+    ? lerp(initialBatAngleRad, targetBatAngleRad, batDownswing)
+    : targetBatAngleRad;
+
+  const batPivot: ScreenPoint2D = {
+    x: batterBaseX + batGripOffsetX,
+    y: batterBaseY + batGripOffsetY,
   };
 
-  // 6. Impact Ripples
-  let impactRipple: ImpactRippleVisualData | undefined;
-  if (
-    lbw.batContactBeforePad &&
-    timeMs >= LBW_TIMESTAMPS.T_INTERCEPT &&
-    timeMs < LBW_TIMESTAMPS.T_INTERCEPT + 200
-  ) {
-    const k = 1 - (timeMs - LBW_TIMESTAMPS.T_INTERCEPT) / 200;
-    const center = projectCAM01(camera, waypoints.batContact);
-    impactRipple = {
-      center,
-      radius: ballRadius + (1 - k) * 22,
-      alpha: 0.9 * k,
-      color: "#38BDF8", // Cyan ripple for bat contact
+  const batTip: ScreenPoint2D = {
+    x: batPivot.x + Math.sin(currentBatAngleRad) * BAT_BLADE_LENGTH,
+    y: batPivot.y + Math.cos(currentBatAngleRad) * BAT_BLADE_LENGTH,
+  };
+
+  // D. Impact Recoil & Vibration (1500ms - 1850ms)
+  const isPostImpact = timeMs >= LBW_TIMESTAMPS.T_IMPACT && timeMs < 1850;
+  const postImpactSec = (timeMs - LBW_TIMESTAMPS.T_IMPACT) / 1000;
+  const recoilMagnitude = isPostImpact
+    ? Math.sin(postImpactSec * Math.PI * 16) * Math.exp(-postImpactSec * 9) * 4.5
+    : 0;
+
+  const recoilX = recoilMagnitude === 0 ? 0 : -hand * recoilMagnitude;
+  const recoilY = recoilMagnitude === 0 ? 0 : -recoilMagnitude * 0.3;
+
+  const batter: BatterVisual2D = {
+    x: batterBaseX,
+    y: batterBaseY,
+    scale: batterScale,
+    hand,
+    stride: strideT,
+    triggerOffset,
+    batAngleRad: currentBatAngleRad,
+    batPivot,
+    batTip,
+    frontPad: { x: frontPadX + recoilX, y: frontPadY + recoilY },
+    backPad: { x: backPadX, y: backPadY },
+    recoilX,
+    recoilY,
+    torsoTilt: hand * (-0.04 - strideT * 0.05),
+    headTilt: hand * (-0.03 + strideT * 0.06),
+    shotOffered: isShot,
+    batFirst: isBatFirst,
+  };
+
+  // 6. Foreground Bowler Delivery Cue (600ms - 900ms)
+  const bowlerX = centerX - 45;
+  const bowlerY = bowlerPoppingCreaseY - 5;
+  const bowlerScale = 1.15;
+  const bowlerOpacity = clamp01(1 - (timeMs - 820) / 160);
+
+  // Arm windmill rotation: comes from high gather (-PI*0.4) to release (PI*1.25) at 800ms
+  let armAngleRad = Math.PI * 1.25;
+  if (timeMs < 800) {
+    const t = (timeMs - 600) / 200;
+    armAngleRad = lerp(-Math.PI * 0.4, Math.PI * 1.25, smoothstep(t));
+  } else {
+    const t = clamp01((timeMs - 800) / 150);
+    armAngleRad = lerp(Math.PI * 1.25, Math.PI * 0.65, easeOutQuad(t));
+  }
+
+  const bowlerShoulderY = bowlerY - 65 * bowlerScale;
+  const bowlerArmRadius = 38 * bowlerScale;
+  const bowlerReleasePoint: ScreenPoint2D = {
+    x: bowlerX + 18 + Math.cos(armAngleRad) * bowlerArmRadius,
+    y: bowlerShoulderY + Math.sin(armAngleRad) * bowlerArmRadius,
+  };
+
+  const releaseArmAngleRad = Math.PI * 1.25;
+  const staticReleasePoint: ScreenPoint2D = {
+    x: bowlerX + 18 + Math.cos(releaseArmAngleRad) * bowlerArmRadius,
+    y: bowlerShoulderY + Math.sin(releaseArmAngleRad) * bowlerArmRadius,
+  };
+
+  const bowler: BowlerVisual2D = {
+    visible: timeMs < 950,
+    opacity: bowlerOpacity,
+    x: bowlerX,
+    y: bowlerY,
+    scale: bowlerScale,
+    armAngleRad,
+    releasePoint: bowlerReleasePoint,
+  };
+
+  // 7. High-Visibility Ball Trajectory Mapping
+  // Canonical waypoints mapped into clear, visually readable 2D path
+  // Bowler Hand (800ms) -> Pitch Bounce (1200ms) -> Striker Impact (1500ms) -> Aftermath (1500-2200ms)
+  const bounceScreenX = centerX + lbw.pitchX * 55;
+  const bounceScreenY = 312;
+
+  // Impact target on batter front pad / bat
+  const padContactScreenX = frontPadX;
+  const padContactScreenY = frontPadY - 26;
+  const batContactScreenX = batTip.x;
+  const batContactScreenY = batTip.y - 12;
+
+  const targetImpactX = isBatFirst ? batContactScreenX : padContactScreenX;
+  const targetImpactY = isBatFirst ? batContactScreenY : padContactScreenY;
+
+  let ballX = bowlerReleasePoint.x;
+  let ballY = bowlerReleasePoint.y;
+  let prevBallX = ballX;
+  let prevBallY = ballY;
+  let ballRadius = 8.8;
+  let motionTrail = false;
+  let trailAlpha = 0;
+  let shadowY = bowlerPoppingCreaseY;
+
+  if (timeMs < 800) {
+    // 600ms - 800ms: Held in bowler's delivery hand as arm whips over
+    ballX = bowlerReleasePoint.x;
+    ballY = bowlerReleasePoint.y;
+    ballRadius = 9.2;
+    prevBallX = ballX - 2;
+    prevBallY = ballY + 4;
+    motionTrail = timeMs > 700;
+    trailAlpha = clamp01((timeMs - 700) / 100) * 0.45;
+    shadowY = bowlerY + 2;
+  } else if (timeMs < 1200) {
+    // 800ms - 1200ms: Flight arc down-pitch from release to pitch bounce
+    const t = (timeMs - 800) / 400;
+    const releaseX = staticReleasePoint.x;
+    const releaseY = staticReleasePoint.y;
+
+    // Smooth bezier flight curve
+    const ctrlX = lerp(releaseX, bounceScreenX, 0.5);
+    const ctrlY = lerp(releaseY, bounceScreenY, 0.4) - 16; // Air arc flight
+
+    const u = 1 - t;
+    ballX = u * u * releaseX + 2 * u * t * ctrlX + t * t * bounceScreenX;
+    ballY = u * u * releaseY + 2 * u * t * ctrlY + t * t * bounceScreenY;
+    ballRadius = lerp(9.2, 7.6, t);
+
+    // Velocity trail
+    const dt = 0.03;
+    const tPrev = Math.max(0, t - dt);
+    const uPrev = 1 - tPrev;
+    prevBallX = uPrev * uPrev * releaseX + 2 * uPrev * tPrev * ctrlX + tPrev * tPrev * bounceScreenX;
+    prevBallY = uPrev * uPrev * releaseY + 2 * uPrev * tPrev * ctrlY + tPrev * tPrev * bounceScreenY;
+
+    motionTrail = true;
+    trailAlpha = 0.55;
+    shadowY = lerp(bowlerY, bounceScreenY, t);
+  } else if (timeMs <= 1500) {
+    // 1200ms - 1500ms: Off-pitch bounce rising into striker pad / bat
+    const t = (timeMs - 1200) / 300;
+    const ctrlX = lerp(bounceScreenX, targetImpactX, 0.5);
+    const ctrlY = Math.min(bounceScreenY, targetImpactY) - 18; // bounce arc
+
+    const u = 1 - t;
+    ballX = u * u * bounceScreenX + 2 * u * t * ctrlX + t * t * targetImpactX;
+    ballY = u * u * bounceScreenY + 2 * u * t * ctrlY + t * t * targetImpactY;
+    ballRadius = lerp(7.6, 7.2, t);
+
+    const dt = 0.04;
+    const tPrev = Math.max(0, t - dt);
+    const uPrev = 1 - tPrev;
+    prevBallX = uPrev * uPrev * bounceScreenX + 2 * uPrev * tPrev * ctrlX + tPrev * tPrev * targetImpactX;
+    prevBallY = uPrev * uPrev * bounceScreenY + 2 * uPrev * tPrev * ctrlY + tPrev * tPrev * targetImpactY;
+
+    motionTrail = true;
+    trailAlpha = 0.65;
+    shadowY = lerp(bounceScreenY, strikerPoppingCreaseY, t);
+  } else {
+    // 1500ms - 2200ms: Aftermath
+    const t = clamp01((timeMs - 1500) / 450);
+    if (isBatFirst) {
+      // Bat deflection: ball flies off bat face with velocity
+      const deflectX = hand * -65 * t;
+      const deflectY = 35 * t + t * t * 40;
+      ballX = targetImpactX + deflectX;
+      ballY = targetImpactY + deflectY;
+      prevBallX = ballX - hand * -4;
+      prevBallY = ballY - 3;
+      motionTrail = t < 0.6;
+      trailAlpha = (1 - t) * 0.5;
+      shadowY = strikerPoppingCreaseY;
+    } else {
+      // Pad impact: ball drops naturally down the pad and settles on pitch turf
+      const dropT = easeOutQuad(t);
+      ballX = targetImpactX + hand * 4 * dropT;
+      ballY = lerp(targetImpactY, strikerPoppingCreaseY + 6, dropT);
+      prevBallX = ballX;
+      prevBallY = ballY - 2;
+      motionTrail = t < 0.35;
+      trailAlpha = (1 - t) * 0.4;
+      shadowY = strikerPoppingCreaseY + 6;
+    }
+    ballRadius = 7.2;
+  }
+
+  const ball: BallVisual2D = {
+    x: ballX,
+    y: ballY,
+    radius: ballRadius,
+    seamAngleRad: (timeMs / 1000) * 8 * Math.PI,
+    shadowY,
+    prevX: prevBallX,
+    prevY: prevBallY,
+    motionTrail,
+    trailAlpha,
+  };
+
+  // 8. Pitch Scuff Mark (Revealed at and after bounce)
+  let bounceScuff: { x: number; y: number; opacity: number } | undefined;
+  if (timeMs >= 1200) {
+    const scuffFadeIn = clamp01((timeMs - 1200) / 80);
+    bounceScuff = {
+      x: bounceScreenX,
+      y: bounceScreenY,
+      opacity: 0.78 * scuffFadeIn,
     };
-  } else if (
-    !lbw.batContactBeforePad &&
-    timeMs >= LBW_TIMESTAMPS.T_IMPACT &&
-    timeMs < LBW_TIMESTAMPS.T_IMPACT + 200
-  ) {
-    const k = 1 - (timeMs - LBW_TIMESTAMPS.T_IMPACT) / 200;
-    const center = projectCAM01(camera, waypoints.impact);
+  }
+
+  // 9. Impact Ripple Visual Cue
+  let impactRipple: ImpactRipple2D | undefined;
+  if (timeMs >= 1500 && timeMs < 1720) {
+    const rippleT = (timeMs - 1500) / 220;
+    const rippleRadius = ballRadius + rippleT * 26;
+    const rippleAlpha = (1 - rippleT) * 0.9;
     impactRipple = {
-      center,
-      radius: ballRadius + (1 - k) * 18,
-      alpha: 0.85 * k,
-      color: "#FACC15", // Amber ripple for pad impact
+      x: targetImpactX,
+      y: targetImpactY,
+      radius: rippleRadius,
+      alpha: rippleAlpha,
+      color: isBatFirst ? "#38BDF8" : "#FACC15",
     };
   }
 
@@ -474,9 +472,21 @@ export function getReplayFrameAtTime(lbw: LBWData, currentTimeMs: number): CAM01
     timeMs,
     frameIndex,
     phase,
-    camera,
-    pitch,
+    cameraZoom,
+    cameraPanY,
+    pitch: {
+      topLeft: pitchTopLeft,
+      topRight: pitchTopRight,
+      bottomLeft: pitchBottomLeft,
+      bottomRight: pitchBottomRight,
+      strikerBowlingCreaseY: strikerWicketY,
+      strikerPoppingCreaseY: strikerPoppingCreaseY,
+      strikerCreaseWidth: strikerCreaseHalfWidth * 2,
+      bowlerPoppingCreaseY,
+      bounceScuff,
+    },
     stumps,
+    bowler,
     batter,
     ball,
     impactRipple,
@@ -484,365 +494,519 @@ export function getReplayFrameAtTime(lbw: LBWData, currentTimeMs: number): CAM01
 }
 
 /**
- * Pure canvas rendering engine for CAM 01.
- * Consumes the pre-calculated CAM01ReplayFrame and draws the full scene.
+ * Pure 2D Canvas Renderer for CAM 01 Broadcast Television Slow-Motion Replay.
  */
 export function renderReplayFrame(ctx: CanvasRenderingContext2D, frame: CAM01ReplayFrame): void {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
-  // 1. Stadium Outfield & Atmospheric Backdrop
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, "#08131d");
-  sky.addColorStop(0.45, "#0f2318");
-  sky.addColorStop(1, "#07170e");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
+  // Apply subtle optical broadcast zoom & pan centered on the striker
+  const zoom = frame.cameraZoom;
+  const panY = frame.cameraPanY;
+  ctx.translate(W * 0.5, H * 0.5);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-W * 0.5, -H * 0.5 + panY);
 
-  const ambientGlow = ctx.createRadialGradient(
-    W * 0.5,
-    H * 0.55,
-    40,
-    W * 0.5,
-    H * 0.55,
-    420
-  );
-  ambientGlow.addColorStop(0, "rgba(254, 240, 138, 0.12)");
-  ambientGlow.addColorStop(1, "rgba(0, 0, 0, 0)");
-  ctx.fillStyle = ambientGlow;
-  ctx.fillRect(0, 0, W, H);
+  // 1. Stadium Grass Outfield & Atmospheric Backdrop
+  const outfield = ctx.createLinearGradient(0, 0, 0, H);
+  outfield.addColorStop(0, "#0b1b11");
+  outfield.addColorStop(0.5, "#132d1d");
+  outfield.addColorStop(1, "#0a190f");
+  ctx.fillStyle = outfield;
+  ctx.fillRect(-200, -200, W + 400, H + 400);
 
-  // 2. 22-Yard Clay Pitch Strip
-  const corners = frame.pitch.corners;
-  if (corners.length >= 4) {
+  // Subtle diagonal mower stripes
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.022)";
+  ctx.lineWidth = 42;
+  for (let x = -300; x < W + 400; x += 84) {
     ctx.beginPath();
-    ctx.moveTo(corners[0].x, corners[0].y);
-    for (let i = 1; i < corners.length; i++) {
-      ctx.lineTo(corners[i].x, corners[i].y);
-    }
-    ctx.closePath();
-
-    const turf = ctx.createLinearGradient(0, 110, 0, 440);
-    turf.addColorStop(0, "#80684c");
-    turf.addColorStop(0.55, "#b0936b");
-    turf.addColorStop(1, "#927654");
-    ctx.fillStyle = turf;
-    ctx.fill();
-
-    ctx.strokeStyle = "rgba(91, 66, 42, 0.85)";
-    ctx.lineWidth = 1.8;
+    ctx.moveTo(x, -200);
+    ctx.lineTo(x + 200, H + 200);
     ctx.stroke();
   }
+  ctx.restore();
+
+  // Stadium lighting floodlight glow
+  const floodlight = ctx.createRadialGradient(W * 0.5, 240, 30, W * 0.5, 240, 480);
+  floodlight.addColorStop(0, "rgba(254, 240, 138, 0.14)");
+  floodlight.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = floodlight;
+  ctx.fillRect(-200, -200, W + 400, H + 400);
+
+  // 2. 22-Yard Clay Cricket Pitch Strip
+  const { pitch } = frame;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pitch.topLeft.x, pitch.topLeft.y);
+  ctx.lineTo(pitch.topRight.x, pitch.topRight.y);
+  ctx.lineTo(pitch.bottomRight.x, pitch.bottomRight.y);
+  ctx.lineTo(pitch.bottomLeft.x, pitch.bottomLeft.y);
+  ctx.closePath();
+
+  // Natural clay gradient (striker end to bowler end)
+  const turfGrad = ctx.createLinearGradient(0, pitch.topLeft.y, 0, pitch.bottomLeft.y);
+  turfGrad.addColorStop(0, "#a88965");
+  turfGrad.addColorStop(0.45, "#be9f79");
+  turfGrad.addColorStop(1, "#947754");
+  ctx.fillStyle = turfGrad;
+  ctx.fill();
+
+  // Pitch edge border line
+  ctx.strokeStyle = "rgba(75, 52, 30, 0.85)";
+  ctx.lineWidth = 2.0;
+  ctx.stroke();
+
+  // Central pitch wear corridor
+  const wearTopHalfW = 100;
+  const wearBottomHalfW = 190;
+  ctx.fillStyle = "rgba(205, 175, 140, 0.28)";
+  ctx.beginPath();
+  ctx.moveTo(W * 0.5 - wearTopHalfW, pitch.topLeft.y);
+  ctx.lineTo(W * 0.5 + wearTopHalfW, pitch.topLeft.y);
+  ctx.lineTo(W * 0.5 + wearBottomHalfW, pitch.bottomLeft.y);
+  ctx.lineTo(W * 0.5 - wearBottomHalfW, pitch.bottomLeft.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 
   // 3. Crease Lines
-  frame.pitch.creases.forEach((crease) => {
-    ctx.save();
-    ctx.strokeStyle = `rgba(255, 255, 255, ${crease.alpha})`;
-    ctx.lineWidth = crease.lineWidth;
+  // Striker Bowling Crease (through stumps)
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.5 - 180, pitch.strikerBowlingCreaseY);
+  ctx.lineTo(W * 0.5 + 180, pitch.strikerBowlingCreaseY);
+  ctx.stroke();
+
+  // Striker Popping Crease (Prominent white painted line)
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = 3.6;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.5 - pitch.strikerCreaseWidth * 0.5, pitch.strikerPoppingCreaseY);
+  ctx.lineTo(W * 0.5 + pitch.strikerCreaseWidth * 0.5, pitch.strikerPoppingCreaseY);
+  ctx.stroke();
+
+  // Return creases flanking popping crease
+  ctx.lineWidth = 2.0;
+  [-pitch.strikerCreaseWidth * 0.5, pitch.strikerCreaseWidth * 0.5].forEach((rx) => {
     ctx.beginPath();
-    ctx.moveTo(crease.a.x, crease.a.y);
-    ctx.lineTo(crease.b.x, crease.b.y);
+    ctx.moveTo(W * 0.5 + rx, pitch.strikerBowlingCreaseY);
+    ctx.lineTo(W * 0.5 + rx, pitch.strikerPoppingCreaseY + 45);
     ctx.stroke();
-    ctx.restore();
   });
 
-  // 4. Turf Bounce Scuff Mark
-  if (frame.pitch.bounceScuff) {
-    const { x, y, opacity } = frame.pitch.bounceScuff;
+  // Bowler Popping Crease (in foreground)
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.lineWidth = 3.8;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.5 - 340, pitch.bowlerPoppingCreaseY);
+  ctx.lineTo(W * 0.5 + 340, pitch.bowlerPoppingCreaseY);
+  ctx.stroke();
+  ctx.restore();
+
+  // 4. Pitch Bounce Turf Scuff Mark
+  if (pitch.bounceScuff) {
+    const { x, y, opacity } = pitch.bounceScuff;
     ctx.save();
-    ctx.fillStyle = `rgba(65, 44, 25, ${opacity})`;
+    ctx.fillStyle = `rgba(55, 36, 18, ${opacity})`;
     ctx.beginPath();
-    ctx.ellipse(x, y, 12, 4.5, -0.15, 0, Math.PI * 2);
+    ctx.ellipse(x, y, 14, 5.5, 0, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.strokeStyle = `rgba(230, 205, 170, ${opacity * 0.6})`;
+    ctx.lineWidth = 1.0;
+    ctx.stroke();
     ctx.restore();
   }
 
-  // 5. Stumps & Bails
+  // 5. Stumps & Bails (Striker End — Behind Batsman)
   const { stumps } = frame;
-  // Stumps Ground Shadow
+  // Contact ground shadow under stumps
   ctx.save();
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
-  ctx.lineWidth = 10;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
   ctx.beginPath();
-  ctx.moveTo(stumps.shadowA.x, stumps.shadowA.y);
-  ctx.lineTo(stumps.shadowB.x, stumps.shadowB.y);
-  ctx.stroke();
+  ctx.ellipse(stumps.baseX, stumps.baseY + 1, stumps.width * 0.65, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-  // 3 Wooden Stumps
-  stumps.stumps.forEach((s) => {
+  // 3 Stumps (Off, Middle, Leg)
+  const stumpOffsets = [-stumps.stumpSpacing, 0, stumps.stumpSpacing];
+  stumpOffsets.forEach((sx, idx) => {
+    const sxPos = stumps.baseX + sx;
+    // Wooden stump timber
+    ctx.fillStyle = idx === 1 ? "#F59E0B" : "#D97706";
     ctx.strokeStyle = "#78350F";
-    ctx.lineWidth = s.width + 2;
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
-    ctx.moveTo(s.base.x, s.base.y);
-    ctx.lineTo(s.top.x, s.top.y);
-    ctx.stroke();
-
-    ctx.strokeStyle = s.isMiddle ? "#F59E0B" : "#D97706";
-    ctx.lineWidth = s.width;
-    ctx.beginPath();
-    ctx.moveTo(s.base.x, s.base.y);
-    ctx.lineTo(s.top.x, s.top.y);
+    ctx.roundRect(sxPos - 2.5, stumps.baseY - stumps.height, 5.0, stumps.height, [1.5, 1.5, 0, 0]);
+    ctx.fill();
     ctx.stroke();
   });
 
-  // 2 Bails
-  stumps.bails.forEach((b) => {
+  // 2 Bails across stumps
+  [
+    [-stumps.stumpSpacing * 0.5, stumps.stumpSpacing * 0.5],
+    [stumps.stumpSpacing * 0.5, stumps.stumpSpacing * 1.5],
+  ].forEach(([x1, x2]) => {
+    ctx.fillStyle = "#FCD34D";
     ctx.strokeStyle = "#78350F";
-    ctx.lineWidth = 4.8;
+    ctx.lineWidth = 1.0;
     ctx.beginPath();
-    ctx.moveTo(b.a.x, b.a.y);
-    ctx.lineTo(b.b.x, b.b.y);
-    ctx.stroke();
-
-    ctx.strokeStyle = "#FCD34D";
-    ctx.lineWidth = 3.0;
-    ctx.beginPath();
-    ctx.moveTo(b.a.x, b.a.y);
-    ctx.lineTo(b.b.x, b.b.y);
+    ctx.roundRect(stumps.baseX + x1 - 5, stumps.bailsY - 2.5, Math.abs(x2 - x1) + 2, 4.0, 1.2);
+    ctx.fill();
     ctx.stroke();
   });
   ctx.restore();
 
-  // 6. Batter Rig
+  // 6. Hero Batter Rig (Prominent, Authentically Articulated 2D Cricket Batsman)
   const { batter } = frame;
-  // Ground Shadow under Batter
   ctx.save();
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.48)";
-  ctx.lineWidth = 12;
-  ctx.beginPath();
-  ctx.moveTo(batter.footBackScreen.x, batter.footBackScreen.y);
-  ctx.lineTo(batter.footFrontScreen.x, batter.footFrontScreen.y);
-  ctx.stroke();
-  ctx.restore();
-
-  // Local 2D transformed coordinate system for Batter
-  ctx.save();
-  ctx.setTransform(
-    batter.ex.x,
-    batter.ex.y,
-    batter.ey.x,
-    batter.ey.y,
-    batter.originScreen.x,
-    batter.originScreen.y
-  );
-  ctx.lineCap = "round";
-
   const hand = batter.hand;
 
-  // A. Back Leg & Pad
-  ctx.save();
-  ctx.translate(batter.backPadX, 0.02);
-  ctx.strokeStyle = "#E2E8F0";
-  ctx.lineWidth = 0.18;
+  // Ground shadow under batter
+  ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
   ctx.beginPath();
-  ctx.moveTo(0, 0.98);
-  ctx.lineTo(0, 0.48);
+  ctx.ellipse(
+    (batter.frontPad.x + batter.backPad.x) * 0.5,
+    batter.y + 2,
+    42,
+    9,
+    0,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+
+  // A. Back Leg & Rear Flannel Pad
+  ctx.save();
+  ctx.translate(batter.backPad.x, batter.backPad.y);
+
+  // Rear thigh
+  ctx.strokeStyle = "#E2E8F0";
+  ctx.lineWidth = 14;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, -68);
+  ctx.lineTo(0, -38);
   ctx.stroke();
 
+  // Rear batting pad (white with slate outline)
   ctx.fillStyle = "#F1F5F9";
   ctx.strokeStyle = "#94A3B8";
-  ctx.lineWidth = 0.016;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.roundRect(-0.09, 0.02, 0.18, 0.52, 0.035);
+  ctx.roundRect(-8, -42, 16, 42, 3.5);
   ctx.fill();
   ctx.stroke();
 
+  // Rear cricket boot (white with black cleats)
   ctx.fillStyle = "#0F172A";
   ctx.beginPath();
-  ctx.ellipse(0, -0.01, 0.11, 0.045, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 1, 9, 3.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath();
+  ctx.ellipse(0, -1, 8, 3.2, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  // B. Front Leg & Pad (Prominent, with knee rolls and cane ribs)
+  // B. Front Leg & Hero Batting Pad (Clear knee roll, cane ribs, impact shudder)
   ctx.save();
-  ctx.translate(batter.frontPadX + batter.recoil * 0.025, 0.02);
-  ctx.rotate(hand * (0.05 + batter.stride * 0.03));
+  ctx.translate(batter.frontPad.x, batter.frontPad.y);
 
+  // Front thigh
   ctx.strokeStyle = "#FFFFFF";
-  ctx.lineWidth = 0.2;
+  ctx.lineWidth = 16;
+  ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(hand * -0.04, 1.0);
-  ctx.lineTo(0, 0.54);
+  ctx.moveTo(-hand * 4, -72);
+  ctx.lineTo(0, -42);
   ctx.stroke();
 
+  // Front pad shell (crisp white)
   ctx.fillStyle = "#FFFFFF";
   ctx.strokeStyle = "#475569";
-  ctx.lineWidth = 0.02;
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
-  ctx.roundRect(-0.115, 0.02, 0.23, 0.62, 0.05);
+  ctx.roundRect(-10, -48, 20, 50, 4.0);
   ctx.fill();
   ctx.stroke();
 
   // Knee Roll Cushion
   ctx.fillStyle = "#E2E8F0";
   ctx.strokeStyle = "#94A3B8";
-  ctx.lineWidth = 0.016;
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.roundRect(-0.105, 0.42, 0.21, 0.12, 0.025);
+  ctx.roundRect(-9, -38, 18, 11, 2.5);
   ctx.fill();
   ctx.stroke();
 
   // 3 Vertical Cane Ribs
   ctx.strokeStyle = "#CBD5E1";
-  ctx.lineWidth = 0.02;
-  [-0.06, 0.0, 0.06].forEach((rx) => {
+  ctx.lineWidth = 1.6;
+  [-5, 0, 5].forEach((rx) => {
     ctx.beginPath();
-    ctx.moveTo(rx, 0.06);
-    ctx.lineTo(rx, 0.40);
+    ctx.moveTo(rx, -45);
+    ctx.lineTo(rx, -4);
     ctx.stroke();
   });
 
-  // Front Shoe
+  // Front cricket boot
   ctx.fillStyle = "#0F172A";
   ctx.beginPath();
-  ctx.ellipse(hand * 0.03, -0.015, 0.13, 0.05, 0, 0, Math.PI * 2);
+  ctx.ellipse(hand * 2, 2, 10, 4.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath();
+  ctx.ellipse(hand * 2, 0, 9, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  // C. Torso & Jersey
+  // C. Torso & Team Jersey
+  const torsoX = (batter.frontPad.x + batter.backPad.x) * 0.5;
+  const torsoY = batter.y - 74 + batter.recoilY * 0.5;
   ctx.save();
-  ctx.translate(0, 1.0 + batter.recoil * 0.015);
+  ctx.translate(torsoX, torsoY);
   ctx.rotate(batter.torsoTilt);
 
+  // Dark Navy Jersey Body
   ctx.fillStyle = "#1E293B";
   ctx.strokeStyle = "#0F172A";
-  ctx.lineWidth = 0.022;
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
-  ctx.roundRect(-0.24, 0.0, 0.48, 0.66, 0.08);
+  ctx.roundRect(-18, -44, 36, 48, [6, 6, 3, 3]);
   ctx.fill();
   ctx.stroke();
 
+  // Cyan Team Side Stripe
   ctx.strokeStyle = "#38BDF8";
-  ctx.lineWidth = 0.024;
+  ctx.lineWidth = 2.4;
   ctx.beginPath();
-  ctx.moveTo(hand * -0.18, 0.08);
-  ctx.lineTo(hand * -0.18, 0.58);
+  ctx.moveTo(hand * -13, -38);
+  ctx.lineTo(hand * -13, -2);
   ctx.stroke();
 
+  // Jersey Number "18"
   ctx.fillStyle = "#F8FAFC";
-  ctx.font = "bold 0.16px monospace";
+  ctx.font = "bold 13px monospace";
   ctx.textAlign = "center";
-  ctx.fillText("18", 0, 0.35);
+  ctx.fillText("18", 0, -18);
   ctx.restore();
 
-  // D. Head & Helmet
-  const headX = hand * -0.05;
+  // D. Head & Protective Helmet with Face Grille
+  const headX = torsoX + hand * -3;
+  const headY = torsoY - 56;
   ctx.save();
-  ctx.translate(headX, 1.84 + batter.recoil * 0.015);
+  ctx.translate(headX, headY);
   ctx.rotate(batter.headTilt);
 
+  // Helmet Shell
   ctx.fillStyle = "#0F172A";
   ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 0.02;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(0, 0, 0.16, 0, Math.PI * 2);
+  ctx.arc(0, 0, 13, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  // Skin tone
+  // Face profile & skin
   ctx.fillStyle = "#D4A373";
   ctx.beginPath();
-  ctx.ellipse(hand * 0.08, -0.01, 0.065, 0.075, 0, 0, Math.PI * 2);
+  ctx.ellipse(hand * 6, -1, 5.5, 6.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Grille
+  // Helmet Peak Visor
   ctx.fillStyle = "#050B14";
   ctx.beginPath();
-  ctx.moveTo(hand * 0.11, -0.01);
-  ctx.lineTo(hand * 0.26, 0.03);
-  ctx.lineTo(hand * 0.11, 0.07);
+  ctx.moveTo(hand * 9, -2);
+  ctx.lineTo(hand * 20, 2);
+  ctx.lineTo(hand * 9, 6);
   ctx.closePath();
   ctx.fill();
 
+  // Protective Titanium Face Grille
   ctx.strokeStyle = "#94A3B8";
-  ctx.lineWidth = 0.016;
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.moveTo(hand * 0.15, 0.03);
-  ctx.lineTo(hand * 0.03, 0.08);
+  ctx.moveTo(hand * 11, 2);
+  ctx.lineTo(hand * 2, 7);
+  ctx.moveTo(hand * 13, 5);
+  ctx.lineTo(hand * 4, 10);
   ctx.stroke();
   ctx.restore();
 
   // E. Arms & Bat Blade
-  const shoulderY = 1.54;
+  const shoulderX = torsoX + hand * 10;
+  const shoulderY = torsoY - 38;
+  const rearShoulderX = torsoX - hand * 12;
+
+  // Rear arm
   ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 0.11;
+  ctx.lineWidth = 8.5;
+  ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(hand * 0.18, shoulderY);
-  ctx.lineTo(batter.gloveX + hand * 0.03, batter.gloveY);
+  ctx.moveTo(rearShoulderX, shoulderY);
+  ctx.lineTo(batter.batPivot.x - hand * 4, batter.batPivot.y);
   ctx.stroke();
 
+  // Lead arm
   ctx.strokeStyle = "#475569";
-  ctx.lineWidth = 0.115;
+  ctx.lineWidth = 9.0;
   ctx.beginPath();
-  ctx.moveTo(hand * -0.16, shoulderY);
-  ctx.lineTo(batter.gloveX - hand * 0.03, batter.gloveY);
+  ctx.moveTo(shoulderX, shoulderY);
+  ctx.lineTo(batter.batPivot.x + hand * 3, batter.batPivot.y);
   ctx.stroke();
 
-  // Bat
+  // Bat Handle & English Willow Blade
   ctx.save();
-  ctx.translate(batter.gloveX, batter.gloveY);
+  ctx.translate(batter.batPivot.x, batter.batPivot.y);
   ctx.rotate(batter.batAngleRad);
 
-  // Handle
+  // Rubber Handle Grip
   ctx.fillStyle = "#0284C7";
   ctx.strokeStyle = "#0369A1";
-  ctx.lineWidth = 0.016;
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.roundRect(-0.03, 0.0, 0.06, 0.30, 0.02);
+  ctx.roundRect(-2.8, -22, 5.6, 22, 1.5);
   ctx.fill();
   ctx.stroke();
 
   // Willow Blade
   ctx.fillStyle = "#D97706";
   ctx.strokeStyle = "#78350F";
-  ctx.lineWidth = 0.02;
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
-  ctx.roundRect(-0.065, -0.78, 0.13, 0.78, 0.03);
+  ctx.roundRect(-5.5, 0, 11, BAT_BLADE_LENGTH, 2.5);
   ctx.fill();
   ctx.stroke();
 
   // Face Sticker
   ctx.fillStyle = "#F8FAFC";
-  ctx.fillRect(-0.065, -0.78, 0.13, 0.08);
+  ctx.fillRect(-5.5, 4, 11, 8);
   ctx.restore();
 
-  // Batting Gloves
+  // Batting Gloves (Padded white gloves)
   ctx.fillStyle = "#F8FAFC";
   ctx.strokeStyle = "#94A3B8";
-  ctx.lineWidth = 0.015;
-  [-0.035, 0.04].forEach((dx) => {
+  ctx.lineWidth = 1.2;
+  [-3, 3].forEach((dx) => {
     ctx.beginPath();
-    ctx.arc(batter.gloveX + dx * hand, batter.gloveY, 0.065, 0, Math.PI * 2);
+    ctx.arc(batter.batPivot.x + dx * hand, batter.batPivot.y, 5.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   });
+  ctx.restore();
 
-  ctx.restore(); // Restore from local batter transform
+  // 7. Foreground Bowler Silhouette (Visible at release cue 600ms - 850ms)
+  const { bowler } = frame;
+  if (bowler.visible && bowler.opacity > 0.01) {
+    ctx.save();
+    ctx.globalAlpha = bowler.opacity;
 
-  // 7. Impact Shockwave Ripple
+    // Bowler Stride & Body Silhouette
+    ctx.fillStyle = "#0F172A";
+    ctx.strokeStyle = "#1E293B";
+    ctx.lineWidth = 2.0;
+
+    // Bowler Front Leg plant
+    ctx.beginPath();
+    ctx.ellipse(bowler.x + 12, bowler.y, 14, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Torso
+    ctx.beginPath();
+    ctx.roundRect(bowler.x - 14, bowler.y - 75, 28, 55, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    // Head
+    ctx.beginPath();
+    ctx.arc(bowler.x, bowler.y - 88, 12, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bowling Arm Windmill
+    const shoulderYPos = bowler.y - 68;
+    ctx.strokeStyle = "#1E293B";
+    ctx.lineWidth = 9;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(bowler.x + 8, shoulderYPos);
+    ctx.lineTo(bowler.releasePoint.x, bowler.releasePoint.y);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // 8. Impact Ripple Visual Cue
   if (frame.impactRipple) {
-    const { center, radius, alpha, color } = frame.impactRipple;
+    const { x, y, radius, alpha, color } = frame.impactRipple;
     ctx.save();
     ctx.strokeStyle = color;
     ctx.globalAlpha = alpha;
-    ctx.lineWidth = 2.6;
+    ctx.lineWidth = 2.8;
     ctx.beginPath();
-    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
 
-  // 8. Cricket Ball with Seam & Motion Blur
+  // 9. High-Visibility Cricket Ball with Motion Blur & Rotating Seam
   const { ball } = frame;
-  drawCricketBall(ctx, ball.screenPos.x, ball.screenPos.y, {
-    radius: ball.radius,
-    seamAngleRad: ball.seamAngleRad,
-    shadowY: ball.shadowY,
-    motionTrail: ball.motionTrail,
-    prevX: ball.prevScreenPos.x,
-    prevY: ball.prevScreenPos.y,
-  });
+  ctx.save();
 
+  // Motion Trail / Motion Blur in flight
+  if (ball.motionTrail && ball.trailAlpha > 0.01) {
+    ctx.strokeStyle = "rgba(220, 38, 38, " + ball.trailAlpha + ")";
+    ctx.lineWidth = ball.radius * 1.5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(ball.prevX, ball.prevY);
+    ctx.lineTo(ball.x, ball.y);
+    ctx.stroke();
+  }
+
+  // Ball Ground Shadow
+  ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+  ctx.beginPath();
+  ctx.ellipse(ball.x, ball.shadowY, ball.radius * 1.05, ball.radius * 0.38, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 4-Piece Cricket Ball Shading (Radial 3D Sphere)
+  const r = ball.radius;
+  const ballGrad = ctx.createRadialGradient(
+    ball.x - r * 0.32,
+    ball.y - r * 0.32,
+    r * 0.12,
+    ball.x,
+    ball.y,
+    r
+  );
+  ballGrad.addColorStop(0, "#ff5555");
+  ballGrad.addColorStop(0.65, "#dc2626");
+  ballGrad.addColorStop(1, "#7f1d1d");
+
+  ctx.fillStyle = ballGrad;
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ball Core Rim
+  ctx.strokeStyle = "#7f1d1d";
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // White Stitched Seam
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  ctx.rotate(ball.seamAngleRad);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.88, r * 0.26, 0, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.restore();
+
+  ctx.restore(); // Restore optical zoom transform
 }
