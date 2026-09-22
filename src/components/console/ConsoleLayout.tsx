@@ -145,7 +145,7 @@ export const ConsoleLayout: React.FC<ConsoleLayoutProps> = ({
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(1200);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isRockAndRoll, setIsRockAndRoll] = useState<boolean>(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(0.5);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [scanlinesEnabled] = useState<boolean>(true);
   // Mirror of the last committed canonical time. Used to re-assert a known-good
   // timestamp whenever the transport halts (see pauseTransport below).
