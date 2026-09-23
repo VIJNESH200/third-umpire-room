@@ -100,10 +100,7 @@ export const IncidentReplayFeed: React.FC<IncidentReplayFeedProps> = ({ scenario
         renderBoundaryBroadcast(ctx, width, height, progress, scenario);
       }
 
-      const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (!prefersReducedMotion) {
-        animId = requestAnimationFrame(render);
-      }
+      animId = requestAnimationFrame(render);
     };
 
     animId = requestAnimationFrame(render);
